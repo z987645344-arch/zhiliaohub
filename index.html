@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="知了hub——把好奇心做成看得见的作品。">
+    <meta name="theme-color" content="#2c353b">
+    <title>知了hub｜个人作品与学习记录</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="js/site.js" defer></script>
+    <script src="js/particles.js" defer></script>
+  </head>
+  <body class="home-page">
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="index.html" aria-label="知了hub 首页">
+          <span class="brand-mark" aria-hidden="true">知</span>
+          <span class="brand-copy">
+            <strong>知了hub</strong>
+            <small>PERSONAL ARCHIVE</small>
+          </span>
+        </a>
+
+        <button class="nav-toggle" type="button" aria-label="打开或关闭导航" aria-controls="site-nav" aria-expanded="false">
+          <span></span>
+          <span></span>
+        </button>
+
+        <nav class="site-nav" id="site-nav" aria-label="主导航">
+          <a href="index.html" aria-current="page"><span>01</span>首页</a>
+          <a href="works.html"><span>02</span>作品展示</a>
+          <a href="notes.html"><span>03</span>学习心得</a>
+          <a href="feedback.html"><span>04</span>反馈中心</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main-content">
+      <section class="hero" aria-labelledby="hero-title">
+        <figure class="hero-visual">
+          <img
+            src="assets/hero-oc-rain-alley.webp"
+            width="1731"
+            height="909"
+            alt="雾雨中的水泥灰都市巷道里，一个黑色蓬松短发、穿黑外套和橄榄绿短裤的赤脚男孩独自向前走"
+            fetchpriority="high"
+            decoding="async"
+          >
+        </figure>
+        <canvas id="particle-canvas" aria-hidden="true"></canvas>
+
+        <div class="hero-inner">
+          <div class="hero-copy">
+            <p class="hero-kicker">Zhiliao / Personal archive</p>
+            <h1 class="hero-title" id="hero-title">
+              <span>知了</span>
+              <span class="latin">hub<i>.</i></span>
+            </h1>
+
+            <div class="hero-summary">
+              <p class="hero-tagline">把好奇心，做成看得见的作品。</p>
+              <p class="hero-note">这里收集正在生长的项目、学习笔记，以及一些还没有被命名的想法。</p>
+            </div>
+
+            <div class="hero-actions">
+              <a class="button button-acid" href="works.html">浏览作品</a>
+              <a class="button button-ghost" href="notes.html">翻阅心得</a>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="hero-scroll" aria-hidden="true">SCROLL</div>
+      </section>
+
+      <section class="content-section" aria-labelledby="about-title">
+        <div class="intro-grid">
+          <div class="section-index">
+            <span>00</span>
+            <span>ABOUT</span>
+          </div>
+
+          <div class="intro-copy">
+            <p class="section-kicker">Why this place exists</p>
+            <h2 id="about-title">不是终点陈列柜，<em>是把思考逐渐做实的地方。</em></h2>
+
+            <div class="principles">
+              <article class="principle">
+                <small>01 / BUILD</small>
+                <h3>做成作品</h3>
+                <p>把零散想法推进成可看、可用、可继续迭代的真实项目。</p>
+              </article>
+              <article class="principle">
+                <small>02 / NOTE</small>
+                <h3>留下路径</h3>
+                <p>不只记录答案，也整理学习中的判断、弯路和阶段性理解。</p>
+              </article>
+              <article class="principle">
+                <small>03 / GROW</small>
+                <h3>持续生长</h3>
+                <p>允许作品不完美，也允许这里随着新的兴趣不断改变形状。</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="route-section" aria-labelledby="route-title">
+        <div class="route-section-head">
+          <h2 class="route-heading" id="route-title">从这里开始</h2>
+          <p>三个入口，分别通向完成中的作品、形成中的认识，以及尚未开放的交流。</p>
+        </div>
+
+        <div class="route-list">
+          <a class="route-item" href="works.html">
+            <small>01 / ARCHIVE</small>
+            <strong>作品展示</strong>
+            <span aria-hidden="true">↗</span>
+          </a>
+          <a class="route-item" href="notes.html">
+            <small>02 / NOTES</small>
+            <strong>学习心得</strong>
+            <span aria-hidden="true">↗</span>
+          </a>
+          <a class="route-item" href="feedback.html">
+            <small>03 / SIGNAL</small>
+            <strong>反馈中心</strong>
+            <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <p class="footer-wordmark">知了hub / ZHILIAO</p>
+        <p>© <span data-current-year>2026</span> · 持续生长的个人作品集</p>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,75 @@
+name: Static checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          find . -type f -name '*.js' -not -path './.git/*' -print0 \
+            | xargs -0 -n1 node --check
+
+      - name: Check local HTML references
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const ignoredDirectories = new Set(['.git']);
+          const htmlFiles = [];
+
+          function collectHtmlFiles(directory) {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              if (entry.isDirectory() && ignoredDirectories.has(entry.name)) continue;
+              const entryPath = path.join(directory, entry.name);
+              if (entry.isDirectory()) collectHtmlFiles(entryPath);
+              if (entry.isFile() && entry.name.endsWith('.html')) htmlFiles.push(entryPath);
+            }
+          }
+
+          collectHtmlFiles('.');
+
+          const missing = [];
+          const referencePattern = /(?:href|src)="([^"]+)"/g;
+          const externalPattern = /^(?:#|[a-z][a-z0-9+.-]*:|\/\/)/i;
+
+          for (const htmlFile of htmlFiles) {
+            const html = fs.readFileSync(htmlFile, 'utf8');
+            for (const match of html.matchAll(referencePattern)) {
+              const reference = match[1];
+              if (!reference || externalPattern.test(reference)) continue;
+              const localReference = reference.split(/[?#]/, 1)[0];
+              if (!localReference) continue;
+              const target = path.resolve(path.dirname(htmlFile), decodeURIComponent(localReference));
+              if (!fs.existsSync(target)) missing.push(`${htmlFile}: ${reference}`);
+            }
+          }
+
+          if (missing.length > 0) {
+            console.error('Missing local HTML references:\n' + missing.join('\n'));
+            process.exit(1);
+          }
+
+          console.log(`Checked ${htmlFiles.length} HTML files; all local references exist.`);
+          NODE

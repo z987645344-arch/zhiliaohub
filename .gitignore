@@ -1,0 +1,17 @@
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor settings and temporary files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Runtime leftovers
+*.log
+
+# Local-only character reference supplied by the project owner
+/assets/reference/oc-three-view.jpg
