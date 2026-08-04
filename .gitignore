@@ -15,3 +15,17 @@ Desktop.ini
 
 # Local-only character reference supplied by the project owner
 /assets/reference/oc-three-view.jpg
+/assets/concepts/
+
+# Admin server dependencies and secrets
+/admin-server/node_modules/
+/admin-server/.npm-cache/
+/admin-server/.env
+
+# Admin server runtime data
+/admin-server/data/*
+!/admin-server/data/.gitkeep
+!/admin-server/data/schema.sql
+/admin-server/uploads/*
+!/admin-server/uploads/.gitkeep
+/admin-server/content/**/*.tmp-*
