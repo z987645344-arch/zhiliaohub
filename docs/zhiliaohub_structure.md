@@ -1,6 +1,6 @@
 # 知了hub（zhiliaohub）技术架构
 > 记录当前已经存在的技术结构、文件职责和明确边界；未来方案只放在“预留演进”章节，不视为已实现。
-> **最后更新：2026-08-04**（v1.1 管理后台测试覆盖与并发一致性优化）
+> **最后更新：2026-08-04**（设备配对与挑战应答登录完成）
 
 ---
 
@@ -52,13 +52,17 @@ zhiliaohub/
 │   ├── package.json            # 后端独立依赖与运行命令
 │   ├── package-lock.json       # 后端依赖锁文件
 │   ├── .env.example            # 环境变量名称和安全占位值
-│   ├── src/                    # Express、认证、数据库、内容与上传实现
-│   ├── tests/                  # 后端端到端验证
-│   ├── scripts/init-db.js      # SQLite初始化入口
-│   ├── data/schema.sql         # 元数据与认证设置表结构
+│   ├── Dockerfile              # 非root多阶段后台镜像定义
+│   ├── .dockerignore           # 镜像构建上下文排除规则
+│   ├── src/                    # Express、双登录入口、数据库、内容、上传与备份实现
+│   ├── tests/                  # 后端认证、设备配对与备份恢复验证
+│   ├── scripts/                # SQLite初始化、备份与恢复命令
+│   ├── deploy/README.md        # 需人工合并的Compose/nginx部署片段
+│   ├── data/schema.sql         # 元数据、认证与session表结构
 │   ├── content/works/          # 作品Markdown正文
 │   ├── content/notes/          # 日记Markdown正文
-│   └── uploads/                # 本地上传目录；真实文件不入库
+│   ├── uploads/                # 本地上传目录；真实文件不入库
+│   └── backups/                # 本地备份目录；真实归档不入库
 ├── .github/
 │   └── workflows/
 │       └── ci.yml              # JavaScript语法与HTML本地引用检查
@@ -71,7 +75,7 @@ zhiliaohub/
 └── .gitignore
 ```
 
-根目录放置可直接访问的 HTML 页面；`css/`、`js/`、`assets/` 只存放跨页面共享或静态资源。根目录仍不存在前端 `src/`、`dist/` 或 `package.json`。后端的 `package.json` 和 `src/` 只存在于 `admin-server/`；当前仍没有任何真实部署或反向代理配置。
+根目录放置可直接访问的 HTML 页面；`css/`、`js/`、`assets/` 只存放跨页面共享或静态资源。根目录仍不存在前端 `src/`、`dist/` 或 `package.json`。后端的 `package.json` 和 `src/` 只存在于 `admin-server/`；仓库虽已有Docker与代理参考片段，但当前没有任何已合并、已启用的真实部署配置。
 
 ---
 
@@ -87,10 +91,11 @@ zhiliaohub/
 | 前台构建 | 无构建步骤，无生成产物 |
 | CI | GitHub Actions；对 `main` 的 push / pull request 执行静态检查 |
 | 管理后台 | Node.js 22+、Express、服务端渲染HTML表单 |
-| 后端依赖 | bcrypt、better-sqlite3、speakeasy、qrcode、express-session、multer、express-rate-limit、helmet、dotenv |
+| 后端依赖 | bcrypt、better-sqlite3、speakeasy、qrcode、express-session、multer、express-rate-limit、helmet、dotenv、tar |
+| 后台认证 | 密码 + TOTP主流程；单台ECDSA P-256设备配对后的挑战应答并行入口，二者建立同一种持久化session |
 | 数据库 | 本地 SQLite；当前仅单进程、单实例使用 |
 | 内容存储 | 现有前台内容仍直接写在HTML；后台新增内容采用SQLite元数据 + Markdown正文，但尚未被前台读取 |
-| 预览方式 | 前台可直接打开HTML；后台需在 `admin-server/` 配置环境变量并启动Node服务 |
+| 预览方式 | 前台可直接打开HTML；后台需在 `admin-server/` 配置环境变量并启动Node服务；Dockerfile与部署片段尚未实际部署 |
 
 所有前台站内资源继续使用相对路径，因此不依赖固定域名或服务器根路径。后台当前只绑定本地开发地址，域名、HTTPS和反向代理留到Phase B决定。
 
@@ -181,8 +186,13 @@ index.html 额外 defer 加载 js/particles.js
    ├── 初始化 SQLite schema、content和uploads目录
    └── 浏览器访问 /admin
           ├── 密码 + TOTP → 认证会话
+          ├── 设备管理 → 生成一次性配对码 / 吊销当前设备
           ├── 作品/日记表单 → SQLite元数据 + 原子写入Markdown
           └── 上传表单 → 大小/类型/签名校验 → uploads目录
+
+独立安卓App调用 admin-server
+   ├── 配对码 + P-256公钥 → 登记唯一有效设备
+   └── 获取随机挑战 → 私钥签名 → 服务端验签并消费挑战 → 同一种认证会话
 ```
 
 现有15个前台页面的交互仍只发生在浏览器本地，不发送网络请求、不持久化用户输入，也不依赖Cookie、localStorage或服务端会话。只有显式启动并访问 `admin-server` 时才会产生本地HTTP请求、session Cookie、SQLite/Markdown写入和上传文件；前台当前没有调用这些接口。
@@ -238,11 +248,12 @@ index.html 额外 defer 加载 js/particles.js
 |------|----------|
 | HTTP服务 | Node.js 22+ / Express 5，默认只绑定 `127.0.0.1` |
 | 管理界面 | Express直接返回的服务端HTML表单，无前端框架和构建步骤 |
-| 身份认证 | 环境变量中的bcrypt密码哈希 + 首次绑定后必须验证的TOTP |
-| 会话 | `express-session`，httpOnly、SameSite=Strict；生产环境配置为secure Cookie |
+| 身份认证 | bcrypt密码 + TOTP主流程；配对后的ECDSA P-256设备可通过短期一次性挑战并行登录 |
+| 会话 | `express-session` + 自有SQLite Store；httpOnly、SameSite=Strict，生产环境配置为secure Cookie，过期记录按读取与周期任务清理 |
 | 元数据 | better-sqlite3 单文件数据库，WAL模式，首次运行自动执行 `data/schema.sql` |
 | 正文 | `content/works/` 与 `content/notes/` 下的Markdown文件 |
 | 上传 | multer写入 `uploads/`，限制单文件大小并校验白名单、MIME与文件签名 |
+| 备份 | better-sqlite3在线快照 + tar/gzip归档；manifest记录字节数与SHA-256，可选scrypt + AES-256-GCM加密并保留最近N份 |
 | 安全补充 | Helmet响应头、会话CSRF令牌、按请求IP统计失败次数的限流 |
 
 `admin-server/` 是知了hub自己的后台服务，与静态前台物理隔离，也与知天的管理后台、账号、数据库和会话完全独立。当前没有跨仓库共享代码。
@@ -261,13 +272,32 @@ index.html 额外 defer 加载 js/particles.js
                         └── 通过 → 重新生成会话ID → 登录
 ```
 
+```text
+设备配对（必须先有密码+TOTP会话）
+   └── 生成5分钟一次性配对码
+          └── App提交配对码 + P-256公钥
+                 ├── 无效/过期/已使用 → 拒绝
+                 └── 有效 → 消费配对码 → 吊销旧设备 → 保存新公钥
+
+设备挑战登录（公开接口，按IP限流）
+   └── 服务签发32字节随机挑战与固定上下文载荷
+          └── App使用私钥执行SHA256withECDSA并提交DER/Base64签名
+                 ├── 错误/过期/已使用/设备吊销 → 拒绝
+                 └── 验签通过 → 原子消费挑战 → 建立现有SQLite session
+```
+
 - 管理员是唯一账号，不提供注册、邀请或多角色权限。
+- 设备登录是并行第二入口，不替换密码+TOTP；只有 `authMethod=password-totp` 的会话可以生成配对码，设备会话不能扩大授权。
+- 当前只允许一个有效设备；新配对自动吊销旧记录和未完成挑战。吊销也会使该设备建立的现有session无法继续访问。
+- 配对码只保存SHA-256摘要，默认5分钟且一次性；设备私钥始终留在安卓端，服务只保存规范化SPKI公钥和SHA-256指纹。
+- 挑战默认2分钟有效，成功验签后通过SQLite条件更新原子消费；错误签名不消费挑战，避免攻击者使合法设备失去仍有效挑战。
 - 初始密码明文不进入代码或数据库，服务只读取 `ADMIN_PASSWORD_HASH`。
 - TOTP密钥使用环境变量 `TOTP_ENCRYPTION_KEY` 通过AES-256-GCM加密后存入SQLite；首次绑定前只暂存在当前会话。
 - 每个TOTP时间步只能使用一次，已使用或窗口外验证码会被拒绝。
 - 认证失败按请求方IP进行时间窗口限流，不记录“连续失败次数”到账号，也不锁定账号，避免攻击者利用账号锁定制造拒绝服务。
 - 所有管理写操作除登录态外还要求CSRF令牌；API未登录返回401，管理页面未登录重定向到登录页。
-- 当前会话使用 `express-session` 的进程内存存储，只适合本地单进程验证；Phase B部署前必须选择持久化会话存储。
+- 当前会话存入同一个 `admin.sqlite3` 的 `sessions` 表；服务重启后只要数据库、`SESSION_SECRET` 和Cookie仍有效，管理员登录态可继续使用，过期会话会被拒绝并清理。
+- 继续保持单进程/单实例边界；SQLite会话持久化解决重启丢失，不等于分布式session store或多实例并发方案。
 
 ### 9.3 数据与正文存储
 
@@ -276,6 +306,10 @@ SQLite当前包含：
 - `works`：标题、作品日期、分类、摘要、Markdown路径、创建/更新时间。
 - `notes`：标题、日记日期、摘要、Markdown路径、创建/更新时间。
 - `auth_settings`：加密后的TOTP绑定信息和最近已使用时间步；不保存密码明文。
+- `sessions`：签名Cookie所对应的服务端session JSON、过期时间和创建/更新时间；不保存管理员密码或TOTP明文。
+- `devices`：设备名称、P-256公钥、公钥指纹、配对/最近使用时间及吊销状态；部分唯一索引保证最多一个有效设备。
+- `pairing_codes`：配对码SHA-256摘要、创建/过期/使用时间；不保存配对码明文。
+- `device_challenges`：随机挑战、所属设备、创建/过期/使用时间；成功挑战不能再次使用。
 
 结构化字段写入SQLite，正文只写入对应Markdown文件。Markdown更新会在目标文件同目录写入随机临时文件、刷新文件句柄后再原子替换；若在替换前中断，旧文件保持完整，临时文件会被清理。数据库与文件系统无法组成同一个事务，因此服务在数据库写入失败时执行文件清理或正文恢复，以缩小两者不一致的窗口。同一作品或日记记录的更新还会在当前Node进程内按记录串行执行，避免并发请求让元数据和正文分别保留不同请求的结果；这不是跨进程或多实例锁，多实例仍属于未实现边界。
 
@@ -285,17 +319,27 @@ SQLite当前包含：
 
 当前白名单包括JPEG、PNG、WebP、GIF、AVIF、PDF、Markdown、MP3、WAV、OGG、MP4和WebM。服务先校验扩展名与MIME组合，文件落入随机临时名后再检查文件签名；通过后才改为最终随机文件名。默认单文件上限为25MiB，可通过环境变量降低或调整。`uploads/` 中的真实文件由 `.gitignore` 排除，只提交 `.gitkeep`。
 
-### 9.5 Phase B容器划分设想（预留，尚未部署）
+### 9.5 本地备份与恢复
 
-真实服务器就位后，可评估以下职责划分，但当前没有创建容器、nginx配置、域名或证书：
+`scripts/backup.js` 对SQLite使用better-sqlite3在线备份API生成有效快照，同时复制作品/日记Markdown与上传文件；归档内 `manifest.json` 对每个文件记录相对路径、字节数和SHA-256。可通过 `BACKUP_ENCRYPTION_PASSWORD` 使用scrypt派生密钥并以AES-256-GCM加密，通过 `BACKUP_RETENTION_COUNT` 保留最近N份（默认7份）。真实归档写入 `.gitignore` 排除的 `backups/`。
+
+`scripts/restore.js` 要求显式指定归档和 `--force`，先安全解包、核对manifest、校验全部文件并拒绝未声明内容，再原子替换SQLite文件和三个数据目录。自动化测试已真实执行“加密备份 → 错误密码拒绝 → 删除数据库记录/Markdown/上传文件 → 正确恢复 → 数据一致性确认”。
+
+跨SQLite、Markdown和上传目录不存在统一事务。SQLite在线快照本身一致，但要获得三类数据的单一恢复点，生产备份应先暂停写入，最好停止服务；恢复必须在服务停止时进行。当前已实现本地手动备份与恢复、完整性校验、可选加密和保留策略，尚未实现定时调度、异地副本、失败告警或服务器灾难恢复演练。
+
+### 9.6 Phase B容器与代理准备（仓库片段已完成，尚未部署）
+
+仓库已提供 `admin-server/Dockerfile`、`.dockerignore` 和 `deploy/README.md`，但没有修改服务器共享Compose/nginx文件，也没有域名、证书或实际容器。当前准备内容为：
 
 1. 静态前台容器或静态文件服务，只提供根目录HTML/CSS/JS/assets。
-2. 独立 `admin-server` 容器，只提供管理界面与后续受控内容API。
-3. 为SQLite、Markdown正文和上传目录分别挂载持久卷，保持服务镜像无状态。
-4. 在容器外的反向代理层终止HTTPS，并按最终域名将管理入口转发给后台容器。
+2. 独立 `admin-server` 多阶段镜像只安装生产依赖，并以Node镜像内置非root用户运行。
+3. SQLite、Markdown正文、上传文件和本地备份目录都必须挂载持久卷，保持容器重建不丢数据。
+4. Compose片段包含回环端口映射、环境变量文件、重启策略和 `/health` 健康检查；nginx片段默认采用后台子域名并在代理层终止HTTPS。
 5. SQLite方案默认只支持单后台实例；如果未来需要多实例，必须重新讨论数据库、会话和文件存储，不能直接水平扩容。
 
-**已知缺口：当前没有备份机制。** SQLite数据库、`content/` Markdown和 `uploads/` 必须作为同一恢复点设计一致性备份、保留周期、异地副本和恢复演练；在这些方案完成前，后台不能被视为已具备生产数据安全能力。
+部署文档中的域名、宿主端口、持久目录、真实环境文件、服务器IP与TLS证书路径全部保留为占位项，必须由用户/运维人员在真实环境中填写并人工合并。路径前缀部署尚未实现，因为当前绝对路由、重定向、Cookie路径和表单地址需要先统一支持 `BASE_PATH`。
+
+**剩余备份缺口：当前只有服务器本地手动备份机制。** 定时调度、异地副本、备份失败监控、加密密码托管和真实服务器恢复演练仍须在上线方案中补齐；在这些能力完成前，不能把本地归档视为完整灾难恢复方案。
 
 ---
 
@@ -311,8 +355,10 @@ SQLite当前包含：
 | 没有作品正式域名 | 知天详情页使用未开放按钮说明地址尚未配置 |
 | 没有模板系统 | 导航与页脚在各 HTML 页面重复，修改时全量同步 |
 | 没有自动化构建和浏览器测试 | CI只检查JavaScript语法和HTML本地引用；视觉与交互仍需按任务进行真实浏览器回归 |
-| 后台尚未部署 | 当前只完成本地启动和端到端验证，没有域名、服务器、HTTPS、反向代理或生产会话存储 |
-| 没有备份机制 | SQLite、Markdown正文与上传文件当前没有自动备份、异地副本或恢复演练 |
+| 后台尚未部署 | 已有Dockerfile和需人工合并的Compose/nginx片段，但没有真实域名、服务器、HTTPS、共享配置合并或容器运行验证 |
+| 备份仍限于本地手动执行 | SQLite、Markdown与上传文件已支持校验、加密、保留和恢复；仍没有定时调度、异地副本、失败告警或服务器恢复演练 |
+| 仍是单实例架构 | SQLite会话可跨服务重启持久化，但不支持多个后台实例共享写入或直接水平扩容 |
+| 安卓App尚未建立 | 本仓库只实现并测试服务端配对/挑战协议，不包含Android Keystore、界面、网络客户端或App发布能力 |
 
 这些是当前状态，不代表必须立即引入更复杂的技术方案。
 
@@ -320,7 +366,7 @@ SQLite当前包含：
 
 ## 十一、预留技术演进（尚未实现）
 
-本章只为未来讨论保留决策位置，以下内容均不是当前能力，也不授权执行者自行实施。
+本章记录未来决策位置；其中部署准备与本地备份已有明确进展，会逐项标注“已准备”或“尚未实现”，不能把仓库片段误写成真实上线能力。
 
 ### 11.1 内容继续增长
 
@@ -350,11 +396,19 @@ SQLite当前包含：
 
 ### 11.5 Phase B 域名与反向代理
 
-**预留，尚未实现。** Phase B 再根据实际服务器、证书和域名确定部署拓扑。知了hub 作为根域名主站，知天管理后台/API 使用子域名；配置归属和存放位置需要届时决定，本仓库当前不包含任何代理配置。
+**仓库片段已准备，真实环境尚未实现。** `admin-server/deploy/README.md` 已提供独立后台service与子域名nginx片段，所有真实域名、服务器路径、端口、环境变量和证书位置都保留为占位符。Phase B必须由用户/运维人员根据实际共享Compose和nginx配置人工合并；本仓库没有直接修改服务器配置。知了hub 与知天继续使用独立服务、账号、数据和子域名边界。
 
 ### 11.6 自动化验证扩展
 
 **基础检查已实现，高阶检查尚未实现。** 当前CI只有 HTML 本地引用和 JavaScript 语法检查。如果页面数量或交互复杂度继续增加，可再讨论无障碍扫描或多视口回归；性能与视觉测试不属于 v1.0 现有能力，引入前必须先评估执行环境、稳定性和维护成本。
+
+### 11.7 备份运维演进
+
+**本地机制已实现，生产运维尚未实现。** 当前脚本已覆盖完整性清单、SHA-256、可选加密、最近N份保留和恢复验证。真实部署后仍要决定备份计划任务、异地目标、保留周期分层、密码/密钥托管、容量告警、失败通知与定期恢复演练；这些需要服务器和运维目标明确后再实施。
+
+### 11.8 独立安卓App对接
+
+**服务端协议已实现，App尚未实现。** 配套安卓App计划在独立仓库 `zhiliaohub_app` 开发，不把Gradle、Android源码或发布配置放入本仓库。仓库建立后应按 `admin-server/README.md` 对接：Android Keystore生成不可导出的P-256私钥、导出SPKI公钥、手动输入配对码、对服务端 `signedPayload` 执行 `SHA256withECDSA`、以DER/Base64提交签名并持久化session Cookie。二维码扫描不属于当前协议能力，若未来增加必须单独设计和验证。
 
 ---
 

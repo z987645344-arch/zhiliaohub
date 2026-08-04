@@ -14,17 +14,20 @@ const speakeasy = require('speakeasy');
 const { loadConfig } = require('./config');
 const { initializeDatabase } = require('./db');
 const { encryptTotpSecret, decryptTotpSecret } = require('./lib/totp-secret');
+const { SQLiteSessionStore } = require('./lib/sqlite-session-store');
 const {
   UploadPolicyError,
   multerFileFilter,
   validateAndFinalizeUpload,
 } = require('./lib/upload-policy');
 const { ContentService, ContentValidationError } = require('./services/content-service');
+const { DeviceAuthError, DeviceAuthService } = require('./services/device-auth-service');
 const {
   loginPage,
   totpSetupPage,
   totpVerifyPage,
   dashboardPage,
+  deviceManagementPage,
   contentFormPage,
   errorPage,
 } = require('./views');
@@ -78,6 +81,12 @@ function createApp(overrides = {}) {
   const config = loadConfig(overrides);
   const database = initializeDatabase(config);
   const contentService = new ContentService(database, config);
+  const deviceAuthService = new DeviceAuthService(database, config);
+  const sessionStore = new SQLiteSessionStore({
+    database,
+    defaultTtlMs: config.sessionMaxAgeMs,
+    cleanupIntervalMs: config.sessionCleanupIntervalMs,
+  });
   const app = express();
 
   if (config.trustProxyHops > 0) app.set('trust proxy', config.trustProxyHops);
@@ -96,6 +105,7 @@ function createApp(overrides = {}) {
   app.use(express.json({ limit: '1mb' }));
   app.use(session({
     name: 'zhiliaohub.admin.sid',
+    store: sessionStore,
     secret: config.sessionSecret,
     resave: false,
     saveUninitialized: false,
@@ -104,13 +114,14 @@ function createApp(overrides = {}) {
       httpOnly: true,
       secure: config.isProduction,
       sameSite: 'strict',
-      maxAge: 8 * 60 * 60 * 1000,
+      maxAge: config.sessionMaxAgeMs,
     },
   }));
 
   app.use((request, response, next) => {
-    if (!request.session.csrfToken) request.session.csrfToken = csrfToken();
-    response.locals.csrfToken = request.session.csrfToken;
+    const publicDeviceAuthRequest = request.path.startsWith('/api/device-auth/');
+    if (!publicDeviceAuthRequest && !request.session.csrfToken) request.session.csrfToken = csrfToken();
+    response.locals.csrfToken = request.session.csrfToken || '';
     next();
   });
 
@@ -130,9 +141,27 @@ function createApp(overrides = {}) {
   }
 
   function requireAdmin(request, response, next) {
-    if (request.session.adminAuthenticated) return next();
+    const deviceSessionIsActive = request.session.authMethod !== 'device'
+      || deviceAuthService.isDeviceActive(request.session.deviceId);
+    if (request.session.adminAuthenticated && deviceSessionIsActive) return next();
     if (request.path.startsWith('/api/')) return response.status(401).json({ error: '需要管理员登录。' });
     return response.redirect('/admin/login');
+  }
+
+  function requirePasswordTotpAdmin(request, response, next) {
+    if (!request.session.adminAuthenticated) {
+      if (request.path.startsWith('/api/')) return response.status(401).json({ error: '需要管理员登录。' });
+      return response.redirect('/admin/login');
+    }
+    if (request.session.adminAuthenticated && request.session.authMethod === 'password-totp') return next();
+    const message = '该操作要求当前会话通过密码和TOTP登录。';
+    if (request.path.startsWith('/api/')) return response.status(403).json({ error: message });
+    return response.status(403).send(errorPage({
+      statusCode: 403,
+      message,
+      csrfToken: response.locals.csrfToken,
+      authenticated: Boolean(request.session.adminAuthenticated),
+    }));
   }
 
   function requirePasswordStep(request, response, next) {
@@ -185,6 +214,15 @@ function createApp(overrides = {}) {
   };
   const passwordLimiter = rateLimit(limiterOptions);
   const totpLimiter = rateLimit(limiterOptions);
+  const deviceAuthLimiter = rateLimit({
+    windowMs: config.deviceAuthRateLimitWindowMs,
+    limit: config.deviceAuthRateLimitMax,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    handler: (_request, response) => response.status(429).json({
+      error: '该IP的设备认证请求过于频繁，请稍后再试。',
+    }),
+  });
 
   const upload = multer({
     storage: multer.diskStorage({
@@ -270,7 +308,7 @@ function createApp(overrides = {}) {
       }
 
       persistBoundTotp(secret, step);
-      await regenerateSession(request, { adminAuthenticated: true });
+      await regenerateSession(request, { adminAuthenticated: true, authMethod: 'password-totp' });
       return response.redirect('/admin');
     } catch (error) {
       return next(error);
@@ -295,7 +333,7 @@ function createApp(overrides = {}) {
 
       database.prepare('UPDATE auth_settings SET last_used_step = ?, updated_at = ? WHERE id = 1')
         .run(step, new Date().toISOString());
-      await regenerateSession(request, { adminAuthenticated: true });
+      await regenerateSession(request, { adminAuthenticated: true, authMethod: 'password-totp' });
       return response.redirect('/admin');
     } catch (error) {
       return next(error);
@@ -319,6 +357,35 @@ function createApp(overrides = {}) {
       notes: contentService.listNotes(),
       notice: request.query.notice || '',
     }));
+  });
+
+  app.get('/admin/device', requireAdmin, (request, response) => {
+    response.send(deviceManagementPage({
+      csrfToken: response.locals.csrfToken,
+      device: deviceAuthService.currentDevice(),
+      notice: request.query.notice || '',
+      canGeneratePairingCode: request.session.authMethod === 'password-totp',
+    }));
+  });
+
+  app.post('/admin/device/pairing-code', requirePasswordTotpAdmin, requireCsrf, (request, response) => {
+    const generated = deviceAuthService.generatePairingCode();
+    response.send(deviceManagementPage({
+      csrfToken: response.locals.csrfToken,
+      device: deviceAuthService.currentDevice(),
+      pairingCode: generated.pairingCode,
+      pairingExpiresAt: generated.expiresAt,
+      canGeneratePairingCode: true,
+    }));
+  });
+
+  app.post('/admin/device/revoke', requireAdmin, requireCsrf, (request, response, next) => {
+    try {
+      deviceAuthService.revokeCurrentDevice();
+      response.redirect('/admin/device?notice=当前设备已吊销。');
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/admin/works/new', requireAdmin, (_request, response) => {
@@ -389,6 +456,52 @@ function createApp(overrides = {}) {
 
   app.get('/api/admin/notes', requireAdmin, (_request, response) => {
     response.json({ items: contentService.listNotes() });
+  });
+
+  app.get('/api/admin/device', requireAdmin, (_request, response) => {
+    response.json({ device: deviceAuthService.currentDevice() });
+  });
+
+  app.post('/api/admin/device/pairing-code', requirePasswordTotpAdmin, requireCsrf, (_request, response) => {
+    response.status(201).json(deviceAuthService.generatePairingCode());
+  });
+
+  app.post('/api/admin/device/revoke', requireAdmin, requireCsrf, (_request, response, next) => {
+    try {
+      response.json({ device: deviceAuthService.revokeCurrentDevice() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/device-auth/pair', deviceAuthLimiter, (request, response, next) => {
+    try {
+      response.status(201).json({ device: deviceAuthService.pairDevice(request.body) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/device-auth/challenge', deviceAuthLimiter, (_request, response, next) => {
+    try {
+      response.status(201).json(deviceAuthService.createChallenge());
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/device-auth/login', deviceAuthLimiter, async (request, response, next) => {
+    try {
+      const device = deviceAuthService.verifyChallenge(request.body);
+      await regenerateSession(request, {
+        adminAuthenticated: true,
+        authMethod: 'device',
+        deviceId: device.id,
+      });
+      response.json({ authenticated: true, device });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.post('/api/admin/works', requireAdmin, requireCsrf, async (request, response, next) => {
@@ -463,7 +576,9 @@ function createApp(overrides = {}) {
     } else if (error instanceof multer.MulterError) {
       statusCode = 400;
       message = '上传请求无效。';
-    } else if (!(error instanceof UploadPolicyError) && !(error instanceof ContentValidationError)) {
+    } else if (!(error instanceof UploadPolicyError)
+      && !(error instanceof ContentValidationError)
+      && !(error instanceof DeviceAuthError)) {
       console.error(error);
       message = '服务器内部错误。';
     }
@@ -480,7 +595,9 @@ function createApp(overrides = {}) {
   app.locals.database = database;
   app.locals.config = config;
   app.locals.contentService = contentService;
-  return { app, config, database, contentService };
+  app.locals.deviceAuthService = deviceAuthService;
+  app.locals.sessionStore = sessionStore;
+  return { app, config, database, contentService, deviceAuthService, sessionStore };
 }
 
 module.exports = { createApp };

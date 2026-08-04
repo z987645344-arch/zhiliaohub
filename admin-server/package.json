@@ -8,6 +8,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "init-db": "node scripts/init-db.js",
+    "backup": "node scripts/backup.js",
+    "restore": "node scripts/restore.js",
     "test": "node --test tests/*.test.js",
     "check": "node --check src/server.js && node --check src/app.js && node --check tests/admin-server.test.js"
   },
@@ -24,6 +26,7 @@
     "helmet": "^8.3.0",
     "multer": "^2.2.0",
     "qrcode": "^1.5.4",
-    "speakeasy": "^2.0.0"
+    "speakeasy": "^2.0.0",
+    "tar": "^7.5.22"
   }
 }

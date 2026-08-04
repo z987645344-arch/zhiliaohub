@@ -10,7 +10,7 @@ function escapeHtml(value = '') {
 
 function layout({ title, content, authenticated = false, csrfToken = '' }) {
   const navigation = authenticated
-    ? `<nav><a href="/admin">管理面板</a><form method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="link-button">退出登录</button></form></nav>`
+    ? `<nav><a href="/admin">管理面板</a><a href="/admin/device">设备管理</a><form method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="link-button">退出登录</button></form></nav>`
     : '';
 
   return `<!doctype html>
@@ -32,6 +32,7 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     .narrow { max-width: 520px; margin-inline: auto; }
     .notice { padding: .8rem 1rem; border-left: 4px solid #526b7a; background: #e9eff3; }
     .error { border-left-color: #9f2f2f; background: #f8eaea; color: #6d1f1f; }
+    .warning { border-left-color: #9a681c; background: #fff5df; color: #63430f; }
     label { display: block; margin-top: 1rem; font-weight: 650; }
     input, textarea, select { width: 100%; padding: .7rem; margin-top: .35rem; border: 1px solid #aeb7bf; border-radius: .35rem; font: inherit; }
     textarea { min-height: 13rem; resize: vertical; }
@@ -41,6 +42,7 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     th, td { padding: .65rem; border-bottom: 1px solid #d7dce1; text-align: left; vertical-align: top; }
     .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; }
     code { overflow-wrap: anywhere; }
+    .pairing-code { display: inline-block; padding: .55rem .75rem; font-size: 1.35rem; letter-spacing: .12em; background: #edf2f5; }
     img.qr { display: block; width: min(260px, 100%); height: auto; margin: 1rem 0; border: 1px solid #d7dce1; }
     @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } table { font-size: .9rem; } header { align-items: flex-start; } }
   </style>

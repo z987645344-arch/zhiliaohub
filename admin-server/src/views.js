@@ -37,7 +37,33 @@ function dashboardPage({ csrfToken, works, notes, notice = '' }) {
     title: '管理面板',
     authenticated: true,
     csrfToken,
-    content: `${noticeBlock(notice)}<section class="panel"><h1>内容管理</h1><p>元数据保存在SQLite，正文保存在Markdown文件。当前前台页面尚未接入这些数据。</p></section><div class="grid"><section class="panel"><h2>作品</h2><a class="button" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div><section class="panel"><h2>文件上传</h2><p>仅允许白名单中的图片、PDF、Markdown、MP3/WAV/OGG、MP4/WebM文件；服务端同时检查扩展名、MIME和文件签名。</p><form method="post" action="/admin/uploads" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><label for="file">选择文件</label><input id="file" name="file" type="file" required><button type="submit">上传</button></form></section>`,
+    content: `${noticeBlock(notice)}<section class="panel"><h1>内容管理</h1><p>元数据保存在SQLite，正文保存在Markdown文件。当前前台页面尚未接入这些数据。</p><p><a class="button" href="/admin/device">管理安卓App配对设备</a></p></section><div class="grid"><section class="panel"><h2>作品</h2><a class="button" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div><section class="panel"><h2>文件上传</h2><p>仅允许白名单中的图片、PDF、Markdown、MP3/WAV/OGG、MP4/WebM文件；服务端同时检查扩展名、MIME和文件签名。</p><form method="post" action="/admin/uploads" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><label for="file">选择文件</label><input id="file" name="file" type="file" required><button type="submit">上传</button></form></section>`,
+  });
+}
+
+function deviceManagementPage({
+  csrfToken,
+  device,
+  pairingCode = '',
+  pairingExpiresAt = '',
+  notice = '',
+  canGeneratePairingCode = false,
+}) {
+  const deviceContent = device
+    ? `<dl><dt>设备名称</dt><dd>${escapeHtml(device.deviceName)}</dd><dt>配对时间</dt><dd>${escapeHtml(device.createdAt)}</dd><dt>最近使用</dt><dd>${escapeHtml(device.lastUsedAt || '尚未通过设备登录')}</dd><dt>公钥指纹（SHA-256）</dt><dd><code>${escapeHtml(device.publicKeyFingerprint)}</code></dd></dl><form method="post" action="/admin/device/revoke"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit">吊销当前设备</button></form>`
+    : '<p>当前没有已授权设备。</p>';
+  const pairingContent = pairingCode
+    ? `<p class="notice warning">配对码只显示本次，请在 ${escapeHtml(pairingExpiresAt)} 前手动输入安卓App；使用一次或到期后立即失效。</p><p><code class="pairing-code" data-pairing-code>${escapeHtml(pairingCode)}</code></p>`
+    : '';
+  const pairingForm = canGeneratePairingCode
+    ? `<form method="post" action="/admin/device/pairing-code"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit">生成5分钟配对码</button></form>`
+    : '<p class="notice warning">只有本次会话通过密码+TOTP登录后才能生成配对码；设备登录会话不能生成新的配对授权。</p>';
+
+  return layout({
+    title: '设备管理',
+    authenticated: true,
+    csrfToken,
+    content: `${noticeBlock(notice)}<section class="panel"><h1>设备管理</h1><p>当前只允许一个有效设备。新设备使用有效配对码成功配对时，会自动吊销并替换旧设备。</p>${deviceContent}</section><section class="panel"><h2>手动配对</h2><p>本轮不提供二维码；配对码需手动输入独立安卓App。</p>${pairingContent}${pairingForm}</section>`,
   });
 }
 
@@ -73,6 +99,7 @@ module.exports = {
   totpSetupPage,
   totpVerifyPage,
   dashboardPage,
+  deviceManagementPage,
   contentFormPage,
   errorPage,
 };

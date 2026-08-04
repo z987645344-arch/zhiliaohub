@@ -18,15 +18,19 @@ const ONE_PIXEL_PNG = Buffer.from(
 );
 
 async function createRuntime(overrides = {}) {
-  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-admin-'));
-  const password = 'local-test-password';
+  const runtimeRoot = overrides.runtimeRoot
+    || await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-admin-'));
+  const password = overrides.password || 'local-test-password';
+  const sessionSecret = overrides.sessionSecret || crypto.randomBytes(48).toString('base64url');
+  const adminPasswordHash = overrides.adminPasswordHash || await bcrypt.hash(password, 4);
+  const totpEncryptionKey = overrides.totpEncryptionKey || crypto.randomBytes(32);
   const context = createApp({
     nodeEnv: 'test',
     host: '127.0.0.1',
     port: 3001,
-    sessionSecret: crypto.randomBytes(48).toString('base64url'),
-    adminPasswordHash: await bcrypt.hash(password, 4),
-    totpEncryptionKey: crypto.randomBytes(32),
+    sessionSecret,
+    adminPasswordHash,
+    totpEncryptionKey,
     dataDir: path.join(runtimeRoot, 'data'),
     databasePath: path.join(runtimeRoot, 'data', 'test.sqlite3'),
     contentDir: path.join(runtimeRoot, 'content'),
@@ -35,6 +39,12 @@ async function createRuntime(overrides = {}) {
     contentMaxBytes: 64 * 1024,
     authRateLimitWindowMs: 60 * 1000,
     authRateLimitMax: overrides.authRateLimitMax ?? 20,
+    sessionMaxAgeMs: overrides.sessionMaxAgeMs,
+    sessionCleanupIntervalMs: overrides.sessionCleanupIntervalMs,
+    pairingCodeTtlMs: overrides.pairingCodeTtlMs,
+    deviceChallengeTtlMs: overrides.deviceChallengeTtlMs,
+    deviceAuthRateLimitWindowMs: overrides.deviceAuthRateLimitWindowMs,
+    deviceAuthRateLimitMax: overrides.deviceAuthRateLimitMax,
   });
 
   const server = await new Promise((resolve) => {
@@ -48,10 +58,11 @@ async function createRuntime(overrides = {}) {
     runtimeRoot,
     server,
     baseUrl: `http://127.0.0.1:${address.port}`,
-    async close() {
+    async close({ removeFiles = true } = {}) {
       await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+      context.sessionStore.close();
       context.database.close();
-      await fs.rm(runtimeRoot, { recursive: true, force: true });
+      if (removeFiles) await fs.rm(runtimeRoot, { recursive: true, force: true });
     },
   };
 }
@@ -262,6 +273,57 @@ test('被篡改的 session cookie 不会保留管理员身份', async (t) => {
   const pageResponse = await client.request('/admin');
   assert.equal(pageResponse.status, 302);
   assert.equal(pageResponse.headers.get('location'), '/admin/login');
+});
+
+test('未过期的 SQLite session 在服务重启后仍保持管理员登录状态', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-session-restart-'));
+  const shared = {
+    runtimeRoot,
+    sessionSecret: crypto.randomBytes(48).toString('base64url'),
+    adminPasswordHash: await bcrypt.hash('local-test-password', 4),
+    totpEncryptionKey: crypto.randomBytes(32),
+  };
+  let firstRuntime;
+  let secondRuntime;
+  try {
+    firstRuntime = await createRuntime(shared);
+    const firstClient = createClient(firstRuntime.baseUrl);
+    await bindAndAuthenticate(firstClient, firstRuntime);
+    const persistedCookie = firstClient.getCookie();
+    assert.equal(firstRuntime.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 1);
+    await firstRuntime.close({ removeFiles: false });
+    firstRuntime = null;
+
+    secondRuntime = await createRuntime(shared);
+    const secondClient = createClient(secondRuntime.baseUrl);
+    secondClient.setCookie(persistedCookie);
+    const response = await secondClient.request('/api/admin/works');
+    assert.equal(response.status, 200, '服务重启后未过期的登录会话应继续有效。');
+  } finally {
+    if (firstRuntime) await firstRuntime.close({ removeFiles: false });
+    if (secondRuntime) await secondRuntime.close({ removeFiles: false });
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('SQLite session 到期后会失效并从存储中清理', async (t) => {
+  const runtime = await createRuntime({
+    sessionMaxAgeMs: 300,
+    sessionCleanupIntervalMs: 60 * 1000,
+  });
+  t.after(() => runtime.close());
+  const client = createClient(runtime.baseUrl);
+  await bindAndAuthenticate(client, runtime);
+  assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 1);
+
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  const response = await client.request('/api/admin/works');
+  assert.equal(response.status, 401, '超过有效期的 session 不得继续访问管理 API。');
+  const remainingSessions = runtime.database.prepare('SELECT data FROM sessions').all();
+  assert.ok(
+    remainingSessions.every((row) => !JSON.parse(row.data).adminAuthenticated),
+    '过期的管理员身份不得残留在持久化存储中。',
+  );
 });
 
 test('已登录写接口会拒绝缺失或错误的 CSRF 令牌', async (t) => {

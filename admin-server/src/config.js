@@ -63,6 +63,16 @@ function loadConfig(overrides = {}) {
       0,
     ),
     sessionSecret,
+    sessionMaxAgeMs: positiveInteger(
+      overrides.sessionMaxAgeMs ?? process.env.SESSION_MAX_AGE_MS,
+      'SESSION_MAX_AGE_MS',
+      8 * 60 * 60 * 1000,
+    ),
+    sessionCleanupIntervalMs: positiveInteger(
+      overrides.sessionCleanupIntervalMs ?? process.env.SESSION_CLEANUP_INTERVAL_MS,
+      'SESSION_CLEANUP_INTERVAL_MS',
+      15 * 60 * 1000,
+    ),
     adminUsername: overrides.adminUsername || process.env.ADMIN_USERNAME || 'admin',
     adminPasswordHash,
     totpEncryptionKey: parseEncryptionKey(
@@ -78,6 +88,26 @@ function loadConfig(overrides = {}) {
       'AUTH_RATE_LIMIT_MAX',
       8,
     ),
+    pairingCodeTtlMs: positiveInteger(
+      overrides.pairingCodeTtlMs ?? process.env.PAIRING_CODE_TTL_MS,
+      'PAIRING_CODE_TTL_MS',
+      5 * 60 * 1000,
+    ),
+    deviceChallengeTtlMs: positiveInteger(
+      overrides.deviceChallengeTtlMs ?? process.env.DEVICE_CHALLENGE_TTL_MS,
+      'DEVICE_CHALLENGE_TTL_MS',
+      2 * 60 * 1000,
+    ),
+    deviceAuthRateLimitWindowMs: positiveInteger(
+      overrides.deviceAuthRateLimitWindowMs ?? process.env.DEVICE_AUTH_RATE_LIMIT_WINDOW_MS,
+      'DEVICE_AUTH_RATE_LIMIT_WINDOW_MS',
+      15 * 60 * 1000,
+    ),
+    deviceAuthRateLimitMax: positiveInteger(
+      overrides.deviceAuthRateLimitMax ?? process.env.DEVICE_AUTH_RATE_LIMIT_MAX,
+      'DEVICE_AUTH_RATE_LIMIT_MAX',
+      30,
+    ),
     uploadMaxBytes: positiveInteger(
       overrides.uploadMaxBytes ?? process.env.UPLOAD_MAX_BYTES,
       'UPLOAD_MAX_BYTES',
@@ -90,6 +120,7 @@ function loadConfig(overrides = {}) {
     ),
     dataDir,
     databasePath: overrides.databasePath || path.join(dataDir, 'admin.sqlite3'),
+    schemaPath: overrides.schemaPath || resolveLocalPath(process.env.SCHEMA_PATH, 'data/schema.sql'),
     contentDir,
     uploadsDir,
   };

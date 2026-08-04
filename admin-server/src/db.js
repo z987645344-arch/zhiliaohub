@@ -14,7 +14,7 @@ function initializeDatabase(config) {
   database.pragma('foreign_keys = ON');
   database.pragma('busy_timeout = 5000');
 
-  const schemaPath = path.join(config.serverRoot, 'data', 'schema.sql');
+  const schemaPath = config.schemaPath || path.join(config.serverRoot, 'data', 'schema.sql');
   database.exec(fs.readFileSync(schemaPath, 'utf8'));
   return database;
 }
