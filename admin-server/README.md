@@ -5,7 +5,7 @@
 ## 本地运行
 
 1. 复制 `.env.example` 为 `.env`，填写真实随机值。
-2. 使用 bcrypt 生成管理员密码哈希；只把哈希写入 `ADMIN_PASSWORD_HASH`。
+2. 运行 `node scripts/hash-password.js`，在交互式终端中输入并确认管理员密码；只把输出的 bcrypt 哈希写入 `ADMIN_PASSWORD_HASH`。
 3. 使用 32 字节随机数据的 Base64 表示填写 `TOTP_ENCRYPTION_KEY`。
 4. 在本目录运行 `npm install`，再运行 `npm start`。
 5. 浏览器访问 `http://127.0.0.1:3001/admin/login`。
@@ -13,12 +13,12 @@
 可用 Node.js 生成本地配置素材：
 
 ```powershell
-node -e "require('bcrypt').hash(process.argv[1], 12).then(console.log)" "在本机输入的初始密码"
+node scripts/hash-password.js
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
 node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
 ```
 
-第一条命令会把密码留在当前终端历史中；更稳妥的做法是临时执行后清理历史，或自行使用不会记录输入的 bcrypt 工具。真实 `.env`、SQLite 数据库和上传文件都由仓库根目录 `.gitignore` 排除。
+密码哈希工具要求在交互式终端中运行，输入不回显、不写日志或文件，标准输出只包含最终 bcrypt 哈希。真实 `.env`、SQLite 数据库和上传文件都由仓库根目录 `.gitignore` 排除。
 
 ## 会话存储
 
@@ -107,6 +107,13 @@ DEVICE_AUTH_RATE_LIMIT_MAX=30
 ```
 
 配对码无效/过期/已使用，签名错误，挑战过期/已使用或设备被吊销均返回认证失败，不会建立session。不提供二维码接口，也不接收或保存设备私钥。
+
+## 配套App兼容性
+
+- 设备认证接口自 `v1.2` 起提供。
+- 当前已完成真实设备联调，确认可配合 [`zhiliaohub_app v0.1`](https://github.com/z987645344-arch/zhiliaohub_app/tree/v0.1) 使用。
+- 后续服务端或App任一端发生破坏性接口变更时，必须在本节更新对应的最低兼容版本。
+- 本仓库与 `zhiliaohub_app` 各自独立打版本标签，不强行对齐版本号；两端的配对关系只通过本兼容性说明记录。
 
 ## 备份与恢复
 
