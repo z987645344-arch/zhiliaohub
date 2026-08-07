@@ -27,17 +27,20 @@ function totpVerifyPage({ csrfToken, error = '' }) {
 }
 
 function rows(records, type) {
-  if (records.length === 0) return '<tr><td colspan="4">暂无内容。</td></tr>';
+  if (records.length === 0) return '<tr><td colspan="5">暂无内容。</td></tr>';
   const dateKey = type === 'work' ? 'work_date' : 'note_date';
-  return records.map((record) => `<tr><td>${escapeHtml(record[dateKey])}</td><td>${escapeHtml(record.title)}</td><td>${escapeHtml(record.summary)}</td><td><a href="/admin/${type === 'work' ? 'works' : 'notes'}/${record.id}/edit">编辑</a></td></tr>`).join('');
+  return records.map((record) => `<tr><td>${escapeHtml(record[dateKey])}</td><td>${escapeHtml(record.title)}</td><td>${escapeHtml(record.summary)}</td><td>已发布</td><td><a href="/admin/${type === 'work' ? 'works' : 'notes'}/${record.id}/edit">编辑</a></td></tr>`).join('');
 }
 
-function dashboardPage({ csrfToken, works, notes, notice = '' }) {
+function dashboardPage({ csrfToken, works, notes, publishStatus, notice = '' }) {
+  const publication = publishStatus
+    ? `<p class="notice"><strong>已发布</strong> · 最近发布时间：${escapeHtml(publishStatus.last_published_at)} · ${publishStatus.works_count} 个作品 / ${publishStatus.notes_count} 篇日记</p>`
+    : '<p class="notice warning"><strong>尚未发布</strong> · 保存第一条内容或手动执行全量发布后，静态前台才会由数据库生成。</p>';
   return layout({
     title: '管理面板',
     authenticated: true,
     csrfToken,
-    content: `${noticeBlock(notice)}<section class="panel"><h1>内容管理</h1><p>元数据保存在SQLite，正文保存在Markdown文件。当前前台页面尚未接入这些数据。</p><p><a class="button" href="/admin/device">管理安卓App配对设备</a></p></section><div class="grid"><section class="panel"><h2>作品</h2><a class="button" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div><section class="panel"><h2>文件上传</h2><p>仅允许白名单中的图片、PDF、Markdown、MP3/WAV/OGG、MP4/WebM文件；服务端同时检查扩展名、MIME和文件签名。</p><form method="post" action="/admin/uploads" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><label for="file">选择文件</label><input id="file" name="file" type="file" required><button type="submit">上传</button></form></section>`,
+    content: `${noticeBlock(notice)}<section class="panel"><h1>内容管理</h1><p>元数据保存在SQLite，正文保存在Markdown文件；保存后立即全量生成静态前台页面。</p>${publication}<form method="post" action="/admin/publish"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit">重新全量发布</button></form><p><a class="button" href="/admin/device">管理安卓App配对设备</a></p></section><div class="grid"><section class="panel"><h2>作品</h2><a class="button" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div><section class="panel"><h2>文件上传</h2><p>仅允许白名单中的图片、PDF、Markdown、MP3/WAV/OGG、MP4/WebM文件；服务端同时检查扩展名、MIME和文件签名。</p><form method="post" action="/admin/uploads" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><label for="file">选择文件</label><input id="file" name="file" type="file" required><button type="submit">上传</button></form></section>`,
   });
 }
 
@@ -75,13 +78,14 @@ function contentFormPage({ csrfToken, type, record = {}, error = '' }) {
   const dateValue = isWork ? record.work_date : record.note_date;
   const title = `${isEdit ? '编辑' : '新增'}${isWork ? '作品' : '日记'}`;
   const action = isEdit ? `/admin/${plural}/${record.id}` : `/admin/${plural}`;
-  const categoryField = isWork ? `<label for="category">分类</label><input id="category" name="category" value="${escapeHtml(record.category || '')}" required maxlength="100">` : '';
+  const categoryField = isWork ? `<label for="category">分类</label><input id="category" name="category" value="${escapeHtml(record.category || '')}" required maxlength="100"><label for="detailIntro">详情页简介</label><textarea id="detailIntro" name="detailIntro" maxlength="500">${escapeHtml(record.detail_intro || record.summary || '')}</textarea>` : '';
+  const deleteForm = isEdit ? `<form method="post" action="/admin/${plural}/${record.id}/delete"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><p class="notice warning">删除后会同时清理对应的Markdown正文和自动生成详情页。</p><button type="submit">删除${isWork ? '作品' : '日记'}</button></form>` : '';
 
   return layout({
     title,
     authenticated: true,
     csrfToken,
-    content: `<section class="panel"><h1>${title}</h1>${noticeBlock(error, 'notice error')}<form method="post" action="${action}"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><label for="title">标题</label><input id="title" name="title" value="${escapeHtml(record.title || '')}" required maxlength="200"><label for="date">日期</label><input id="date" name="${dateName}" type="date" value="${escapeHtml(dateValue || '')}" required>${categoryField}<label for="summary">摘要</label><textarea id="summary" name="summary" required maxlength="500">${escapeHtml(record.summary || '')}</textarea><label for="body">Markdown正文</label><textarea id="body" name="body" required>${escapeHtml(record.body || '')}</textarea><button type="submit">保存</button></form></section>`,
+    content: `<section class="panel"><h1>${title}</h1>${noticeBlock(error, 'notice error')}<form method="post" action="${action}"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><label for="title">标题</label><input id="title" name="title" value="${escapeHtml(record.title || '')}" required maxlength="200"><label for="date">日期</label><input id="date" name="${dateName}" type="date" value="${escapeHtml(dateValue || '')}" required>${categoryField}<label for="summary">摘要</label><textarea id="summary" name="summary" required maxlength="500">${escapeHtml(record.summary || '')}</textarea><label for="body">Markdown正文</label><textarea id="body" name="body" required>${escapeHtml(record.body || '')}</textarea><button type="submit">保存并发布</button></form>${deleteForm}</section>`,
   });
 }
 

@@ -35,6 +35,7 @@ async function createRuntime(overrides = {}) {
     databasePath: path.join(runtimeRoot, 'data', 'test.sqlite3'),
     contentDir: path.join(runtimeRoot, 'content'),
     uploadsDir: path.join(runtimeRoot, 'uploads'),
+    siteRoot: path.join(runtimeRoot, 'site'),
     uploadMaxBytes: 1024,
     contentMaxBytes: 64 * 1024,
     authRateLimitWindowMs: 60 * 1000,
@@ -348,7 +349,7 @@ test('已登录写接口会拒绝缺失或错误的 CSRF 令牌', async (t) => {
   assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM works').get().count, 0);
 });
 
-test('作品和日记的新增与编辑会同步写入 SQLite 元数据和 Markdown 正文', async (t) => {
+test('作品和日记的新增、编辑、删除会同步SQLite、Markdown与静态前台', async (t) => {
   const runtime = await createRuntime();
   t.after(() => runtime.close());
   const client = createClient(runtime.baseUrl);
@@ -363,7 +364,10 @@ test('作品和日记的新增与编辑会同步写入 SQLite 元数据和 Markd
   const work = await response.json();
   assert.equal(runtime.database.prepare('SELECT title FROM works WHERE id = ?').get(work.id).title, '本地验证作品A');
   const workPath = path.join(runtime.config.contentDir, ...work.markdown_path.split('/'));
+  const workHtmlPath = path.join(runtime.config.siteRoot, `works-${work.slug}.html`);
   assert.match(await fs.readFile(workPath, 'utf8'), /作品正文A/);
+  assert.match(await fs.readFile(path.join(runtime.config.siteRoot, 'works.html'), 'utf8'), /本地验证作品A/);
+  assert.match(await fs.readFile(workHtmlPath, 'utf8'), /^<!-- 此文件由知了hub后台自动生成/);
 
   response = await client.request(`/api/admin/works/${work.id}`, {
     method: 'PUT',
@@ -373,6 +377,7 @@ test('作品和日记的新增与编辑会同步写入 SQLite 元数据和 Markd
   assert.equal(response.status, 200);
   assert.equal(runtime.database.prepare('SELECT title FROM works WHERE id = ?').get(work.id).title, '本地验证作品B');
   assert.match(await fs.readFile(workPath, 'utf8'), /作品正文B/);
+  assert.match(await fs.readFile(workHtmlPath, 'utf8'), /本地验证作品B/);
 
   response = await client.request('/api/admin/notes', {
     method: 'POST',
@@ -383,7 +388,10 @@ test('作品和日记的新增与编辑会同步写入 SQLite 元数据和 Markd
   const note = await response.json();
   assert.equal(runtime.database.prepare('SELECT title FROM notes WHERE id = ?').get(note.id).title, '本地验证日记A');
   const notePath = path.join(runtime.config.contentDir, ...note.markdown_path.split('/'));
+  const noteHtmlPath = path.join(runtime.config.siteRoot, `notes-${note.slug}.html`);
   assert.match(await fs.readFile(notePath, 'utf8'), /日记正文A/);
+  assert.match(await fs.readFile(path.join(runtime.config.siteRoot, 'notes.html'), 'utf8'), /本地验证日记A/);
+  assert.match(await fs.readFile(noteHtmlPath, 'utf8'), /<h1 id="note-title">本地验证日记A<\/h1>/);
 
   response = await client.request(`/api/admin/notes/${note.id}`, {
     method: 'PUT',
@@ -393,6 +401,25 @@ test('作品和日记的新增与编辑会同步写入 SQLite 元数据和 Markd
   assert.equal(response.status, 200);
   assert.equal(runtime.database.prepare('SELECT title FROM notes WHERE id = ?').get(note.id).title, '本地验证日记B');
   assert.match(await fs.readFile(notePath, 'utf8'), /日记正文B/);
+  assert.match(await fs.readFile(noteHtmlPath, 'utf8'), /本地验证日记B/);
+
+  response = await client.request(`/api/admin/works/${work.id}`, {
+    method: 'DELETE',
+    headers: { 'x-csrf-token': csrf },
+  });
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(await fs.readFile(path.join(runtime.config.siteRoot, 'works.html'), 'utf8'), /本地验证作品B/);
+  await assert.rejects(fs.access(workHtmlPath), /ENOENT/);
+  await assert.rejects(fs.access(workPath), /ENOENT/);
+
+  response = await client.request(`/api/admin/notes/${note.id}`, {
+    method: 'DELETE',
+    headers: { 'x-csrf-token': csrf },
+  });
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(await fs.readFile(path.join(runtime.config.siteRoot, 'notes.html'), 'utf8'), /本地验证日记B/);
+  await assert.rejects(fs.access(noteHtmlPath), /ENOENT/);
+  await assert.rejects(fs.access(notePath), /ENOENT/);
 });
 
 test('同一作品或日记的并发更新会保持数据库与 Markdown 属于同一次写入', async (t) => {

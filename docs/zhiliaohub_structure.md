@@ -1,6 +1,6 @@
 # 知了hub（zhiliaohub）技术架构
 > 记录当前已经存在的技术结构、文件职责和明确边界；未来方案只放在“预留演进”章节，不视为已实现。
-> **最后更新：2026-08-04**（设备配对与挑战应答登录完成）
+> **最后更新：2026-08-06**（后台保存即生成静态作品/日记页面）
 
 ---
 
@@ -12,7 +12,7 @@
 2. 全站共用 CSS 和 JavaScript，避免每页各自形成一套视觉或交互实现。
 3. 静态前台不引入构建工具、包管理器、前端框架或第三方动画库。
 4. 管理后台放在独立的 `admin-server/`，拥有自己的包管理、服务端代码和数据目录，不与根目录前台文件混合。
-5. 前台尚未接入后台内容；没有真实链路支撑的前台功能仍必须明确标注未开放。
+5. 作品与日记由后台在保存时生成静态HTML；访客访问不调用后台，其他没有真实链路支撑的功能仍必须明确标注未开放。
 6. 使用轻量CI检查确定性的语法与本地引用错误，不把浏览器回归或后端部署伪装成自动化能力。
 
 ---
@@ -22,7 +22,7 @@
 ```text
 zhiliaohub/
 ├── index.html                  # 首页、都市雨巷插画与 Canvas 雨雾开屏
-├── works.html                  # 8类作品索引
+├── works.html                  # 后台生成的作品索引（当前8条）
 ├── works-mix-video.html        # 创作混剪视频详情占位
 ├── works-ai-music.html         # AI音乐作品详情占位
 ├── works-ai-video.html         # AI视频作品详情占位
@@ -31,7 +31,7 @@ zhiliaohub/
 ├── works-zhili.html            # 软件“知历”详情占位
 ├── works-zhiliao.html          # 软件“知了”详情占位
 ├── works-zhitian.html          # 系统“知天”详情与展示入口占位
-├── notes.html                  # 占位日记索引
+├── notes.html                  # 后台生成的日记索引（当前3条）
 ├── notes-rain-window.html      # 占位日记详情模板
 ├── notes-learning-path.html    # 占位日记详情模板
 ├── notes-small-progress.html   # 占位日记详情模板
@@ -54,9 +54,11 @@ zhiliaohub/
 │   ├── .env.example            # 环境变量名称和安全占位值
 │   ├── Dockerfile              # 非root多阶段后台镜像定义
 │   ├── .dockerignore           # 镜像构建上下文排除规则
-│   ├── src/                    # Express、双登录入口、数据库、内容、上传与备份实现
-│   ├── tests/                  # 后端认证、设备配对与备份恢复验证
-│   ├── scripts/                # SQLite初始化、备份与恢复命令
+│   ├── src/                    # Express、认证、数据、静态发布、上传与备份实现
+│   │   ├── templates/          # 作品/日记列表与详情HTML模板
+│   │   └── services/publish-service.js # 全量静态生成与旧页清理
+│   ├── tests/                  # 认证、发布、迁移、设备配对与备份恢复验证
+│   ├── scripts/                # SQLite初始化、内容迁移、密码哈希、备份与恢复命令
 │   ├── deploy/README.md        # 需人工合并的Compose/nginx部署片段
 │   ├── data/schema.sql         # 元数据、认证与session表结构
 │   ├── content/works/          # 作品Markdown正文
@@ -88,13 +90,13 @@ zhiliaohub/
 | 交互 | 原生 JavaScript 与浏览器 DOM API |
 | 首页动画 | 原生 Canvas 2D API 绘制雨滴与雾气 |
 | 前台依赖 | 零第三方运行时依赖 |
-| 前台构建 | 无构建步骤，无生成产物 |
+| 前台构建 | 无访客端构建步骤；作品/日记HTML由后台在内容保存时生成 |
 | CI | GitHub Actions；对 `main` 的 push / pull request 执行静态检查 |
 | 管理后台 | Node.js 22+、Express、服务端渲染HTML表单 |
-| 后端依赖 | bcrypt、better-sqlite3、speakeasy、qrcode、express-session、multer、express-rate-limit、helmet、dotenv、tar |
+| 后端依赖 | bcrypt、better-sqlite3、marked、speakeasy、qrcode、express-session、multer、express-rate-limit、helmet、dotenv、tar |
 | 后台认证 | 密码 + TOTP主流程；单台ECDSA P-256设备配对后的挑战应答并行入口，二者建立同一种持久化session |
 | 数据库 | 本地 SQLite；当前仅单进程、单实例使用 |
-| 内容存储 | 现有前台内容仍直接写在HTML；后台新增内容采用SQLite元数据 + Markdown正文，但尚未被前台读取 |
+| 内容存储 | SQLite元数据 + Markdown正文是作品/日记来源；后台全量生成根目录静态列表与详情HTML |
 | 预览方式 | 前台可直接打开HTML；后台需在 `admin-server/` 配置环境变量并启动Node服务；Dockerfile与部署片段尚未实际部署 |
 
 所有前台站内资源继续使用相对路径，因此不依赖固定域名或服务器根路径。后台当前只绑定本地开发地址，域名、HTTPS和反向代理留到Phase B决定。
@@ -106,13 +108,13 @@ zhiliaohub/
 | 页面 | 定位 | 当前内容 | 当前不包含 |
 |------|------|----------|------------|
 | `index.html` | 站点首页与视觉入口 | 站点名称、标语、作品/心得入口、OC 都市雨巷插画、Canvas 雨雾开屏 | 登录、动态数据、远程内容 |
-| `works.html` | 多作品展示索引 | 8类真实作品条目、CSS分类封面和栏目插画 | 作品文件下载、动态数据、知天业务代码或真实域名 |
-| 8个 `works-*.html` | 作品详情模板 | 标题、分类、状态、工作日志占位、返回入口及未开放按钮 | 真实日志、登录、下载、权限控制或远程内容 |
-| `notes.html` | 学习心得索引 | 3条明确标注为占位的日期、标题、摘要及栏目插画 | 真实已发布文章、搜索或分类逻辑 |
-| 3个 `notes-*.html` | 日记详情模板 | 占位标题、日期、正文筹备说明、返回与编辑入口 | 真实正文、登录、在线编辑或内容保存 |
+| `works.html` | 多作品展示索引 | 后台从当前全部作品记录生成卡片、CSS分类封面和栏目插画 | 作品文件下载、运行时动态请求、知天业务代码或真实域名 |
+| `works-*.html` | 后台生成的作品详情 | 标题、分类、发布状态、Markdown工作日志、返回入口及未开放按钮 | 前台登录、下载、权限控制或运行时远程内容 |
+| `notes.html` | 学习心得索引 | 后台从当前全部日记记录生成日期、标题、摘要和占位标记 | 搜索、分类逻辑或运行时动态请求 |
+| `notes-*.html` | 后台生成的日记详情 | 标题、日期、Markdown正文、占位/发布状态、返回与编辑入口 | 前台登录、在线编辑或运行时内容保存 |
 | `feedback.html` | 未来反馈与评论入口的静态界面 | 姓名、邮箱、留言字段、评论输入、占位评论和缩进跟评；明确未开放提示 | 网络提交、存储、公开展示、邮件发送或成功回执 |
 
-每个页面都包含共享风格的顶部导航和页脚，并通过 `aria-current="page"` 标记当前页面。由于当前没有模板或构建过程，导航 HTML 会在各页面重复；任何导航结构变更都必须同步更新全部页面。
+每个页面都包含共享风格的顶部导航和页脚，并通过 `aria-current="page"` 标记当前页面。作品/日记页面的重复骨架由后台模板统一维护；首页和反馈页仍是手写静态HTML。生成文件首行带“请勿手动编辑”标记，内容修改应通过管理后台或模板完成。
 
 ---
 
@@ -188,6 +190,7 @@ index.html 额外 defer 加载 js/particles.js
           ├── 密码 + TOTP → 认证会话
           ├── 设备管理 → 生成一次性配对码 / 吊销当前设备
           ├── 作品/日记表单 → SQLite元数据 + 原子写入Markdown
+          │      └── 保存成功 → 全量生成works/notes列表与详情 → 清理带标记的过期详情页
           └── 上传表单 → 大小/类型/签名校验 → uploads目录
 
 独立安卓App调用 admin-server
@@ -195,7 +198,7 @@ index.html 额外 defer 加载 js/particles.js
    └── 获取随机挑战 → 私钥签名 → 服务端验签并消费挑战 → 同一种认证会话
 ```
 
-现有15个前台页面的交互仍只发生在浏览器本地，不发送网络请求、不持久化用户输入，也不依赖Cookie、localStorage或服务端会话。只有显式启动并访问 `admin-server` 时才会产生本地HTTP请求、session Cookie、SQLite/Markdown写入和上传文件；前台当前没有调用这些接口。
+现有15个前台页面的访客交互仍只发生在浏览器本地，不发送内容读取请求、不持久化用户输入，也不依赖Cookie、localStorage或服务端会话。后台只在管理员保存内容时写SQLite/Markdown并生成静态HTML；生成完成后即使后台停止，访客仍可完整阅读。只有显式访问 `admin-server` 时才会产生管理HTTP请求、session Cookie、数据写入和发布动作。
 
 ---
 
@@ -252,6 +255,7 @@ index.html 额外 defer 加载 js/particles.js
 | 会话 | `express-session` + 自有SQLite Store；httpOnly、SameSite=Strict，生产环境配置为secure Cookie，过期记录按读取与周期任务清理 |
 | 元数据 | better-sqlite3 单文件数据库，WAL模式，首次运行自动执行 `data/schema.sql` |
 | 正文 | `content/works/` 与 `content/notes/` 下的Markdown文件 |
+| 静态发布 | marked渲染Markdown，服务端模板全量生成列表/详情HTML，并记录最近发布时间 |
 | 上传 | multer写入 `uploads/`，限制单文件大小并校验白名单、MIME与文件签名 |
 | 备份 | better-sqlite3在线快照 + tar/gzip归档；manifest记录字节数与SHA-256，可选scrypt + AES-256-GCM加密并保留最近N份 |
 | 安全补充 | Helmet响应头、会话CSRF令牌、按请求IP统计失败次数的限流 |
@@ -303,8 +307,10 @@ index.html 额外 defer 加载 js/particles.js
 
 SQLite当前包含：
 
-- `works`：标题、作品日期、分类、摘要、Markdown路径、创建/更新时间。
-- `notes`：标题、日记日期、摘要、Markdown路径、创建/更新时间。
+- `works`：标题、稳定slug、作品日期、分类、摘要、详情简介、特殊状态、占位/排序字段、Markdown路径和时间戳。
+- `notes`：标题、稳定slug、日记日期、摘要、占位/排序字段、Markdown路径和时间戳。
+- `publish_state`：最近一次成功发布时间及作品/日记数量。
+- `content_migrations`：一次性内容迁移标记，防止重复初始化。
 - `auth_settings`：加密后的TOTP绑定信息和最近已使用时间步；不保存密码明文。
 - `sessions`：签名Cookie所对应的服务端session JSON、过期时间和创建/更新时间；不保存管理员密码或TOTP明文。
 - `devices`：设备名称、P-256公钥、公钥指纹、配对/最近使用时间及吊销状态；部分唯一索引保证最多一个有效设备。
@@ -315,11 +321,19 @@ SQLite当前包含：
 
 这种读写分离的意图是：列表、日期、分类和摘要适合结构化查询；长正文保留为可阅读、可比较的文本文件，并为未来通过人工Git提交实现内容版本历史留下空间。本轮不实现独立版本历史、回滚、搜索、缓存或多实例同步。
 
-### 9.4 上传边界
+### 9.4 静态发布流程
+
+作品或日记新增、编辑、删除成功后立即触发一次串行化全量发布，不设置草稿状态。发布服务从当前SQLite记录读取全部Markdown，使用 `src/templates/` 复刻既有水泥灰/雾蓝灰页面骨架，写入范围仅为 `works.html`、`notes.html` 和规律命名的详情页。slug首次创建后保持稳定；重名使用数字后缀，非ASCII标题使用确定性的Unicode码点形式，避免文件名冲突和路径逃逸。
+
+每个生成文件首行包含自动生成标记。全量发布会比较期望详情页集合与磁盘文件，只删除带该标记且已不在数据库中的旧详情页；手工文件及 `index.html`、`feedback.html`、`css/`、`js/` 不在写入范围。写入前保存受影响文件快照，失败时恢复发布前状态；成功后才更新 `publish_state`。Markdown中的原始HTML被转义，危险协议链接和图片地址不会写成可执行URL。
+
+原8个作品与3篇占位日记已经通过 `scripts/migrate-existing-content.js` 一次性迁入SQLite和Markdown。脚本默认只预览，实际执行要求内容表为空、目标Markdown不存在、迁移未执行过，并显式传入 `--apply --confirm-server-stopped`；执行前还会主动探测后台配置端口，仍有服务监听时直接拒绝。本轮真实迁移已经完成并通过SQLite完整性检查。
+
+### 9.5 上传边界
 
 当前白名单包括JPEG、PNG、WebP、GIF、AVIF、PDF、Markdown、MP3、WAV、OGG、MP4和WebM。服务先校验扩展名与MIME组合，文件落入随机临时名后再检查文件签名；通过后才改为最终随机文件名。默认单文件上限为25MiB，可通过环境变量降低或调整。`uploads/` 中的真实文件由 `.gitignore` 排除，只提交 `.gitkeep`。
 
-### 9.5 本地备份与恢复
+### 9.6 本地备份与恢复
 
 `scripts/backup.js` 对SQLite使用better-sqlite3在线备份API生成有效快照，同时复制作品/日记Markdown与上传文件；归档内 `manifest.json` 对每个文件记录相对路径、字节数和SHA-256。可通过 `BACKUP_ENCRYPTION_PASSWORD` 使用scrypt派生密钥并以AES-256-GCM加密，通过 `BACKUP_RETENTION_COUNT` 保留最近N份（默认7份）。真实归档写入 `.gitignore` 排除的 `backups/`。
 
@@ -327,7 +341,7 @@ SQLite当前包含：
 
 跨SQLite、Markdown和上传目录不存在统一事务。SQLite在线快照本身一致，但要获得三类数据的单一恢复点，生产备份应先暂停写入，最好停止服务；恢复必须在服务停止时进行。当前已实现本地手动备份与恢复、完整性校验、可选加密和保留策略，尚未实现定时调度、异地副本、失败告警或服务器灾难恢复演练。
 
-### 9.6 Phase B容器与代理准备（仓库片段已完成，尚未部署）
+### 9.7 Phase B容器与代理准备（仓库片段已完成，尚未部署）
 
 仓库已提供 `admin-server/Dockerfile`、`.dockerignore` 和 `deploy/README.md`，但没有修改服务器共享Compose/nginx文件，也没有域名、证书或实际容器。当前准备内容为：
 
@@ -347,18 +361,18 @@ SQLite当前包含：
 
 | 限制 | 当前处理方式 |
 |------|--------------|
-| 前台尚未接入内容管理 | 管理后台已能写入SQLite和Markdown，但现有页面仍直接读取各自HTML中的静态内容 |
+| 前台没有运行时内容API | 作品/日记由后台保存时生成静态HTML；访客读取生成结果，不在访问时请求后台 |
 | 没有真实文章正文 | 日记列表与3个详情页均明确标记为占位内容 |
 | 没有反馈或评论后端 | 阻止提交并明确提示不发送、不保存、不公开展示 |
 | 前台没有登录和在线编辑 | 前台登录、日记编辑按钮仍只显示未开放说明；本地管理后台的登录不等于前台账号系统 |
 | 没有下载资源与权限控制 | 下载按钮没有文件地址或下载行为 |
 | 没有作品正式域名 | 知天详情页使用未开放按钮说明地址尚未配置 |
-| 没有模板系统 | 导航与页脚在各 HTML 页面重复，修改时全量同步 |
+| 生成页不可手改 | 作品/日记列表及详情首行带自动生成标记；应修改后台数据或模板后重新全量发布 |
 | 没有自动化构建和浏览器测试 | CI只检查JavaScript语法和HTML本地引用；视觉与交互仍需按任务进行真实浏览器回归 |
 | 后台尚未部署 | 已有Dockerfile和需人工合并的Compose/nginx片段，但没有真实域名、服务器、HTTPS、共享配置合并或容器运行验证 |
 | 备份仍限于本地手动执行 | SQLite、Markdown与上传文件已支持校验、加密、保留和恢复；仍没有定时调度、异地副本、失败告警或服务器恢复演练 |
 | 仍是单实例架构 | SQLite会话可跨服务重启持久化，但不支持多个后台实例共享写入或直接水平扩容 |
-| 安卓App尚未建立 | 本仓库只实现并测试服务端配对/挑战协议，不包含Android Keystore、界面、网络客户端或App发布能力 |
+| 安卓App位于独立仓库 | `zhiliaohub_app v0.1` 已完成真机验证；本仓库只保留服务端协议和兼容性说明，不包含Android代码 |
 
 这些是当前状态，不代表必须立即引入更复杂的技术方案。
 
@@ -370,7 +384,7 @@ SQLite当前包含：
 
 ### 11.1 内容继续增长
 
-如果作品、文章和详情页数量仍较少，继续使用独立 HTML 页面，并复用共享 CSS/JS。只有在重复维护已经产生真实成本时，再评估结构化内容数据或静态生成方案。届时需要明确 URL 兼容、现有页面迁移、无 JavaScript 阅读能力和构建失败回退方式。
+**结构化内容与静态生成已实现。** 新内容继续通过后台写入SQLite/Markdown并生成独立HTML页面，保持原URL兼容和无JavaScript阅读能力。未来增长时重点评估发布耗时、历史版本、图片/下载资源管理及失败告警，不改成访客端动态请求。
 
 ### 11.2 引入构建工具
 
@@ -408,7 +422,7 @@ SQLite当前包含：
 
 ### 11.8 独立安卓App对接
 
-**服务端协议已实现，App尚未实现。** 配套安卓App计划在独立仓库 `zhiliaohub_app` 开发，不把Gradle、Android源码或发布配置放入本仓库。仓库建立后应按 `admin-server/README.md` 对接：Android Keystore生成不可导出的P-256私钥、导出SPKI公钥、手动输入配对码、对服务端 `signedPayload` 执行 `SHA256withECDSA`、以DER/Base64提交签名并持久化session Cookie。二维码扫描不属于当前协议能力，若未来增加必须单独设计和验证。
+**服务端协议与独立App均已实现。** `zhiliaohub_app v0.1` 已在真实安卓设备验证配对、挑战签名、Cookie持久化、吊销和覆盖安装；本仓库不包含Gradle、Android源码或发布配置。两仓库版本各自独立，通过 `admin-server/README.md` 记录最低兼容关系；二维码扫描仍不属于当前能力。
 
 ---
 

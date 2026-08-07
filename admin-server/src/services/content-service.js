@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { atomicWriteFile } = require('../lib/atomic-file');
+const { createUniqueSlug } = require('../lib/slug');
 
 class ContentValidationError extends Error {
   constructor(message, statusCode = 400) {
@@ -40,6 +41,12 @@ function markdownBody(value, maxBytes) {
   return body.endsWith('\n') ? body : `${body}\n`;
 }
 
+function optionalText(value, label, maxLength, fallback = '') {
+  const text = String(value ?? '').trim() || fallback;
+  if (text.length > maxLength) throw new ContentValidationError(`${label}长度不能超过 ${maxLength} 个字符。`);
+  return text;
+}
+
 function safeContentPath(contentDir, relativePath, expectedDirectory) {
   const normalized = String(relativePath).split('/').join(path.sep);
   const base = path.resolve(contentDir, expectedDirectory);
@@ -67,11 +74,22 @@ class ContentService {
   }
 
   listWorks() {
-    return this.database.prepare('SELECT * FROM works ORDER BY work_date DESC, id DESC').all();
+    return this.database.prepare(`
+      SELECT * FROM works
+      ORDER BY CASE WHEN display_order IS NULL THEN 1 ELSE 0 END, display_order ASC, work_date DESC, id DESC
+    `).all();
   }
 
   listNotes() {
-    return this.database.prepare('SELECT * FROM notes ORDER BY note_date DESC, id DESC').all();
+    return this.database.prepare(`
+      SELECT * FROM notes
+      ORDER BY CASE WHEN display_order IS NULL THEN 1 ELSE 0 END, display_order ASC, note_date DESC, id DESC
+    `).all();
+  }
+
+  uniqueSlug(tableName, title) {
+    const used = new Set(this.database.prepare(`SELECT slug FROM ${tableName} WHERE slug IS NOT NULL`).all().map((row) => row.slug));
+    return createUniqueSlug(title, used);
   }
 
   async getWork(id) {
@@ -96,6 +114,8 @@ class ContentService {
       summary: requiredText(input.summary, '摘要', 500),
       body: markdownBody(input.body, this.config.contentMaxBytes),
     };
+    record.detailIntro = optionalText(input.detailIntro, '详情页简介', 500, record.summary);
+    record.slug = this.uniqueSlug('works', record.title);
     const relativePath = `works/${randomUUID()}.md`;
     const targetPath = safeContentPath(this.config.contentDir, relativePath, 'works');
     const now = new Date().toISOString();
@@ -103,9 +123,9 @@ class ContentService {
     await atomicWriteFile(targetPath, record.body);
     try {
       const result = this.database.prepare(`
-        INSERT INTO works (title, work_date, category, summary, markdown_path, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(record.title, record.workDate, record.category, record.summary, relativePath, now, now);
+        INSERT INTO works (title, slug, work_date, category, summary, detail_intro, markdown_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(record.title, record.slug, record.workDate, record.category, record.summary, record.detailIntro, relativePath, now, now);
       return this.getWork(result.lastInsertRowid);
     } catch (error) {
       await fs.unlink(targetPath).catch(() => {});
@@ -120,6 +140,7 @@ class ContentService {
       summary: requiredText(input.summary, '摘要', 500),
       body: markdownBody(input.body, this.config.contentMaxBytes),
     };
+    record.slug = this.uniqueSlug('notes', record.title);
     const relativePath = `notes/${randomUUID()}.md`;
     const targetPath = safeContentPath(this.config.contentDir, relativePath, 'notes');
     const now = new Date().toISOString();
@@ -127,9 +148,9 @@ class ContentService {
     await atomicWriteFile(targetPath, record.body);
     try {
       const result = this.database.prepare(`
-        INSERT INTO notes (title, note_date, summary, markdown_path, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(record.title, record.noteDate, record.summary, relativePath, now, now);
+        INSERT INTO notes (title, slug, note_date, summary, markdown_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(record.title, record.slug, record.noteDate, record.summary, relativePath, now, now);
       return this.getNote(result.lastInsertRowid);
     } catch (error) {
       await fs.unlink(targetPath).catch(() => {});
@@ -146,13 +167,14 @@ class ContentService {
         category: requiredText(input.category, '分类', 100),
         summary: requiredText(input.summary, '摘要', 500),
         body: markdownBody(input.body, this.config.contentMaxBytes),
+        detailIntro: optionalText(input.detailIntro, '详情页简介', 500, existing.detail_intro || input.summary),
       };
       const targetPath = safeContentPath(this.config.contentDir, existing.markdown_path, 'works');
       await atomicWriteFile(targetPath, record.body);
       try {
         this.database.prepare(`
-          UPDATE works SET title = ?, work_date = ?, category = ?, summary = ?, updated_at = ? WHERE id = ?
-        `).run(record.title, record.workDate, record.category, record.summary, new Date().toISOString(), Number(id));
+          UPDATE works SET title = ?, work_date = ?, category = ?, summary = ?, detail_intro = ?, updated_at = ? WHERE id = ?
+        `).run(record.title, record.workDate, record.category, record.summary, record.detailIntro, new Date().toISOString(), Number(id));
       } catch (error) {
         await atomicWriteFile(targetPath, existing.body);
         throw error;
@@ -181,6 +203,36 @@ class ContentService {
         throw error;
       }
       return this.getNote(id);
+    });
+  }
+
+  async deleteWork(id) {
+    return this.runSerializedUpdate(`work:${Number(id)}`, async () => {
+      const existing = await this.getWork(id);
+      const targetPath = safeContentPath(this.config.contentDir, existing.markdown_path, 'works');
+      await fs.unlink(targetPath);
+      try {
+        this.database.prepare('DELETE FROM works WHERE id = ?').run(Number(id));
+      } catch (error) {
+        await atomicWriteFile(targetPath, existing.body);
+        throw error;
+      }
+      return existing;
+    });
+  }
+
+  async deleteNote(id) {
+    return this.runSerializedUpdate(`note:${Number(id)}`, async () => {
+      const existing = await this.getNote(id);
+      const targetPath = safeContentPath(this.config.contentDir, existing.markdown_path, 'notes');
+      await fs.unlink(targetPath);
+      try {
+        this.database.prepare('DELETE FROM notes WHERE id = ?').run(Number(id));
+      } catch (error) {
+        await atomicWriteFile(targetPath, existing.body);
+        throw error;
+      }
+      return existing;
     });
   }
 }

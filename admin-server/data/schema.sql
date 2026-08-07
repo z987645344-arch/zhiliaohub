@@ -1,9 +1,14 @@
 CREATE TABLE IF NOT EXISTS works (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
+  slug TEXT,
   work_date TEXT NOT NULL,
   category TEXT NOT NULL,
   summary TEXT NOT NULL,
+  detail_intro TEXT,
+  special_status TEXT,
+  is_placeholder INTEGER NOT NULL DEFAULT 0 CHECK (is_placeholder IN (0, 1)),
+  display_order INTEGER,
   markdown_path TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -12,11 +17,26 @@ CREATE TABLE IF NOT EXISTS works (
 CREATE TABLE IF NOT EXISTS notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
+  slug TEXT,
   note_date TEXT NOT NULL,
   summary TEXT NOT NULL,
+  is_placeholder INTEGER NOT NULL DEFAULT 0 CHECK (is_placeholder IN (0, 1)),
+  display_order INTEGER,
   markdown_path TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS publish_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  last_published_at TEXT NOT NULL,
+  works_count INTEGER NOT NULL,
+  notes_count INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS content_migrations (
+  name TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS auth_settings (

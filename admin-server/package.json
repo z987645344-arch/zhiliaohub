@@ -8,10 +8,11 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "init-db": "node scripts/init-db.js",
+    "migrate-existing-content": "node scripts/migrate-existing-content.js",
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "test": "node --test tests/*.test.js",
-    "check": "node --check src/server.js && node --check src/app.js && node --check tests/admin-server.test.js"
+    "check": "node --check src/server.js && node --check src/network-addresses.js && node --check src/app.js && node --check src/db.js && node --check src/services/content-service.js && node --check src/services/publish-service.js && node --check scripts/migrate-existing-content.js && node --check tests/admin-server.test.js && node --check tests/migration.test.js && node --check tests/network-addresses.test.js && node --check tests/publish-service.test.js"
   },
   "engines": {
     "node": ">=22"
@@ -24,6 +25,7 @@
     "express-rate-limit": "^8.6.1",
     "express-session": "^1.19.0",
     "helmet": "^8.3.0",
+    "marked": "18.0.9",
     "multer": "^2.2.0",
     "qrcode": "^1.5.4",
     "speakeasy": "^2.0.0",

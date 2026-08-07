@@ -1,9 +1,11 @@
 // Starts the local admin HTTP service; deployment topology is intentionally not defined here.
 const { createApp } = require('./app');
+const { startupNetworkMessages } = require('./network-addresses');
 
 const { app, config, database, sessionStore } = createApp();
 const server = app.listen(config.port, config.host, () => {
-  console.log(`知了hub 管理后台已启动：http://${config.host}:${config.port}/admin/login`);
+  console.log(`知了hub 管理后台已启动：监听 ${config.host}:${config.port}`);
+  for (const message of startupNetworkMessages(config)) console.log(message);
 });
 
 function shutdown(signal) {

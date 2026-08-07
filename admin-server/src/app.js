@@ -22,6 +22,7 @@ const {
 } = require('./lib/upload-policy');
 const { ContentService, ContentValidationError } = require('./services/content-service');
 const { DeviceAuthError, DeviceAuthService } = require('./services/device-auth-service');
+const { PublishError, PublishService } = require('./services/publish-service');
 const {
   loginPage,
   totpSetupPage,
@@ -81,6 +82,7 @@ function createApp(overrides = {}) {
   const config = loadConfig(overrides);
   const database = initializeDatabase(config);
   const contentService = new ContentService(database, config);
+  const publishService = new PublishService(database, config);
   const deviceAuthService = new DeviceAuthService(database, config);
   const sessionStore = new SQLiteSessionStore({
     database,
@@ -355,6 +357,7 @@ function createApp(overrides = {}) {
       csrfToken: response.locals.csrfToken,
       works: contentService.listWorks(),
       notes: contentService.listNotes(),
+      publishStatus: publishService.getStatus(),
       notice: request.query.notice || '',
     }));
   });
@@ -417,7 +420,8 @@ function createApp(overrides = {}) {
   app.post('/admin/works', requireAdmin, requireCsrf, async (request, response, next) => {
     try {
       await contentService.createWork(request.body);
-      response.redirect('/admin?notice=作品已保存到SQLite和Markdown。');
+      await publishService.publishAll();
+      response.redirect('/admin?notice=作品已保存并发布。');
     } catch (error) {
       next(error);
     }
@@ -426,7 +430,8 @@ function createApp(overrides = {}) {
   app.post('/admin/notes', requireAdmin, requireCsrf, async (request, response, next) => {
     try {
       await contentService.createNote(request.body);
-      response.redirect('/admin?notice=日记已保存到SQLite和Markdown。');
+      await publishService.publishAll();
+      response.redirect('/admin?notice=日记已保存并发布。');
     } catch (error) {
       next(error);
     }
@@ -435,7 +440,8 @@ function createApp(overrides = {}) {
   app.post('/admin/works/:id', requireAdmin, requireCsrf, async (request, response, next) => {
     try {
       await contentService.updateWork(request.params.id, request.body);
-      response.redirect('/admin?notice=作品已更新。');
+      await publishService.publishAll();
+      response.redirect('/admin?notice=作品已更新并发布。');
     } catch (error) {
       next(error);
     }
@@ -444,7 +450,37 @@ function createApp(overrides = {}) {
   app.post('/admin/notes/:id', requireAdmin, requireCsrf, async (request, response, next) => {
     try {
       await contentService.updateNote(request.params.id, request.body);
-      response.redirect('/admin?notice=日记已更新。');
+      await publishService.publishAll();
+      response.redirect('/admin?notice=日记已更新并发布。');
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/works/:id/delete', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      await contentService.deleteWork(request.params.id);
+      await publishService.publishAll();
+      response.redirect('/admin?notice=作品已删除，静态页面已同步清理。');
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/notes/:id/delete', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      await contentService.deleteNote(request.params.id);
+      await publishService.publishAll();
+      response.redirect('/admin?notice=日记已删除，静态页面已同步清理。');
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/publish', requireAdmin, requireCsrf, async (_request, response, next) => {
+    try {
+      await publishService.publishAll();
+      response.redirect('/admin?notice=静态前台已完成全量重新发布。');
     } catch (error) {
       next(error);
     }
@@ -506,7 +542,9 @@ function createApp(overrides = {}) {
 
   app.post('/api/admin/works', requireAdmin, requireCsrf, async (request, response, next) => {
     try {
-      response.status(201).json(await contentService.createWork(request.body));
+      const item = await contentService.createWork(request.body);
+      const publication = await publishService.publishAll();
+      response.status(201).json({ ...item, publication });
     } catch (error) {
       next(error);
     }
@@ -514,7 +552,9 @@ function createApp(overrides = {}) {
 
   app.post('/api/admin/notes', requireAdmin, requireCsrf, async (request, response, next) => {
     try {
-      response.status(201).json(await contentService.createNote(request.body));
+      const item = await contentService.createNote(request.body);
+      const publication = await publishService.publishAll();
+      response.status(201).json({ ...item, publication });
     } catch (error) {
       next(error);
     }
@@ -522,7 +562,9 @@ function createApp(overrides = {}) {
 
   app.put('/api/admin/works/:id', requireAdmin, requireCsrf, async (request, response, next) => {
     try {
-      response.json(await contentService.updateWork(request.params.id, request.body));
+      const item = await contentService.updateWork(request.params.id, request.body);
+      const publication = await publishService.publishAll();
+      response.json({ ...item, publication });
     } catch (error) {
       next(error);
     }
@@ -530,7 +572,37 @@ function createApp(overrides = {}) {
 
   app.put('/api/admin/notes/:id', requireAdmin, requireCsrf, async (request, response, next) => {
     try {
-      response.json(await contentService.updateNote(request.params.id, request.body));
+      const item = await contentService.updateNote(request.params.id, request.body);
+      const publication = await publishService.publishAll();
+      response.json({ ...item, publication });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/admin/works/:id', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      const item = await contentService.deleteWork(request.params.id);
+      const publication = await publishService.publishAll();
+      response.json({ item, publication });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/admin/notes/:id', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      const item = await contentService.deleteNote(request.params.id);
+      const publication = await publishService.publishAll();
+      response.json({ item, publication });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/admin/publish', requireAdmin, requireCsrf, async (_request, response, next) => {
+    try {
+      response.json(await publishService.publishAll());
     } catch (error) {
       next(error);
     }
@@ -578,7 +650,8 @@ function createApp(overrides = {}) {
       message = '上传请求无效。';
     } else if (!(error instanceof UploadPolicyError)
       && !(error instanceof ContentValidationError)
-      && !(error instanceof DeviceAuthError)) {
+      && !(error instanceof DeviceAuthError)
+      && !(error instanceof PublishError)) {
       console.error(error);
       message = '服务器内部错误。';
     }
@@ -595,9 +668,10 @@ function createApp(overrides = {}) {
   app.locals.database = database;
   app.locals.config = config;
   app.locals.contentService = contentService;
+  app.locals.publishService = publishService;
   app.locals.deviceAuthService = deviceAuthService;
   app.locals.sessionStore = sessionStore;
-  return { app, config, database, contentService, deviceAuthService, sessionStore };
+  return { app, config, database, contentService, publishService, deviceAuthService, sessionStore };
 }
 
 module.exports = { createApp };

@@ -50,6 +50,7 @@ function loadConfig(overrides = {}) {
   const dataDir = overrides.dataDir || resolveLocalPath(process.env.DATA_DIR, 'data');
   const contentDir = overrides.contentDir || resolveLocalPath(process.env.CONTENT_DIR, 'content');
   const uploadsDir = overrides.uploadsDir || resolveLocalPath(process.env.UPLOAD_DIR, 'uploads');
+  const siteRoot = overrides.siteRoot || path.resolve(serverRoot, '..');
 
   return {
     serverRoot,
@@ -123,6 +124,7 @@ function loadConfig(overrides = {}) {
     schemaPath: overrides.schemaPath || resolveLocalPath(process.env.SCHEMA_PATH, 'data/schema.sql'),
     contentDir,
     uploadsDir,
+    siteRoot,
   };
 }
 
