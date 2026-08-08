@@ -46,15 +46,17 @@ test('全量发布生成安全静态页、解决slug重名并只清理带标记�
   const first = await fixture.contentService.createWork({
     title: '同名作品 <script>',
     workDate: '2026-08-06',
-    category: '测试',
+    category: '影视',
     summary: '第一条 & 摘要',
+    detailIntro: '第一条 & 摘要',
     body: '## Markdown 标题\n\n正文内容\n\n<script>alert(1)</script>\n\n[危险链接](javascript:alert(2))',
   });
   const second = await fixture.contentService.createWork({
     title: '同名作品 <script>',
     workDate: '2026-08-05',
-    category: '测试',
+    category: '影视',
     summary: '第二条摘要',
+    detailIntro: '第二条摘要',
     body: '第二条正文',
   });
   assert.notEqual(first.slug, second.slug);

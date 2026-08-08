@@ -25,6 +25,7 @@ const policies = new Map([
   ['.ogg', { mimes: ['audio/ogg'], signature: (b) => b.toString('ascii', 0, 4) === 'OggS' }],
   ['.mp4', { mimes: ['video/mp4'], signature: (b) => b.toString('ascii', 4, 8) === 'ftyp' }],
   ['.webm', { mimes: ['video/webm'], signature: (b) => b.subarray(0, 4).equals(Buffer.from('1a45dfa3', 'hex')) }],
+  ['.zip', { mimes: ['application/zip', 'application/x-zip-compressed'], signature: (b) => b[0] === 0x50 && b[1] === 0x4b }],
 ]);
 
 function inspectDeclaration(file) {

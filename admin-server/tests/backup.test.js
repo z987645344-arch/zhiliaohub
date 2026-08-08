@@ -31,8 +31,9 @@ async function seedStorage(config) {
   const work = await contentService.createWork({
     title: '待恢复作品',
     workDate: '2026-08-04',
-    category: '备份验证',
+    category: '程序',
     summary: '验证作品元数据与正文恢复。',
+    detailIntro: '验证作品元数据与正文恢复。',
     body: '# 待恢复作品\n\n作品正文必须完整恢复。',
   });
   const note = await contentService.createNote({

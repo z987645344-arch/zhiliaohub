@@ -4,6 +4,17 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { createUniqueSlug } = require('./lib/slug');
 
+const WORK_CATEGORY_MIGRATION_NAME = 'works-categories-program-film-life-v1';
+const WORK_CATEGORY_MAPPINGS = Object.freeze([
+  Object.freeze({ from: '影像创作', to: '影视' }),
+  Object.freeze({ from: 'AI音乐', to: '影视' }),
+  Object.freeze({ from: 'AI影像', to: '影视' }),
+  Object.freeze({ from: '三维建模', to: '影视' }),
+  Object.freeze({ from: '网页设计', to: '程序' }),
+  Object.freeze({ from: '软件', to: '程序' }),
+  Object.freeze({ from: 'AI系统', to: '程序' }),
+]);
+
 function addMissingColumns(database, tableName, definitions) {
   const columns = new Set(database.prepare(`PRAGMA table_info(${tableName})`).all().map((row) => row.name));
   for (const [column, definition] of Object.entries(definitions)) {
@@ -21,6 +32,24 @@ function backfillSlugs(database, tableName) {
     used.add(slug);
     update.run(slug, row.id);
   }
+}
+
+function migrateWorkCategories(database) {
+  const applied = database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_CATEGORY_MIGRATION_NAME);
+  if (applied) return { applied: false, changedRows: 0 };
+
+  const migrate = database.transaction(() => {
+    const update = database.prepare('UPDATE works SET category = ? WHERE category = ?');
+    let changedRows = 0;
+    for (const mapping of WORK_CATEGORY_MAPPINGS) {
+      changedRows += update.run(mapping.to, mapping.from).changes;
+    }
+    database.prepare('INSERT INTO content_migrations (name, applied_at) VALUES (?, ?)')
+      .run(WORK_CATEGORY_MIGRATION_NAME, new Date().toISOString());
+    return changedRows;
+  });
+
+  return { applied: true, changedRows: migrate() };
 }
 
 function initializeDatabase(config) {
@@ -42,6 +71,14 @@ function initializeDatabase(config) {
     special_status: 'TEXT',
     is_placeholder: 'INTEGER NOT NULL DEFAULT 0 CHECK (is_placeholder IN (0, 1))',
     display_order: 'INTEGER',
+    cover_image: 'TEXT',
+    is_downloadable: 'INTEGER',
+    download_file: 'TEXT',
+    experience_url: 'TEXT',
+    main_media_type: 'TEXT',
+    main_media_path: 'TEXT',
+    gallery: 'TEXT',
+    version_log: 'TEXT',
   });
   addMissingColumns(database, 'notes', {
     slug: 'TEXT',
@@ -53,6 +90,7 @@ function initializeDatabase(config) {
     backfillSlugs(database, 'notes');
   });
   migrateSlugs();
+  migrateWorkCategories(database);
   database.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_works_slug ON works(slug) WHERE slug IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_slug ON notes(slug) WHERE slug IS NOT NULL;
@@ -60,4 +98,9 @@ function initializeDatabase(config) {
   return database;
 }
 
-module.exports = { initializeDatabase };
+module.exports = {
+  WORK_CATEGORY_MAPPINGS,
+  WORK_CATEGORY_MIGRATION_NAME,
+  initializeDatabase,
+  migrateWorkCategories,
+};

@@ -112,7 +112,7 @@ function loadConfig(overrides = {}) {
     uploadMaxBytes: positiveInteger(
       overrides.uploadMaxBytes ?? process.env.UPLOAD_MAX_BYTES,
       'UPLOAD_MAX_BYTES',
-      25 * 1024 * 1024,
+      100 * 1024 * 1024,
     ),
     contentMaxBytes: positiveInteger(
       overrides.contentMaxBytes ?? process.env.CONTENT_MAX_BYTES,

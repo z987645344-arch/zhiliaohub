@@ -16,6 +16,7 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+const MINIMAL_ZIP_HEADER = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
 async function createRuntime(overrides = {}) {
   const runtimeRoot = overrides.runtimeRoot
@@ -147,8 +148,9 @@ function workInput(suffix = '') {
   return {
     title: `本地验证作品${suffix}`,
     workDate: '2026-08-04',
-    category: '测试分类',
+    category: '程序',
     summary: `作品摘要${suffix}`,
+    detailIntro: `作品详情简介${suffix}`,
     body: `# 本地验证作品${suffix}\n\n作品正文${suffix}`,
   };
 }
@@ -519,6 +521,12 @@ test('上传策略接受真实 PNG，并分别拒绝非白名单、内容伪装�
     assert.equal((await response.json()).mimeType, 'image/png');
   });
 
+  await t.test('带 PK 文件头的 ZIP 上传成功', async () => {
+    const response = await upload(MINIMAL_ZIP_HEADER, 'application/zip', 'bundle.zip');
+    assert.equal(response.status, 201);
+    assert.equal((await response.json()).mimeType, 'application/zip');
+  });
+
   await t.test('非白名单扩展名被拒绝', async () => {
     const response = await upload(Buffer.from('MZ-not-allowed'), 'application/octet-stream', 'payload.exe');
     assert.equal(response.status, 415);
@@ -536,7 +544,7 @@ test('上传策略接受真实 PNG，并分别拒绝非白名单、内容伪装�
   });
 
   const stored = (await fs.readdir(runtime.config.uploadsDir)).filter((name) => !name.startsWith('pending-'));
-  assert.equal(stored.length, 1, '只有通过全部校验的上传文件可以保留。');
+  assert.equal(stored.length, 2, '只有通过全部校验的上传文件可以保留。');
 });
 
 test('认证限流按 IP 生效，且不会把唯一管理员账号锁定', async (t) => {

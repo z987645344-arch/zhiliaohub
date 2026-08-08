@@ -66,6 +66,39 @@
     });
   }
 
+  document.querySelectorAll("[data-showcase-thumbs]").forEach((strip) => {
+    const stage = strip.closest(".showcase-left")?.querySelector("[data-showcase-stage]");
+    if (!stage) return;
+
+    strip.querySelectorAll(".showcase-thumb").forEach((thumbnail) => {
+      thumbnail.addEventListener("click", () => {
+        const source = thumbnail.dataset.src;
+        const type = thumbnail.dataset.type;
+        if (!source || !["image", "video"].includes(type)) return;
+
+        strip.querySelectorAll(".showcase-thumb").forEach((item) => {
+          const active = item === thumbnail;
+          item.classList.toggle("is-active", active);
+          item.setAttribute("aria-pressed", String(active));
+        });
+
+        const media = document.createElement(type === "video" ? "video" : "img");
+        media.className = "showcase-main";
+        media.src = source;
+        if (type === "video") {
+          media.controls = true;
+          media.preload = "metadata";
+          media.playsInline = true;
+          media.setAttribute("aria-label", thumbnail.getAttribute("aria-label") || "作品辅视频");
+        } else {
+          media.alt = thumbnail.getAttribute("aria-label") || "作品辅图";
+          media.decoding = "async";
+        }
+        stage.replaceChildren(media);
+      });
+    });
+  });
+
   document.querySelectorAll("[data-unavailable-action]").forEach((control) => {
     control.addEventListener("click", (event) => {
       event.preventDefault();

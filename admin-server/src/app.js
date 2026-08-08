@@ -14,6 +14,7 @@ const speakeasy = require('speakeasy');
 const { loadConfig } = require('./config');
 const { initializeDatabase } = require('./db');
 const { encryptTotpSecret, decryptTotpSecret } = require('./lib/totp-secret');
+const { workFormScript } = require('./lib/html');
 const { SQLiteSessionStore } = require('./lib/sqlite-session-store');
 const {
   UploadPolicyError,
@@ -29,6 +30,7 @@ const {
   totpVerifyPage,
   dashboardPage,
   deviceManagementPage,
+  workFormPage,
   contentFormPage,
   errorPage,
 } = require('./views');
@@ -97,9 +99,9 @@ function createApp(overrides = {}) {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:'],
+        imgSrc: ["'self'", 'data:', 'blob:'],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        scriptSrc: ["'none'"],
+        scriptSrc: ["'self'"],
       },
     },
   }));
@@ -237,6 +239,16 @@ function createApp(overrides = {}) {
     limits: { fileSize: config.uploadMaxBytes, files: 1 },
     fileFilter: multerFileFilter,
   });
+
+  app.get('/admin/work-form.js', requireAdmin, (_request, response) => {
+    response.set('Cache-Control', 'no-store');
+    response.type('application/javascript').send(workFormScript());
+  });
+  app.use('/uploads', requireAdmin, express.static(config.uploadsDir, {
+    dotfiles: 'deny',
+    index: false,
+    redirect: false,
+  }));
 
   app.get('/health', (_request, response) => {
     response.json({ status: 'ok', storage: 'sqlite+markdown', deployment: 'local-only' });
@@ -392,7 +404,7 @@ function createApp(overrides = {}) {
   });
 
   app.get('/admin/works/new', requireAdmin, (_request, response) => {
-    response.send(contentFormPage({ csrfToken: response.locals.csrfToken, type: 'work' }));
+    response.send(workFormPage({ csrfToken: response.locals.csrfToken }));
   });
 
   app.get('/admin/notes/new', requireAdmin, (_request, response) => {
@@ -402,7 +414,7 @@ function createApp(overrides = {}) {
   app.get('/admin/works/:id/edit', requireAdmin, async (request, response, next) => {
     try {
       const record = await contentService.getWork(request.params.id);
-      response.send(contentFormPage({ csrfToken: response.locals.csrfToken, type: 'work', record }));
+      response.send(workFormPage({ csrfToken: response.locals.csrfToken, record }));
     } catch (error) {
       next(error);
     }

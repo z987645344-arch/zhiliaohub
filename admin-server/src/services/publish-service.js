@@ -1,7 +1,9 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { atomicWriteFile } = require('../lib/atomic-file');
 const { escapeHtml } = require('../lib/html');
+const { MEDIA_DIRECTORIES, safeParseGallery } = require('./content-service');
 const { GENERATED_MARKER } = require('../templates/shared');
 const { renderWorksList, renderWorkDetail } = require('../templates/works');
 const { renderNotesList, renderNoteDetail } = require('../templates/notes');
@@ -31,11 +33,45 @@ function resolveSiteFile(siteRoot, filename) {
   return target;
 }
 
+function resolvePublishedMediaFile(siteRoot, relativePath, expectedDirectory = '') {
+  const value = String(relativePath || '').split(path.sep).join('/');
+  const directory = expectedDirectory || Object.values(MEDIA_DIRECTORIES).find((candidate) => value.startsWith(candidate));
+  if (!directory || !value.startsWith(directory)) throw new PublishError(`媒体发布目标不在允许范围内：${relativePath}`);
+  const filename = value.slice(directory.length);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(filename) || path.posix.basename(filename) !== filename) {
+    throw new PublishError(`媒体发布文件名不安全：${relativePath}`);
+  }
+  const directoryPath = path.resolve(siteRoot, ...directory.replace(/\/$/, '').split('/'));
+  const target = path.resolve(siteRoot, ...value.split('/'));
+  if (path.dirname(target) !== directoryPath) throw new PublishError(`媒体发布目标越过目录：${relativePath}`);
+  return target;
+}
+
+function resolveUploadSource(uploadsDir, relativePath) {
+  const filename = path.posix.basename(String(relativePath).split(path.sep).join('/'));
+  const root = path.resolve(uploadsDir);
+  const target = path.resolve(root, filename);
+  if (path.dirname(target) !== root || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(filename)) {
+    throw new PublishError(`上传源文件名不安全：${relativePath}`);
+  }
+  return target;
+}
+
 async function readOptional(filePath) {
   try {
     return await fs.readFile(filePath);
   } catch (error) {
     if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+async function fileExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
     throw error;
   }
 }
@@ -100,12 +136,24 @@ class PublishService {
       ['works.html', renderWorksList(works)],
       ['notes.html', renderNotesList(notes)],
     ]);
+    const mediaFiles = new Map();
+
+    const addMedia = (relativePath, directory) => {
+      if (!relativePath) return;
+      const normalized = String(relativePath).split(path.sep).join('/');
+      resolvePublishedMediaFile(this.config.siteRoot, normalized, directory);
+      mediaFiles.set(normalized, resolveUploadSource(this.config.uploadsDir, normalized));
+    };
 
     for (const [index, work] of works.entries()) {
       const slug = assertSlug(work.slug);
       const markdown = await this.loadMarkdown(work.markdown_path, 'works');
       const prefix = work.is_placeholder ? '<small>WORK LOG / PLACEHOLDER</small>' : '';
       files.set(`works-${slug}.html`, renderWorkDetail(work, `${prefix}${renderMarkdown(markdown)}`, index));
+      addMedia(work.cover_image, MEDIA_DIRECTORIES.cover);
+      addMedia(work.main_media_path, MEDIA_DIRECTORIES.main);
+      addMedia(work.download_file, MEDIA_DIRECTORIES.download);
+      for (const item of safeParseGallery(work.gallery)) addMedia(item, MEDIA_DIRECTORIES.gallery);
     }
     for (const [index, note] of notes.entries()) {
       const slug = assertSlug(note.slug);
@@ -113,7 +161,7 @@ class PublishService {
       const prefix = note.is_placeholder ? '<small>CONTENT / PLACEHOLDER</small>' : '';
       files.set(`notes-${slug}.html`, renderNoteDetail(note, `${prefix}${renderMarkdown(markdown)}`, index));
     }
-    return { files, worksCount: works.length, notesCount: notes.length };
+    return { files, mediaFiles, worksCount: works.length, notesCount: notes.length };
   }
 
   async staleGeneratedFiles(desiredNames) {
@@ -129,6 +177,21 @@ class PublishService {
     return stale;
   }
 
+  async staleMediaFiles(desiredPaths) {
+    const stale = [];
+    for (const directory of Object.values(MEDIA_DIRECTORIES)) {
+      const directoryPath = path.resolve(this.config.siteRoot, ...directory.replace(/\/$/, '').split('/'));
+      await fs.mkdir(directoryPath, { recursive: true });
+      const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const relativePath = `${directory}${entry.name}`;
+        if (!desiredPaths.has(relativePath)) stale.push(relativePath);
+      }
+    }
+    return stale;
+  }
+
   async performPublish() {
     let build;
     try {
@@ -140,13 +203,39 @@ class PublishService {
 
     const desiredNames = new Set(build.files.keys());
     const stale = await this.staleGeneratedFiles(desiredNames);
+    const desiredMediaPaths = new Set(build.mediaFiles.keys());
+    const staleMedia = await this.staleMediaFiles(desiredMediaPaths);
     const affected = new Set([...desiredNames, ...stale]);
     const snapshots = new Map();
     for (const filename of affected) {
       snapshots.set(filename, await readOptional(resolveSiteFile(this.config.siteRoot, filename)));
     }
 
+    await fs.mkdir(this.config.dataDir, { recursive: true });
+    const mediaRollbackRoot = path.join(this.config.dataDir, `publish-media-rollback-${randomUUID()}`);
+    await fs.mkdir(mediaRollbackRoot, { recursive: true });
+    const mediaSnapshots = new Map();
+    let mediaIndex = 0;
     try {
+      for (const relativePath of new Set([...desiredMediaPaths, ...staleMedia])) {
+        const target = resolvePublishedMediaFile(this.config.siteRoot, relativePath);
+        if (!await fileExists(target)) {
+          mediaSnapshots.set(relativePath, null);
+          continue;
+        }
+        const backupPath = path.join(mediaRollbackRoot, String(mediaIndex));
+        mediaIndex += 1;
+        await fs.copyFile(target, backupPath);
+        mediaSnapshots.set(relativePath, backupPath);
+      }
+      for (const [relativePath, source] of build.mediaFiles) {
+        const target = resolvePublishedMediaFile(this.config.siteRoot, relativePath);
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.copyFile(source, target);
+      }
+      for (const relativePath of staleMedia) {
+        await fs.unlink(resolvePublishedMediaFile(this.config.siteRoot, relativePath));
+      }
       for (const [filename, html] of build.files) {
         await atomicWriteFile(resolveSiteFile(this.config.siteRoot, filename), html);
       }
@@ -161,8 +250,24 @@ class PublishService {
           works_count = excluded.works_count,
           notes_count = excluded.notes_count
       `).run(publishedAt, build.worksCount, build.notesCount);
-      return { publishedAt, worksCount: build.worksCount, notesCount: build.notesCount, files: [...desiredNames] };
+      return {
+        publishedAt,
+        worksCount: build.worksCount,
+        notesCount: build.notesCount,
+        files: [...desiredNames],
+        mediaFiles: [...desiredMediaPaths],
+      };
     } catch (error) {
+      for (const [relativePath, snapshot] of mediaSnapshots) {
+        const target = resolvePublishedMediaFile(this.config.siteRoot, relativePath);
+        if (snapshot === null) await fs.unlink(target).catch((unlinkError) => {
+          if (unlinkError.code !== 'ENOENT') throw unlinkError;
+        });
+        else {
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.copyFile(snapshot, target);
+        }
+      }
       for (const [filename, snapshot] of snapshots) {
         const target = resolveSiteFile(this.config.siteRoot, filename);
         if (snapshot === null) await fs.unlink(target).catch((unlinkError) => {
@@ -170,9 +275,16 @@ class PublishService {
         });
         else await atomicWriteFile(target, snapshot);
       }
-      throw new PublishError(`写入静态页面失败，已恢复发布前文件：${error.message}`, error);
+      throw new PublishError(`写入静态页面或媒体失败，已恢复发布前文件：${error.message}`, error);
+    } finally {
+      await fs.rm(mediaRollbackRoot, { recursive: true, force: true });
     }
   }
 }
 
-module.exports = { PublishError, PublishService, resolveSiteFile };
+module.exports = {
+  PublishError,
+  PublishService,
+  resolvePublishedMediaFile,
+  resolveSiteFile,
+};

@@ -6,6 +6,7 @@ Desktop.ini
 # Editor settings and temporary files
 .idea/
 .vscode/
+.workbuddy/
 *.swp
 *.swo
 *~

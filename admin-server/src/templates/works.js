@@ -1,4 +1,5 @@
 const { escapeHtml, page } = require('./shared');
+const { safeParseGallery } = require('../services/content-service');
 
 const legacyPresentations = {
   'mix-video': ['cover-cut', 'MV', '▶', 'VIDEO EDIT'],
@@ -18,11 +19,14 @@ function presentation(work, index) {
 
 function renderWorksList(works) {
   const cards = works.map((work, index) => {
-    const [cover, code, symbol, label] = presentation(work, index);
+    const [cover, code, symbol] = presentation(work, index);
     const number = String(index + 1).padStart(2, '0');
     const featured = work.special_status === 'official_url_pending' ? ' portfolio-card-featured' : '';
     const enter = work.special_status === 'official_url_pending' ? '进入详情 · 展示入口待开放' : '进入详情';
-    return `          <article class="portfolio-card${featured}"><a class="portfolio-card-link" href="works-${escapeHtml(work.slug)}.html"><div class="portfolio-cover ${cover}"><span>${escapeHtml(code)} / ${number}</span><b aria-hidden="true">${escapeHtml(symbol)}</b></div><div class="portfolio-copy"><small>${escapeHtml(label)}</small><h2>${escapeHtml(work.title)}</h2><p>${escapeHtml(work.summary)}</p><span class="card-enter">${enter}</span></div></a></article>`;
+    const coverMarkup = work.cover_image
+      ? `<div class="portfolio-cover portfolio-cover-photo"><img src="${escapeHtml(work.cover_image)}" alt="${escapeHtml(work.title)}封面" loading="lazy" decoding="async"><span class="portfolio-cover-num">${escapeHtml(code)} / ${number}</span></div>`
+      : `<div class="portfolio-cover ${cover}"><span>${escapeHtml(code)} / ${number}</span><b aria-hidden="true">${escapeHtml(symbol)}</b></div>`;
+    return `          <article class="portfolio-card${featured}"><a class="portfolio-card-link" href="works-${escapeHtml(work.slug)}.html">${coverMarkup}<div class="portfolio-copy"><small>${escapeHtml(work.category)}</small><h2>${escapeHtml(work.title)}</h2><p>${escapeHtml(work.detail_intro || '')}</p><span class="card-enter">${enter}</span></div></a></article>`;
   }).join('\n');
 
   return page({
@@ -39,32 +43,47 @@ ${cards}
 }
 
 function renderWorkDetail(work, htmlBody, index) {
-  const [, , , label] = presentation(work, index);
+  const [cover, code, symbol] = presentation(work, index);
   const number = String(index + 1).padStart(2, '0');
   const placeholder = Boolean(work.is_placeholder);
   const special = work.special_status === 'official_url_pending';
-  const displayButton = special
-    ? '<button class="button button-outline" type="button" data-unavailable-action data-unavailable-message="展示入口暂未开放：知天的正式对外地址尚未配置。">展示入口</button>'
-    : '';
   const status = special ? '展示入口待开放' : placeholder ? '内容筹备中' : '已发布';
-  const legacyDescription = {
-    zhili: '软件知历的作品详情与工作日志占位。',
-    zhiliao: '软件知了的作品详情与工作日志占位。',
-    zhitian: '知天企业知识库RAG+Agent系统的作品详情与工作日志占位。',
-  }[work.slug];
-  const workLabel = String(work.title).endsWith('作品') ? work.title : `${work.title}作品`;
-  const description = placeholder && legacyDescription
-    ? legacyDescription
-    : `${workLabel}详情与工作日志${placeholder ? '占位' : ''}。`;
+  const primaryPath = work.main_media_path || work.cover_image;
+  const primaryType = work.main_media_path && work.main_media_type === 'video' ? 'video' : 'image';
+  const mainMedia = primaryPath
+    ? primaryType === 'video'
+      ? `<video class="showcase-main" src="${escapeHtml(primaryPath)}" controls preload="metadata" playsinline aria-label="${escapeHtml(work.title)}主视频"></video>`
+      : `<img class="showcase-main" src="${escapeHtml(primaryPath)}" alt="${escapeHtml(work.title)}主图" decoding="async">`
+    : `<div class="showcase-main showcase-placeholder portfolio-cover ${cover}" role="img" aria-label="${escapeHtml(work.title)}暂无媒体，显示默认封面"><span>${escapeHtml(code)} / ${number}</span><b aria-hidden="true">${escapeHtml(symbol)}</b></div>`;
+  const gallery = safeParseGallery(work.gallery);
+  const thumbs = gallery.map((item, galleryIndex) => {
+    const video = /\.(?:mp4|webm)$/i.test(item);
+    const label = `${video ? '播放辅视频' : '查看辅图'} ${galleryIndex + 1}`;
+    const preview = video
+      ? `<video src="${escapeHtml(item)}" muted preload="metadata" playsinline aria-hidden="true"></video>`
+      : `<img src="${escapeHtml(item)}" alt="" loading="lazy" decoding="async">`;
+    return `<button class="showcase-thumb" type="button" data-src="${escapeHtml(item)}" data-type="${video ? 'video' : 'image'}" aria-label="${label}" aria-pressed="false">${preview}</button>`;
+  }).join('');
+  const downloadButton = work.is_downloadable && work.download_file
+    ? `<a class="button" href="${escapeHtml(work.download_file)}" download>下载</a>`
+    : '';
+  const experienceButton = work.experience_url
+    ? `<a class="button button-outline" href="${escapeHtml(work.experience_url)}" target="_blank" rel="noopener noreferrer">体验</a>`
+    : '';
+  const actions = downloadButton || experienceButton
+    ? `<div class="showcase-actions">${downloadButton}${experienceButton}</div>`
+    : '';
+  const versionLog = work.version_log
+    ? htmlBody
+    : '<p class="version-log-empty">暂无版本日志，后续更新将在这里记录。</p>';
   return page({
     title: work.title,
-    description,
+    description: work.detail_intro || '',
     current: 'works',
     bodyClass: 'detail-page',
     content: `<main class="detail-main" id="main-content">
-      <section class="detail-hero" aria-labelledby="detail-title"><a class="back-link" href="works.html">← 返回作品列表</a><div class="detail-heading"><div><p class="page-kicker">${escapeHtml(label)} / WORK ${number}</p><h1 id="detail-title">${escapeHtml(work.title)}</h1></div><p>${escapeHtml(work.detail_intro || work.summary)}</p></div><div class="detail-meta"><span>分类 / ${escapeHtml(work.category)}</span><span>状态 / ${status}</span></div></section>
-      <section class="detail-actions" aria-label="作品操作" data-action-scope><div><button class="button" type="button" data-unavailable-action data-unavailable-message="下载功能暂未开放：当前没有可下载文件。">下载作品</button><button class="button button-outline" type="button" data-unavailable-action data-unavailable-message="登录功能暂未开放：当前站点没有用户系统。">登录入口</button>${displayButton}</div><p class="action-status" data-action-status role="status" tabindex="-1"></p></section>
-      <section class="detail-content" aria-labelledby="work-log-title"><div class="section-bar"><h2 id="work-log-title">工作日志</h2><span>${placeholder ? 'NOT PUBLISHED' : 'PUBLISHED'}</span></div><div class="empty-log">${htmlBody}</div></section>
+      <div class="showcase-shell"><a class="back-link" href="works.html">← 返回作品列表</a><section class="showcase" aria-labelledby="detail-title"><div class="showcase-left"><div class="showcase-stage" data-showcase-stage aria-live="polite">${mainMedia}</div>${thumbs ? `<div class="showcase-thumbs" data-showcase-thumbs aria-label="作品辅助媒体">${thumbs}</div>` : ''}</div><div class="showcase-right"><p class="page-kicker">${escapeHtml(work.category)} / WORK ${number}</p><h1 id="detail-title">${escapeHtml(work.title)}</h1><p class="showcase-intro">${escapeHtml(work.detail_intro || '')}</p>${actions}<div class="showcase-meta"><span>状态 / ${status}</span></div></div></section></div>
+      <section class="detail-content" aria-labelledby="version-log-title"><div class="section-bar"><h2 id="version-log-title">版本日志</h2><span>${work.version_log ? 'PUBLISHED' : 'NO ENTRIES'}</span></div><div class="version-log">${versionLog}</div></section>
     </main>`,
   });
 }
