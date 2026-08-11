@@ -1,9 +1,10 @@
+<!-- 此文件由知了hub后台自动生成，请勿手动编辑，编辑请通过管理后台 -->
 <!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="知了hub 的反馈与评论界面预览，当前不会发送或保存内容。">
+    <meta name="description" content="在知了hub提交留言、查看已通过审核的评论与站长回复。">
     <meta name="theme-color" content="#d9dde0">
     <title>反馈中心｜知了hub</title>
     <link rel="stylesheet" href="css/style.css">
@@ -11,57 +12,29 @@
   </head>
   <body>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
-    <header class="site-header"><div class="header-inner">
-      <a class="brand" href="index.html" aria-label="知了hub 首页"><span class="brand-mark" aria-hidden="true">知</span><span class="brand-copy"><strong>知了hub</strong><small>PERSONAL ARCHIVE</small></span></a>
-      <button class="nav-toggle" type="button" aria-label="打开或关闭导航" aria-controls="site-nav" aria-expanded="false"><span></span><span></span></button>
-      <nav class="site-nav" id="site-nav" aria-label="主导航"><a href="index.html"><span>01</span>首页</a><a href="works.html"><span>02</span>作品展示</a><a href="notes.html"><span>03</span>学习心得</a><a href="feedback.html" aria-current="page"><span>04</span>反馈中心</a></nav>
-    </div></header>
-
+    <header class="site-header"><div class="header-inner"><a class="brand" href="index.html" aria-label="知了hub 首页"><span class="brand-mark" aria-hidden="true">知</span><span class="brand-copy"><strong>知了hub</strong><small>PERSONAL ARCHIVE</small></span></a><button class="nav-toggle" type="button" aria-label="打开或关闭导航" aria-controls="site-nav" aria-expanded="false"><span></span><span></span></button><nav class="site-nav" id="site-nav" aria-label="主导航"><a href="index.html"><span>01</span>首页</a><a href="works.html"><span>02</span>作品展示</a><a href="notes.html"><span>03</span>学习心得</a><a href="tools.html"><span>04</span>智能工具</a><a href="feedback.html" aria-current="page"><span>05</span>反馈中心</a></nav></div></header>
     <main class="page-main" id="main-content">
       <section class="page-hero" aria-labelledby="page-title">
-        <div class="page-hero-grid"><div><p class="page-kicker">Feedback signal / 03</p><h1 class="page-title" id="page-title">反馈<span class="outline">中心</span></h1><p class="page-index">ZHILIAO.HUB — SIGNAL 03</p></div><p class="page-intro">先搭好交流的界面，再等待真实的接收能力就位。当前所有填写、评论与跟评都不会离开这个页面。</p></div>
+        <div class="page-hero-grid"><div><p class="page-kicker">Feedback signal / 03</p><h1 class="page-title" id="page-title">反馈<span class="outline">中心</span></h1><p class="page-index">ZHILIAO.HUB — SIGNAL 03</p></div><p class="page-intro">这里接收真实留言。所有新内容都会先进入审核队列，通过后才会出现在公开评论区。</p></div>
         <figure class="page-visual"><img src="assets/feedback-oc-message-slot.webp" width="1724" height="912" alt="雨中的水泥灰城市廊下，黑发男孩手持空白卡片站在墙面留言槽前" loading="lazy" decoding="async"></figure>
       </section>
 
       <section class="feedback-section" aria-labelledby="feedback-form-title">
         <div class="feedback-grid">
-          <aside class="feedback-aside"><div><p class="card-kicker">A future channel</p><h2 id="feedback-form-title">想说点什么？</h2><p>界面已经准备好，但接收反馈的后端服务还没有启用。</p></div><div class="availability-card" id="feedback-disclaimer"><strong>该功能暂未开放</strong><small>不会发送，也不会保存任何填写内容。</small></div></aside>
-          <form class="feedback-form" data-feedback-form novalidate aria-describedby="feedback-disclaimer">
-            <div class="form-row"><div class="field"><label for="name">姓名 / NAME</label><input id="name" name="name" type="text" autocomplete="name" placeholder="怎么称呼你"></div><div class="field"><label for="email">邮箱 / EMAIL</label><input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com"></div></div>
-            <div class="field"><label for="message">留言 / MESSAGE</label><textarea id="message" name="message" placeholder="写下你的想法（当前不会发送或保存）"></textarea></div>
-            <div class="form-footer"><p class="form-disclaimer">当前仅供界面预览。点击按钮只会显示未开放说明，不会产生提交请求。</p><button class="button button-acid" type="submit">查看开放状态</button></div>
-            <p class="form-status" data-feedback-status role="status" tabindex="-1"></p>
-          </form>
+          <aside class="feedback-aside"><div><p class="card-kicker">An open channel</p><h2 id="feedback-form-title">想说点什么？</h2><p>欢迎留下建议、想法或问候。内容会由站长审核后公开。</p></div><div class="availability-card is-open" id="feedback-disclaimer"><strong>留言通道已开放</strong><small>先审后发；请勿提交密码、验证码等敏感信息。</small></div></aside>
+          <form class="feedback-form" data-feedback-form action="/api/feedback/comments" method="post" aria-describedby="feedback-disclaimer">
+    <div class="form-row"><div class="field"><label for="feedback-name">称呼 / NAME</label><input id="feedback-name" name="author_name" type="text" autocomplete="name" placeholder="怎么称呼你" required maxlength="80"></div><div class="field"><label for="feedback-email">邮箱 / EMAIL（可选）</label><input id="feedback-email" name="email" type="email" autocomplete="email" placeholder="name@example.com" maxlength="254"><small class="field-hint">仅供站长私下联系，永不公开展示。</small></div></div>
+    <div class="field"><label for="feedback-message">留言 / MESSAGE</label><textarea id="feedback-message" name="body" placeholder="写下你的想法" required minlength="2" maxlength="2000"></textarea></div>
+    <div class="feedback-honeypot" aria-hidden="true"><label for="feedback-website">网站</label><input id="feedback-website" name="website" type="text" tabindex="-1" autocomplete="off"></div><div class="form-footer"><p class="form-disclaimer">提交只代表进入审核队列，不会立即公开。邮箱仅供站长私下联系，永不展示。</p><button class="button button-acid" type="submit">提交留言</button></div><p class="form-status" data-feedback-status role="status" tabindex="-1"></p></form>
         </div>
       </section>
 
-      <section class="comments-section" aria-labelledby="comments-title" data-action-scope>
-        <div class="section-bar"><h2 id="comments-title">评论预览</h2><span>UI ONLY / NO PERSISTENCE</span></div>
-        <div class="truth-notice" role="note"><strong>评论区尚未开放</strong><p>评论和跟评内容当前不会被保存、发送或对外展示；下方内容均为界面占位，不代表真实用户留言。</p></div>
-        <div class="comment-layout">
-          <form class="comment-composer" data-comment-form novalidate>
-            <label for="comment-message">评论 / COMMENT</label>
-            <textarea id="comment-message" name="comment" placeholder="输入内容仅用于界面预览，不会被保存或发送"></textarea>
-            <div><p>无需填写真实信息。</p><button class="button button-acid" type="submit">评论（暂未开放）</button></div>
-          </form>
-          <div class="comment-list" aria-label="评论占位示例">
-            <article class="comment-item is-placeholder">
-              <div class="comment-meta"><span>占位评论 01</span><time datetime="2026-08-02">2026.08.02</time></div>
-              <p>这是一条用于展示评论排版的占位内容，并非真实留言。</p>
-              <button type="button" class="text-button" data-unavailable-action data-unavailable-message="该功能暂未开放：跟评不会发送、保存或对外展示。">回复（暂未开放）</button>
-              <article class="comment-item comment-reply is-placeholder">
-                <div class="comment-meta"><span>占位跟评</span><span>界面示例</span></div>
-                <p>这段缩进内容只用于预览跟评层级，并非真实回复。</p>
-                <button type="button" class="text-button" data-unavailable-action data-unavailable-message="该功能暂未开放：跟评不会发送、保存或对外展示。">继续回复（暂未开放）</button>
-              </article>
-            </article>
-            <article class="comment-item is-placeholder"><div class="comment-meta"><span>占位评论 02</span><time datetime="2026-08-01">2026.08.01</time></div><p>第二条占位内容用于确认多条评论之间的分隔与留白。</p><button type="button" class="text-button" data-unavailable-action data-unavailable-message="该功能暂未开放：跟评不会发送、保存或对外展示。">回复（暂未开放）</button></article>
-          </div>
-        </div>
-        <p class="action-status" data-action-status role="status" tabindex="-1"></p>
+      <section class="comments-section" aria-labelledby="comments-title">
+        <div class="section-bar"><h2 id="comments-title">已通过留言</h2><span>REVIEWED / PUBLIC</span></div>
+        <div class="truth-notice" role="note"><strong>先审后发</strong><p>这里仅显示已通过审核的内容。待审核与已隐藏留言不会进入静态页面，邮箱和IP也永不公开。</p></div>
+        <div class="comment-list" aria-label="已通过审核的留言"><div class="comment-empty"><strong>还没有留言</strong><p>来说点什么吧。每条内容都会先经过审核，再公开显示在这里。</p></div></div>
       </section>
     </main>
-
     <footer class="site-footer"><div class="footer-inner"><p class="footer-wordmark">知了hub / ZHILIAO</p><p>© <span data-current-year>2026</span> · 持续生长的个人作品集</p></div></footer>
   </body>
 </html>

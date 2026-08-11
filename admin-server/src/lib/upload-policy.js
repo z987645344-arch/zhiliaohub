@@ -46,6 +46,18 @@ function multerFileFilter(_request, file, callback) {
   }
 }
 
+function zipFileFilter(_request, file, callback) {
+  try {
+    const declaration = inspectDeclaration(file);
+    if (declaration.extension !== '.zip') {
+      throw new UploadPolicyError('小作坊只接受ZIP压缩包。');
+    }
+    callback(null, true);
+  } catch (error) {
+    callback(error);
+  }
+}
+
 async function validateAndFinalizeUpload(file, config) {
   const { extension, policy } = inspectDeclaration(file);
   const handle = await fs.open(file.path, 'r');
@@ -78,5 +90,6 @@ async function validateAndFinalizeUpload(file, config) {
 module.exports = {
   UploadPolicyError,
   multerFileFilter,
+  zipFileFilter,
   validateAndFinalizeUpload,
 };

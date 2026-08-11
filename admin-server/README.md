@@ -57,7 +57,7 @@ node scripts/migrate-existing-content.js --apply --confirm-server-stopped
 
 “编辑作品重构”阶段一已为 `works` 增加封面、下载、体验链接、主媒体、辅图和版本日志共8个可空字段，并把现有作品分类一次性迁为“程序/影视/生活”枚举范围。当前真实数据为程序4条、影视4条、生活0条。阶段二已把这些字段接入独立作品表单：封面可拖动选区内部调整位置、拖动四角按16:9缩放，主媒体、多个辅媒体和ZIP可通过现有受保护上传接口写入，版本日志继续使用Markdown。后台CSP只为该原生表单脚本开放同源脚本，并只为本地图片裁剪预览额外开放 `blob:` 图片源，不允许内联或第三方脚本。
 
-全量发布会把作品实际引用的后台上传文件复制到前台 `assets/works/covers/`、`assets/works/main/`、`assets/works/gallery/` 和 `assets/works/downloads/`，并清理不再被任何作品引用的前台副本；上传源文件保留在后台。阶段二仍未修改作品前台模板，因此这些媒体文件暂不会出现在访客页面，属于等待阶段三接入展示的中间状态。
+全量发布会把作品实际引用的后台上传文件复制到前台 `assets/works/covers/`、`assets/works/main/`、`assets/works/gallery/` 和 `assets/works/downloads/`，并清理不再被任何作品引用的前台副本；上传源文件保留在后台。阶段三已经把封面、主/辅媒体、版本日志以及按条目配置的下载/体验入口接入Steam风格前台模板。
 
 2026-08-08 已在真实管理后台完成测试作品新增、媒体上传、裁剪封面、分类/媒体编辑和删除；数据库最终恢复8个作品/3篇日记，四个前台媒体目录清空，1280px与390px均无横向溢出或控制台错误。该人工结果不改变下方自动化测试与CI的覆盖边界。
 
@@ -66,6 +66,54 @@ node scripts/migrate-existing-content.js --apply --confirm-server-stopped
 上传白名单包括JPEG、PNG、WebP、GIF、AVIF、PDF、Markdown、MP3、WAV、OGG、MP4、WebM和ZIP。服务同时检查扩展名、MIME与文件签名；ZIP接受 `application/zip` 或 `application/x-zip-compressed`，并要求PK文件头。
 
 默认单文件上限统一为100MiB，可用 `UPLOAD_MAX_BYTES` 调低或调整。本阶段选择统一上限以覆盖开发期视频和压缩包，同时避免默认放宽到1GiB；按文件类型设置不同上限留待后续阶段实现。真实上传文件继续由 `.gitignore` 排除。
+
+## 小作坊ZIP静态项目
+
+已登录管理员可访问 `/admin/lab`，上传包含根目录 `index.html` 及配套网页资源的ZIP。服务会先扫描完整压缩包，拒绝绝对路径、盘符、`..` 路径穿越、符号链接、加密条目、非网页资源扩展名和缺少入口页的项目；默认最多500个ZIP条目、总解压后大小100MiB，并在实际解压时再次统计输出字节。通过校验后，项目进入 `lab-storage/<slug>/`，本地通过 `/lab/<slug>/` 只读访问。
+
+后台可复制访问链接、切换是否显示在 `works.html` 底部，以及删除项目。显示状态变化与删除会触发全量发布；没有可见项目时不生成空的小作坊区块。真实项目目录由 `.gitignore` 排除，只保留 `lab-storage/.gitkeep`。
+
+```dotenv
+LAB_MAX_FILES=500
+LAB_MAX_UNCOMPRESSED_BYTES=104857600
+LAB_BASE_URL=http://localhost:3001/lab
+# LAB_STORAGE_DIR=D:\absolute\persistent\lab-storage
+```
+
+`/lab` 路由在管理员session中间件之前挂载，响应不创建或更新session，并设置限制跨域连接、表单提交和框架嵌入的CSP。localhost同源测试无法证明真实子域名不携带管理Cookie；正式部署需采用 `deploy/lab-subdomain.md` 中的独立Nginx静态server块，把 `LAB_BASE_URL` 改为真实HTTPS子域名，并确认管理员Cookie未配置父域 `Domain`。该隔离效果属于部署阶段待验证项，本轮未宣称已完成真实域名验证。
+
+## 反馈评论提交与后台审核（阶段一、二）
+
+`POST /api/feedback/comments` 无需登录和CSRF令牌，接受JSON或普通表单编码。接口只负责把留言写入SQLite审核队列，不提供公开读取接口，也不直接触发静态发布；公开内容由全量发布时生成到 `feedback.html`。
+
+```json
+{
+  "parent_id": null,
+  "author_name": "访客称呼",
+  "author_email": "optional@example.com",
+  "body": "留言正文",
+  "website": ""
+}
+```
+
+- `author_name` 必填，去除首尾空白后最多80个字符。
+- `author_email` 可空；填写时必须是合理邮箱格式且不超过254个字符。
+- `body` 去除首尾空白后为2至2000个字符。
+- `parent_id` 可空；填写时必须指向一条已批准的顶层留言。待审核、已拒绝、不存在的留言以及已有回复都不能作为回复目标，因此评论最多两层。
+- `website` 是后续前台表单使用的视觉隐藏蜜罐字段。只要有内容，接口仍返回普通 `202` 成功响应，但不会写入数据库。
+- 所有真实写入记录一律为 `pending`，不会自动公开。成功响应不返回数据库ID，避免蜜罐响应与正常响应出现可探测差异。
+- 请求按Express识别的客户端IP限流，默认每15分钟最多5次；IP同时写入记录，仅供限流与滥用追踪，不通过公开接口返回。
+
+相关环境变量：
+
+```dotenv
+FEEDBACK_RATE_LIMIT_WINDOW_MS=900000
+FEEDBACK_RATE_LIMIT_MAX=5
+```
+
+已登录管理员可访问 `/admin/feedback`。页面按顶层留言分组，并在主题下缩进展示其全部二层回复；默认筛选“含待审核内容的主题”，同时保留已通过的上下文。待审核内容可通过或拒绝，已通过内容可事后隐藏；管理员可对已通过的顶层留言以固定作者“站长”直接发布回复。所有写操作都要求管理员会话和CSRF令牌，且只更新SQLite；审核完成后需在管理面板执行全量发布，前台才会变化。
+
+发布服务对反馈执行独立SQL查询，只选择 `status='approved'` 且只读取 `id/parent_id/author_name/body/created_at/is_admin_reply`。pending、rejected、邮箱和IP不会进入模板输入；生成页只显示已批准顶层留言及其已批准回复，管理员回复带“站长回复”标识。`feedback.html` 页面加载不发起读取请求，只有访客主动提交留言或回复时调用同源API。因此本地或生产部署必须让静态站点的 `/api/feedback/comments` 反向代理到本服务；正式环境必须使用HTTPS。
 
 ## 会话存储
 
@@ -208,8 +256,12 @@ SQLite快照也包含备份时尚未过期的session记录。灾难恢复后如�
 - 配对码必须由密码+TOTP会话生成，且过期或重用均被拒绝。
 - P-256设备正确签名登录、错误签名拒绝、挑战重放与过期拒绝。
 - 设备吊销立即失效、重新配对恢复以及新设备自动替换旧设备。
+- 公开反馈的顶层留言与已批准留言回复进入pending审核队列；蜜罐静默丢弃、按IP限流、非法回复层级和字段边界均被拒绝。
+- 反馈后台按主题显示上下文，支持通过、拒绝、事后隐藏和管理员直接回复；验证旧库字段升级、未登录/CSRF拦截及禁止三层回复，并确认审核过程不修改前台文件或发布状态。
+- 反馈静态发布只读取approved公开列；待审/拒绝正文、邮箱和IP不进入源码，空状态、顶层/二层结构与站长标签正确；前端对正常/蜜罐202统一显示等待审核，并清晰展示字段、网络和429错误。
+- 小作坊真实multipart上传、管理员/CSRF拦截、含显式目录的HTML/CSS/JS/图片ZIP解压、作品页显隐和删除清理；路径穿越、超限解压和PHP文件在写出前拒绝，`/lab` 响应不创建session或设置Cookie并带受限CSP。
 
-当前测试不覆盖外部验证器设备的时钟差异、浏览器视觉与原生裁剪拖拽的真实交互、HTTPS/反向代理、真实容器运行、异地备份或多进程/多实例并发。现有 GitHub Actions 也不会安装后台依赖或执行 `npm test`；是否为后台建立独立 CI 需后续讨论。
+当前测试不覆盖外部验证器设备的时钟差异、浏览器视觉与原生裁剪拖拽的真实交互、真实小作坊子域名Cookie隔离、HTTPS/反向代理、真实容器运行、异地备份或多进程/多实例并发。现有 GitHub Actions 也不会安装后台依赖或执行 `npm test`；是否为后台建立独立 CI 需后续讨论。
 
 ## 当前边界
 

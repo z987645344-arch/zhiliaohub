@@ -57,6 +57,7 @@ function initializeDatabase(config) {
   fs.mkdirSync(path.join(config.contentDir, 'works'), { recursive: true });
   fs.mkdirSync(path.join(config.contentDir, 'notes'), { recursive: true });
   fs.mkdirSync(config.uploadsDir, { recursive: true });
+  fs.mkdirSync(config.labStorageDir || path.join(config.dataDir, 'lab-storage'), { recursive: true });
 
   const database = new Database(config.databasePath);
   database.pragma('journal_mode = WAL');
@@ -84,6 +85,9 @@ function initializeDatabase(config) {
     slug: 'TEXT',
     is_placeholder: 'INTEGER NOT NULL DEFAULT 0 CHECK (is_placeholder IN (0, 1))',
     display_order: 'INTEGER',
+  });
+  addMissingColumns(database, 'feedback_comments', {
+    is_admin_reply: 'INTEGER NOT NULL DEFAULT 0 CHECK (is_admin_reply IN (0, 1))',
   });
   const migrateSlugs = database.transaction(() => {
     backfillSlugs(database, 'works');

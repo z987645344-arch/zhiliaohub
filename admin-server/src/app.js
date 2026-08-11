@@ -14,21 +14,26 @@ const speakeasy = require('speakeasy');
 const { loadConfig } = require('./config');
 const { initializeDatabase } = require('./db');
 const { encryptTotpSecret, decryptTotpSecret } = require('./lib/totp-secret');
-const { workFormScript } = require('./lib/html');
+const { labManagementScript, workFormScript } = require('./lib/html');
 const { SQLiteSessionStore } = require('./lib/sqlite-session-store');
 const {
   UploadPolicyError,
   multerFileFilter,
+  zipFileFilter,
   validateAndFinalizeUpload,
 } = require('./lib/upload-policy');
 const { ContentService, ContentValidationError } = require('./services/content-service');
 const { DeviceAuthError, DeviceAuthService } = require('./services/device-auth-service');
+const { FeedbackService, FeedbackValidationError } = require('./services/feedback-service');
+const { LabService, LabValidationError } = require('./services/lab-service');
 const { PublishError, PublishService } = require('./services/publish-service');
 const {
   loginPage,
   totpSetupPage,
   totpVerifyPage,
   dashboardPage,
+  feedbackManagementPage,
+  labManagementPage,
   deviceManagementPage,
   workFormPage,
   contentFormPage,
@@ -86,6 +91,8 @@ function createApp(overrides = {}) {
   const contentService = new ContentService(database, config);
   const publishService = new PublishService(database, config);
   const deviceAuthService = new DeviceAuthService(database, config);
+  const feedbackService = new FeedbackService(database);
+  const labService = new LabService(database, config);
   const sessionStore = new SQLiteSessionStore({
     database,
     defaultTtlMs: config.sessionMaxAgeMs,
@@ -95,6 +102,22 @@ function createApp(overrides = {}) {
 
   if (config.trustProxyHops > 0) app.set('trust proxy', config.trustProxyHops);
   app.disable('x-powered-by');
+  app.use('/lab', (request, response, next) => {
+    response.set({
+      'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'",
+      'Cross-Origin-Resource-Policy': 'same-origin',
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    next();
+  }, express.static(config.labStorageDir, {
+    dotfiles: 'deny',
+    index: 'index.html',
+    redirect: true,
+  }));
+  app.use('/lab', (_request, response) => {
+    response.status(404).type('text/plain').send('小作坊项目或文件不存在。');
+  });
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
@@ -123,8 +146,9 @@ function createApp(overrides = {}) {
   }));
 
   app.use((request, response, next) => {
-    const publicDeviceAuthRequest = request.path.startsWith('/api/device-auth/');
-    if (!publicDeviceAuthRequest && !request.session.csrfToken) request.session.csrfToken = csrfToken();
+    const publicApiRequest = request.path.startsWith('/api/device-auth/')
+      || request.path.startsWith('/api/feedback/');
+    if (!publicApiRequest && !request.session.csrfToken) request.session.csrfToken = csrfToken();
     response.locals.csrfToken = request.session.csrfToken || '';
     next();
   });
@@ -227,6 +251,15 @@ function createApp(overrides = {}) {
       error: '该IP的设备认证请求过于频繁，请稍后再试。',
     }),
   });
+  const feedbackLimiter = rateLimit({
+    windowMs: config.feedbackRateLimitWindowMs,
+    limit: config.feedbackRateLimitMax,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    handler: (_request, response) => response.status(429).json({
+      error: '该IP提交留言过于频繁，请稍后再试。',
+    }),
+  });
 
   const upload = multer({
     storage: multer.diskStorage({
@@ -239,10 +272,22 @@ function createApp(overrides = {}) {
     limits: { fileSize: config.uploadMaxBytes, files: 1 },
     fileFilter: multerFileFilter,
   });
+  const labUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_request, _file, callback) => callback(null, config.uploadsDir),
+      filename: (_request, _file, callback) => callback(null, `pending-lab-${crypto.randomUUID()}.zip`),
+    }),
+    limits: { fileSize: config.uploadMaxBytes, files: 1 },
+    fileFilter: zipFileFilter,
+  });
 
   app.get('/admin/work-form.js', requireAdmin, (_request, response) => {
     response.set('Cache-Control', 'no-store');
     response.type('application/javascript').send(workFormScript());
+  });
+  app.get('/admin/lab.js', requireAdmin, (_request, response) => {
+    response.set('Cache-Control', 'no-store');
+    response.type('application/javascript').send(labManagementScript());
   });
   app.use('/uploads', requireAdmin, express.static(config.uploadsDir, {
     dotfiles: 'deny',
@@ -252,6 +297,21 @@ function createApp(overrides = {}) {
 
   app.get('/health', (_request, response) => {
     response.json({ status: 'ok', storage: 'sqlite+markdown', deployment: 'local-only' });
+  });
+
+  app.post('/api/feedback/comments', feedbackLimiter, (request, response, next) => {
+    const accepted = {
+      accepted: true,
+      status: 'pending',
+      message: '留言已提交审核。',
+    };
+    if (String(request.body?.website || '').trim()) return response.status(202).json(accepted);
+    try {
+      feedbackService.createComment(request.body, request.ip);
+      return response.status(202).json(accepted);
+    } catch (error) {
+      return next(error);
+    }
   });
 
   app.get('/admin/login', (request, response) => {
@@ -370,8 +430,106 @@ function createApp(overrides = {}) {
       works: contentService.listWorks(),
       notes: contentService.listNotes(),
       publishStatus: publishService.getStatus(),
+      pendingFeedbackCount: feedbackService.countPending(),
       notice: request.query.notice || '',
     }));
+  });
+
+  function feedbackFilter(value) {
+    return value === 'all' ? 'all' : 'pending';
+  }
+
+  app.get('/admin/feedback', requireAdmin, (request, response) => {
+    const filter = feedbackFilter(request.query.filter);
+    const allTopics = feedbackService.listTopics();
+    response.send(feedbackManagementPage({
+      csrfToken: response.locals.csrfToken,
+      topics: filter === 'pending' ? allTopics.filter((topic) => topic.hasPending) : allTopics,
+      filter,
+      pendingCount: feedbackService.countPending(),
+      totalTopics: allTopics.length,
+      notice: request.query.notice || '',
+    }));
+  });
+
+  app.get('/admin/lab', requireAdmin, (request, response) => {
+    response.send(labManagementPage({
+      csrfToken: response.locals.csrfToken,
+      projects: labService.listProjects(),
+      notice: request.query.notice || '',
+    }));
+  });
+
+  async function createLabProject(request, response, next, asJson) {
+    try {
+      if (!request.file) throw new LabValidationError('请选择一个ZIP文件。');
+      const project = await labService.createProject(request.file, {
+        title: request.body.title,
+        description: request.body.description,
+        isVisible: request.body.isVisible === '1' || request.body.isVisible === true,
+      });
+      const publication = await publishService.publishAll();
+      if (asJson) return response.status(201).json({ project, publication });
+      return response.redirect(`/admin/lab?notice=${encodeURIComponent(`项目已创建：${project.accessUrl}`)}`);
+    } catch (error) {
+      if (request.file?.path) fs.unlink(request.file.path, () => {});
+      return next(error);
+    }
+  }
+
+  app.post('/admin/lab/upload', requireAdmin, labUpload.single('file'), requireCsrf, (request, response, next) => {
+    createLabProject(request, response, next, false);
+  });
+
+  app.post('/api/admin/lab/upload', requireAdmin, labUpload.single('file'), requireCsrf, (request, response, next) => {
+    createLabProject(request, response, next, true);
+  });
+
+  app.post('/admin/lab/:id/visibility', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      const project = labService.toggleVisibility(request.params.id);
+      await publishService.publishAll();
+      response.redirect(`/admin/lab?notice=${encodeURIComponent(project.isVisible ? '项目已展示在作品页。' : '项目已从作品页隐藏。')}`);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/lab/:id/delete', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      await labService.deleteProject(request.params.id);
+      await publishService.publishAll();
+      response.redirect('/admin/lab?notice=项目及解压目录已删除。');
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/feedback/:id/approve', requireAdmin, requireCsrf, (request, response, next) => {
+    try {
+      feedbackService.approveComment(request.params.id);
+      response.redirect(`/admin/feedback?filter=${feedbackFilter(request.body.filter)}&notice=留言已通过审核。`);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/feedback/:id/reject', requireAdmin, requireCsrf, (request, response, next) => {
+    try {
+      feedbackService.rejectComment(request.params.id);
+      response.redirect(`/admin/feedback?filter=${feedbackFilter(request.body.filter)}&notice=留言已隐藏。`);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/feedback/:id/reply', requireAdmin, requireCsrf, (request, response, next) => {
+    try {
+      feedbackService.createAdminReply(request.params.id, request.body.body, request.ip);
+      response.redirect(`/admin/feedback?filter=${feedbackFilter(request.body.filter)}&notice=站长回复已发布。`);
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/admin/device', requireAdmin, (request, response) => {
@@ -504,6 +662,30 @@ function createApp(overrides = {}) {
 
   app.get('/api/admin/notes', requireAdmin, (_request, response) => {
     response.json({ items: contentService.listNotes() });
+  });
+
+  app.get('/api/admin/lab', requireAdmin, (_request, response) => {
+    response.json({ items: labService.listProjects() });
+  });
+
+  app.post('/api/admin/lab/:id/visibility', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      const project = labService.toggleVisibility(request.params.id);
+      const publication = await publishService.publishAll();
+      response.json({ project, publication });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/admin/lab/:id', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      const project = await labService.deleteProject(request.params.id);
+      const publication = await publishService.publishAll();
+      response.json({ project, publication });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/api/admin/device', requireAdmin, (_request, response) => {
@@ -663,6 +845,8 @@ function createApp(overrides = {}) {
     } else if (!(error instanceof UploadPolicyError)
       && !(error instanceof ContentValidationError)
       && !(error instanceof DeviceAuthError)
+      && !(error instanceof FeedbackValidationError)
+      && !(error instanceof LabValidationError)
       && !(error instanceof PublishError)) {
       console.error(error);
       message = '服务器内部错误。';
@@ -682,8 +866,20 @@ function createApp(overrides = {}) {
   app.locals.contentService = contentService;
   app.locals.publishService = publishService;
   app.locals.deviceAuthService = deviceAuthService;
+  app.locals.feedbackService = feedbackService;
+  app.locals.labService = labService;
   app.locals.sessionStore = sessionStore;
-  return { app, config, database, contentService, publishService, deviceAuthService, sessionStore };
+  return {
+    app,
+    config,
+    database,
+    contentService,
+    publishService,
+    deviceAuthService,
+    feedbackService,
+    labService,
+    sessionStore,
+  };
 }
 
 module.exports = { createApp };

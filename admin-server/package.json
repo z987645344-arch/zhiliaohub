@@ -12,7 +12,7 @@
     "backup": "node scripts/backup.js",
     "restore": "node scripts/restore.js",
     "test": "node --test tests/*.test.js",
-    "check": "node --check src/server.js && node --check src/network-addresses.js && node --check src/app.js && node --check src/db.js && node --check src/services/content-service.js && node --check src/services/publish-service.js && node --check scripts/migrate-existing-content.js && node --check tests/admin-server.test.js && node --check tests/migration.test.js && node --check tests/network-addresses.test.js && node --check tests/publish-service.test.js"
+    "check": "node --check ../js/site.js && node --check src/server.js && node --check src/network-addresses.js && node --check src/app.js && node --check src/db.js && node --check src/services/content-service.js && node --check src/services/feedback-service.js && node --check src/services/lab-service.js && node --check src/services/publish-service.js && node --check src/templates/feedback.js && node --check scripts/migrate-existing-content.js && node --check tests/admin-server.test.js && node --check tests/feedback-comments.test.js && node --check tests/lab-projects.test.js && node --check tests/migration.test.js && node --check tests/network-addresses.test.js && node --check tests/publish-service.test.js"
   },
   "engines": {
     "node": ">=22"
@@ -29,6 +29,7 @@
     "multer": "^2.2.0",
     "qrcode": "^1.5.4",
     "speakeasy": "^2.0.0",
-    "tar": "^7.5.22"
+    "tar": "^7.5.22",
+    "unzipper": "^0.12.3"
   }
 }

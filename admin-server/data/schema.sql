@@ -94,9 +94,37 @@ CREATE TABLE IF NOT EXISTS device_challenges (
   FOREIGN KEY (device_id) REFERENCES devices(id)
 );
 
+CREATE TABLE IF NOT EXISTS feedback_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  parent_id INTEGER,
+  author_name TEXT NOT NULL,
+  author_email TEXT,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  created_at TEXT NOT NULL,
+  approved_at TEXT,
+  ip_address TEXT NOT NULL,
+  is_admin_reply INTEGER NOT NULL DEFAULT 0 CHECK (is_admin_reply IN (0, 1)),
+  FOREIGN KEY (parent_id) REFERENCES feedback_comments(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS lab_projects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  original_filename TEXT NOT NULL,
+  is_visible INTEGER NOT NULL DEFAULT 0 CHECK (is_visible IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_works_date ON works(work_date DESC);
 CREATE INDEX IF NOT EXISTS idx_notes_date ON notes(note_date DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_single_active ON devices(revoked) WHERE revoked = 0;
 CREATE INDEX IF NOT EXISTS idx_pairing_codes_expiry ON pairing_codes(expires_at);
 CREATE INDEX IF NOT EXISTS idx_device_challenges_expiry ON device_challenges(expires_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_comments_status_created ON feedback_comments(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_comments_parent ON feedback_comments(parent_id);
+CREATE INDEX IF NOT EXISTS idx_lab_projects_visible_updated ON lab_projects(is_visible, updated_at DESC);

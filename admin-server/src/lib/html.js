@@ -10,7 +10,7 @@ function escapeHtml(value = '') {
 
 function layout({ title, content, authenticated = false, csrfToken = '' }) {
   const navigation = authenticated
-    ? `<nav><a href="/admin">管理面板</a><a href="/admin/device">设备管理</a><form method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="link-button">退出登录</button></form></nav>`
+    ? `<nav><a href="/admin">管理面板</a><a href="/admin/feedback">反馈审核</a><a href="/admin/lab">小作坊</a><a href="/admin/device">设备管理</a><form method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="link-button">退出登录</button></form></nav>`
     : '';
 
   return `<!doctype html>
@@ -333,6 +333,79 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     }
     .upload-status { min-height: 1.5rem; margin: 0.75rem 0 0; color: var(--ink-soft); font-size: 13px; }
     .upload-status.error { padding: 0; border: 0; background: transparent; }
+    .feedback-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .feedback-filters { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .feedback-filters .button { min-height: 36px; padding: 0 0.8rem; margin: 0; font-size: 13px; }
+    .feedback-filters .is-active { border-color: var(--forest); background: var(--forest); color: var(--white); }
+    .feedback-topic { overflow: hidden; }
+    .feedback-topic > header {
+      min-height: 0;
+      padding: 0 0 0.85rem;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+      color: var(--ink);
+    }
+    .feedback-message {
+      min-width: 0;
+      padding: 1rem;
+      margin-top: 1rem;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--acid-strong);
+      border-radius: 0.55rem;
+      background: rgba(239, 242, 243, 0.45);
+    }
+    .feedback-message.is-pending { border-left-color: #9a681c; background: #fff5df; }
+    .feedback-message.is-rejected { border-left-color: #7a858b; background: rgba(93, 104, 111, 0.08); }
+    .feedback-reply { margin-left: 2rem; }
+    .feedback-message-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.45rem 0.75rem;
+      color: var(--ink-soft);
+      font-size: 12px;
+    }
+    .feedback-message-head strong { color: var(--ink); font-size: 14px; }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 0.55rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .status-pending { border-color: rgba(154, 104, 28, 0.45); background: #ffe7b3; color: #63430f; }
+    .status-approved { border-color: rgba(74, 111, 82, 0.35); background: #e2eee3; color: #31583a; }
+    .status-rejected { background: rgba(93, 104, 111, 0.12); color: var(--ink-soft); }
+    .admin-badge { border-color: rgba(44, 53, 59, 0.28); background: var(--forest); color: var(--white); }
+    .feedback-body { margin: 0.75rem 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .feedback-source { margin-top: 0.65rem; color: var(--ink-soft); font-size: 12px; }
+    .feedback-source summary { width: fit-content; cursor: pointer; }
+    .feedback-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+    .feedback-actions form { margin: 0; }
+    .feedback-actions button { min-height: 34px; padding: 0 0.75rem; margin: 0; font-size: 12px; }
+    .admin-reply-form { padding-top: 0.25rem; }
+    .admin-reply-form textarea { min-height: 6rem; }
+    .empty-state { margin: 0; color: var(--ink-soft); }
+    .lab-list { display: grid; gap: 1rem; }
+    .lab-project { display: grid; gap: 0.8rem; }
+    .lab-project-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; }
+    .lab-project-head h2 { margin: 0; }
+    .lab-project-meta { margin: 0; color: var(--ink-soft); font-size: 13px; }
+    .lab-link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 0.6rem; align-items: end; }
+    .lab-link-row input { margin: 0; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+    .lab-link-row .button, .lab-link-row button { min-height: 42px; margin: 0; white-space: nowrap; }
+    .lab-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+    .lab-actions form { margin: 0; }
+    .lab-actions button { margin: 0; }
     @media (max-width: 720px) {
       .grid { grid-template-columns: 1fr; }
       .form-grid { grid-template-columns: 1fr; gap: 0; }
@@ -341,6 +414,10 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
       nav { flex-wrap: wrap; gap: 0.75rem; }
       main { margin: 1.25rem auto; }
       .panel { padding: 1.25rem; }
+      .feedback-reply { margin-left: 0.75rem; }
+      .feedback-message { padding: 0.85rem; }
+      .lab-link-row { grid-template-columns: 1fr; }
+      .lab-link-row .button, .lab-link-row button { width: 100%; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
@@ -770,4 +847,23 @@ function workFormScript() {
 })();`;
 }
 
-module.exports = { escapeHtml, layout, workFormScript };
+function labManagementScript() {
+  return `'use strict';
+document.querySelectorAll('[data-copy-lab-link]').forEach((button) => {
+  button.addEventListener('click', async () => {
+    const input = document.getElementById(button.getAttribute('data-copy-lab-link'));
+    if (!input) return;
+    try {
+      await navigator.clipboard.writeText(input.value);
+      button.textContent = '已复制';
+    } catch (_error) {
+      input.focus();
+      input.select();
+      button.textContent = '请按 Ctrl+C';
+    }
+    window.setTimeout(() => { button.textContent = '复制链接'; }, 1800);
+  });
+});`;
+}
+
+module.exports = { escapeHtml, labManagementScript, layout, workFormScript };

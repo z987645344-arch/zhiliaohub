@@ -41,30 +41,68 @@
     element.textContent = String(new Date().getFullYear());
   });
 
-  const feedbackForm = document.querySelector("[data-feedback-form]");
-  const feedbackStatus = document.querySelector("[data-feedback-status]");
-
-  if (feedbackForm && feedbackStatus) {
-    feedbackForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      feedbackStatus.textContent = "该功能暂未开放：本页不会发送或保存你填写的内容。";
-      feedbackStatus.classList.add("is-visible");
-      feedbackStatus.focus();
-    });
+  function showFeedbackStatus(status, message, isError = false) {
+    status.textContent = message;
+    status.classList.add("is-visible");
+    status.classList.toggle("is-error", isError);
+    status.focus();
   }
 
-  const commentForm = document.querySelector("[data-comment-form]");
-  const commentScope = commentForm?.closest("[data-action-scope]");
-  const commentStatus = commentScope?.querySelector("[data-action-status]");
-
-  if (commentForm && commentStatus) {
-    commentForm.addEventListener("submit", (event) => {
+  document.querySelectorAll("[data-feedback-form]").forEach((feedbackForm) => {
+    const feedbackStatus = feedbackForm.querySelector("[data-feedback-status]");
+    if (!feedbackStatus) return;
+    feedbackForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      commentStatus.textContent = "该功能暂未开放：评论不会发送、保存或对外展示。";
-      commentStatus.classList.add("is-visible");
-      commentStatus.focus();
+      if (!feedbackForm.reportValidity()) return;
+      const submitButton = feedbackForm.querySelector('button[type="submit"]');
+      const values = new FormData(feedbackForm);
+      const payload = new URLSearchParams();
+      payload.set("author_name", String(values.get("author_name") || ""));
+      payload.set("author_email", String(values.get("email") || ""));
+      payload.set("body", String(values.get("body") || ""));
+      payload.set("website", String(values.get("website") || ""));
+      const parentId = String(values.get("parent_id") || "");
+      if (parentId) payload.set("parent_id", parentId);
+
+      if (submitButton) submitButton.disabled = true;
+      showFeedbackStatus(feedbackStatus, "正在提交…");
+      try {
+        const response = await fetch(feedbackForm.action, {
+          method: "POST",
+          headers: { Accept: "application/json" },
+          body: payload,
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const message = result.error
+            || (response.status === 429
+              ? "提交过于频繁，请稍后再试。"
+              : `留言未提交（HTTP ${response.status}），请检查内容后重试。`);
+          showFeedbackStatus(feedbackStatus, message, true);
+          return;
+        }
+        feedbackForm.reset();
+        showFeedbackStatus(feedbackStatus, "留言已提交，正在等待审核。");
+      } catch (_error) {
+        showFeedbackStatus(feedbackStatus, "无法连接留言服务，请检查网络后重试。", true);
+      } finally {
+        if (submitButton) submitButton.disabled = false;
+      }
     });
-  }
+  });
+
+  document.querySelectorAll("[data-reply-toggle]").forEach((control) => {
+    const formId = control.getAttribute("aria-controls");
+    const replyForm = formId ? document.getElementById(formId) : null;
+    if (!replyForm) return;
+    control.addEventListener("click", () => {
+      const willOpen = replyForm.hidden;
+      replyForm.hidden = !willOpen;
+      control.setAttribute("aria-expanded", String(willOpen));
+      control.textContent = willOpen ? "收起回复" : "回复";
+      if (willOpen) replyForm.querySelector('input[name="author_name"]')?.focus();
+    });
+  });
 
   document.querySelectorAll("[data-showcase-thumbs]").forEach((strip) => {
     const stage = strip.closest(".showcase-left")?.querySelector("[data-showcase-stage]");
@@ -97,6 +135,108 @@
         stage.replaceChildren(media);
       });
     });
+  });
+
+  document.querySelectorAll("[data-work-slider]").forEach((slider) => {
+    const track = slider.querySelector("[data-work-track]");
+    const previous = slider.querySelector("[data-scroll-prev]");
+    const next = slider.querySelector("[data-scroll-next]");
+    if (!track || !previous || !next) return;
+
+    const edgeTolerance = 4;
+    const maximumScroll = () => Math.max(0, track.scrollWidth - track.clientWidth);
+    const setControlState = (control, disabled) => {
+      control.disabled = disabled;
+      control.setAttribute("aria-disabled", String(disabled));
+    };
+    const updateControls = () => {
+      const maximum = maximumScroll();
+      setControlState(previous, maximum <= edgeTolerance || track.scrollLeft <= edgeTolerance);
+      setControlState(next, maximum <= edgeTolerance || track.scrollLeft >= maximum - edgeTolerance);
+    };
+    const scrollDistance = () => {
+      const cards = track.querySelectorAll(".portfolio-card");
+      if (cards.length > 1) return Math.max(1, cards[1].offsetLeft - cards[0].offsetLeft);
+      return Math.max(1, track.clientWidth);
+    };
+    const scrollByCard = (direction) => {
+      track.scrollBy({
+        left: scrollDistance() * direction,
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
+    };
+
+    previous.addEventListener("click", () => scrollByCard(-1));
+    next.addEventListener("click", () => scrollByCard(1));
+
+    let scrollFrame = 0;
+    track.addEventListener("scroll", () => {
+      cancelAnimationFrame(scrollFrame);
+      scrollFrame = requestAnimationFrame(updateControls);
+    }, { passive: true });
+
+    track.addEventListener("wheel", (event) => {
+      const maximum = maximumScroll();
+      if (maximum <= edgeTolerance) return;
+      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      const canMove = (delta < 0 && track.scrollLeft > edgeTolerance)
+        || (delta > 0 && track.scrollLeft < maximum - edgeTolerance);
+      if (!delta || !canMove) return;
+      event.preventDefault();
+      track.scrollBy({ left: delta, behavior: "auto" });
+    }, { passive: false });
+
+    let dragging = false;
+    let moved = false;
+    let suppressClick = false;
+    let pointerStart = 0;
+    let scrollStart = 0;
+    const finishDrag = (event) => {
+      if (!dragging) return;
+      dragging = false;
+      track.classList.remove("is-dragging");
+      if (track.hasPointerCapture(event.pointerId)) track.releasePointerCapture(event.pointerId);
+      if (moved) {
+        suppressClick = true;
+        window.setTimeout(() => { suppressClick = false; }, 0);
+      }
+      updateControls();
+    };
+
+    track.addEventListener("pointerdown", (event) => {
+      if (event.pointerType !== "mouse" || event.button !== 0 || maximumScroll() <= edgeTolerance) return;
+      dragging = true;
+      moved = false;
+      pointerStart = event.clientX;
+      scrollStart = track.scrollLeft;
+      track.setPointerCapture(event.pointerId);
+      track.classList.add("is-dragging");
+    });
+    track.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      const distance = event.clientX - pointerStart;
+      if (Math.abs(distance) > 4) moved = true;
+      if (!moved) return;
+      event.preventDefault();
+      track.scrollLeft = scrollStart - distance;
+    });
+    track.addEventListener("pointerup", finishDrag);
+    track.addEventListener("pointercancel", finishDrag);
+    track.addEventListener("click", (event) => {
+      if (!suppressClick) return;
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
+
+    if ("ResizeObserver" in window) {
+      const observer = new ResizeObserver(updateControls);
+      observer.observe(track);
+      track.querySelectorAll(".portfolio-card").forEach((card) => observer.observe(card));
+    } else {
+      window.addEventListener("resize", updateControls);
+    }
+    window.addEventListener("load", updateControls, { once: true });
+    updateControls();
   });
 
   document.querySelectorAll("[data-unavailable-action]").forEach((control) => {

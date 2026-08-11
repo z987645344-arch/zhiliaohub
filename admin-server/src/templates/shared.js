@@ -4,7 +4,7 @@ const GENERATED_MARKER = '<!-- 此文件由知了hub后台自动生成，请勿�
 
 function navigation(current) {
   const link = (key, number, href, label) => `<a href="${href}"${current === key ? ' aria-current="page"' : ''}><span>${number}</span>${label}</a>`;
-  return `<header class="site-header"><div class="header-inner"><a class="brand" href="index.html" aria-label="知了hub 首页"><span class="brand-mark" aria-hidden="true">知</span><span class="brand-copy"><strong>知了hub</strong><small>PERSONAL ARCHIVE</small></span></a><button class="nav-toggle" type="button" aria-label="打开或关闭导航" aria-controls="site-nav" aria-expanded="false"><span></span><span></span></button><nav class="site-nav" id="site-nav" aria-label="主导航">${link('home', '01', 'index.html', '首页')}${link('works', '02', 'works.html', '作品展示')}${link('notes', '03', 'notes.html', '学习心得')}${link('feedback', '04', 'feedback.html', '反馈中心')}</nav></div></header>`;
+  return `<header class="site-header"><div class="header-inner"><a class="brand" href="index.html" aria-label="知了hub 首页"><span class="brand-mark" aria-hidden="true">知</span><span class="brand-copy"><strong>知了hub</strong><small>PERSONAL ARCHIVE</small></span></a><button class="nav-toggle" type="button" aria-label="打开或关闭导航" aria-controls="site-nav" aria-expanded="false"><span></span><span></span></button><nav class="site-nav" id="site-nav" aria-label="主导航">${link('home', '01', 'index.html', '首页')}${link('works', '02', 'works.html', '作品展示')}${link('notes', '03', 'notes.html', '学习心得')}${link('tools', '04', 'tools.html', '智能工具')}${link('feedback', '05', 'feedback.html', '反馈中心')}</nav></div></header>`;
 }
 
 function footer() {

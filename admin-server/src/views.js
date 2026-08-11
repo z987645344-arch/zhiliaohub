@@ -36,7 +36,14 @@ function rows(records, type) {
   }).join('');
 }
 
-function dashboardPage({ csrfToken, works, notes, publishStatus, notice = '' }) {
+function dashboardPage({
+  csrfToken,
+  works,
+  notes,
+  publishStatus,
+  pendingFeedbackCount = 0,
+  notice = '',
+}) {
   const publication = publishStatus
     ? `<p class="notice"><strong>已发布</strong> · 最近发布时间：${escapeHtml(publishStatus.last_published_at)} · ${publishStatus.works_count} 个作品 / ${publishStatus.notes_count} 篇日记</p>`
     : '<p class="notice warning"><strong>尚未发布</strong> · 保存第一条内容或手动执行全量发布后，静态前台才会由数据库生成。</p>';
@@ -44,7 +51,65 @@ function dashboardPage({ csrfToken, works, notes, publishStatus, notice = '' }) 
     title: '管理面板',
     authenticated: true,
     csrfToken,
-    content: `${noticeBlock(notice)}<section class="panel"><h1>内容管理</h1><p>元数据保存在SQLite，正文保存在Markdown文件；保存后立即全量生成静态前台页面。</p>${publication}<form method="post" action="/admin/publish"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit">重新全量发布</button></form><p><a class="button button-secondary" href="/admin/device">管理安卓App配对设备</a></p></section><div class="grid"><section class="panel"><h2>作品</h2><a class="button button-secondary" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>分类</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button button-secondary" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div><section class="panel"><h2>文件上传</h2><p>仅允许白名单中的图片、PDF、Markdown、MP3/WAV/OGG、MP4/WebM和ZIP文件；服务端同时检查扩展名、MIME和文件签名。</p><form method="post" action="/admin/uploads" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><label for="file">选择文件</label><input id="file" name="file" type="file" required><button type="submit">上传</button></form></section>`,
+    content: `${noticeBlock(notice)}<section class="panel"><h1>内容管理</h1><p>元数据保存在SQLite，正文保存在Markdown文件；保存后立即全量生成静态前台页面。</p>${publication}<form method="post" action="/admin/publish"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit">重新全量发布</button></form><p><a class="button button-secondary" href="/admin/feedback">审核反馈${pendingFeedbackCount ? `（${pendingFeedbackCount} 条待审核）` : ''}</a> <a class="button button-secondary" href="/admin/lab">管理小作坊</a> <a class="button button-secondary" href="/admin/device">管理安卓App配对设备</a></p></section><div class="grid"><section class="panel"><h2>作品</h2><a class="button button-secondary" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>分类</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button button-secondary" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div><section class="panel"><h2>文件上传</h2><p>仅允许白名单中的图片、PDF、Markdown、MP3/WAV/OGG、MP4/WebM和ZIP文件；服务端同时检查扩展名、MIME和文件签名。</p><form method="post" action="/admin/uploads" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><label for="file">选择文件</label><input id="file" name="file" type="file" required><button type="submit">上传</button></form></section>`,
+  });
+}
+
+const feedbackStatus = Object.freeze({
+  pending: { label: '待审核', className: 'pending' },
+  approved: { label: '已通过', className: 'approved' },
+  rejected: { label: '已隐藏', className: 'rejected' },
+});
+
+function feedbackMessage(comment, csrfToken, { reply = false, filter = 'pending' } = {}) {
+  const status = feedbackStatus[comment.status] || feedbackStatus.pending;
+  const actions = [];
+  if (comment.status === 'pending') {
+    actions.push(`<form method="post" action="/admin/feedback/${comment.id}/approve"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><input type="hidden" name="filter" value="${escapeHtml(filter)}"><button type="submit">通过</button></form>`);
+    actions.push(`<form method="post" action="/admin/feedback/${comment.id}/reject"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><input type="hidden" name="filter" value="${escapeHtml(filter)}"><button type="submit" class="button-danger">拒绝</button></form>`);
+  } else if (comment.status === 'approved') {
+    actions.push(`<form method="post" action="/admin/feedback/${comment.id}/reject"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><input type="hidden" name="filter" value="${escapeHtml(filter)}"><button type="submit" class="button-danger">隐藏</button></form>`);
+  }
+  const replyForm = !reply && comment.status === 'approved'
+    ? `<form class="admin-reply-form" method="post" action="/admin/feedback/${comment.id}/reply"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><input type="hidden" name="filter" value="${escapeHtml(filter)}"><label for="reply-${comment.id}">站长回复</label><textarea id="reply-${comment.id}" name="body" required minlength="2" maxlength="2000"></textarea><button type="submit">发布回复</button></form>`
+    : '';
+  const secondary = [comment.author_email ? `邮箱：${escapeHtml(comment.author_email)}` : '', `IP：${escapeHtml(comment.ip_address)}`]
+    .filter(Boolean).join(' · ');
+  return `<article class="feedback-message${reply ? ' feedback-reply' : ''} is-${status.className}" data-comment-id="${comment.id}"><div class="feedback-message-head"><strong>${escapeHtml(comment.author_name)}</strong><span class="status-badge status-${status.className}">${status.label}</span>${comment.is_admin_reply ? '<span class="status-badge admin-badge">管理员回复</span>' : ''}<time datetime="${escapeHtml(comment.created_at)}">${escapeHtml(comment.created_at)}</time></div><p class="feedback-body">${escapeHtml(comment.body)}</p><details class="feedback-source"><summary>查看提交信息</summary><p>${secondary}</p></details>${actions.length ? `<div class="feedback-actions">${actions.join('')}</div>` : ''}${replyForm}</article>`;
+}
+
+function feedbackManagementPage({
+  csrfToken,
+  topics,
+  filter = 'pending',
+  pendingCount = 0,
+  totalTopics = 0,
+  notice = '',
+}) {
+  const topicMarkup = topics.length
+    ? topics.map((topic) => `<section class="panel feedback-topic"><header><strong>主题 #${topic.id}</strong><span>${topic.replies.length} 条回复</span></header>${feedbackMessage(topic, csrfToken, { filter })}${topic.replies.map((reply) => feedbackMessage(reply, csrfToken, { reply: true, filter })).join('')}</section>`).join('')
+    : `<section class="panel"><p class="empty-state">${filter === 'pending' ? '当前没有含待审核内容的主题。' : '当前还没有反馈主题。'}</p></section>`;
+  return layout({
+    title: '反馈审核',
+    authenticated: true,
+    csrfToken,
+    content: `${noticeBlock(notice)}<section class="panel"><div class="feedback-toolbar"><div><h1>反馈审核</h1><p>按主题查看顶层留言及其全部回复。审核状态仅写入数据库，本阶段不会生成或修改前台页面。</p></div><div class="feedback-filters"><a class="button button-secondary${filter === 'pending' ? ' is-active' : ''}" href="/admin/feedback?filter=pending">待审核主题（${pendingCount} 条内容）</a><a class="button button-secondary${filter === 'all' ? ' is-active' : ''}" href="/admin/feedback?filter=all">全部主题（${totalTopics}）</a></div></div></section>${topicMarkup}`,
+  });
+}
+
+function labManagementPage({ csrfToken, projects = [], notice = '' }) {
+  const projectsMarkup = projects.length
+    ? `<div class="lab-list">${projects.map((project) => {
+      const linkId = `lab-link-${project.id}`;
+      const visibilityLabel = project.isVisible ? '已展示在作品页' : '仅通过链接访问';
+      return `<section class="panel lab-project"><div class="lab-project-head"><div><h2>${escapeHtml(project.title)}</h2><p class="lab-project-meta">${escapeHtml(project.original_filename)} · ${visibilityLabel} · 更新于 ${escapeHtml(project.updated_at)}</p></div><span class="status-badge ${project.isVisible ? 'status-approved' : 'status-rejected'}">${project.isVisible ? '展示中' : '已隐藏'}</span></div><p>${escapeHtml(project.description)}</p><div class="lab-link-row"><div><label for="${linkId}">访问链接</label><input id="${linkId}" value="${escapeHtml(project.accessUrl)}" readonly></div><button type="button" class="button-secondary" data-copy-lab-link="${linkId}">复制链接</button><a class="button button-secondary" href="${escapeHtml(project.accessUrl)}" target="_blank" rel="noopener noreferrer">打开</a></div><div class="lab-actions"><form method="post" action="/admin/lab/${project.id}/visibility"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="button-secondary">${project.isVisible ? '从作品页隐藏' : '展示在作品页'}</button></form><form method="post" action="/admin/lab/${project.id}/delete"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="button-danger">删除项目</button></form></div></section>`;
+    }).join('')}</div>`
+    : '<section class="panel"><p class="empty-state">还没有小作坊项目。上传后会生成独立的本地静态访问链接。</p></section>';
+  return layout({
+    title: '小作坊管理',
+    authenticated: true,
+    csrfToken,
+    content: `${noticeBlock(notice)}<section class="panel"><h1>小作坊管理</h1><p>上传包含根目录 <code>index.html</code> 及配套网页资源的ZIP包。系统会在解压前检查路径、文件类型、文件数量和解压后总大小。</p><form method="post" action="/admin/lab/upload" enctype="multipart/form-data"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><label for="labTitle">标题</label><input id="labTitle" name="title" required maxlength="120"><label for="labDescription">简介</label><textarea id="labDescription" name="description" required maxlength="1000"></textarea><label for="labFile">ZIP包</label><input id="labFile" name="file" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><label class="choice checkbox-choice"><input type="checkbox" name="isVisible" value="1"> 上传后展示在作品页底部</label><button type="submit">上传并生成链接</button></form></section>${projectsMarkup}<script src="/admin/lab.js" defer></script>`,
   });
 }
 
@@ -194,6 +259,8 @@ module.exports = {
   totpSetupPage,
   totpVerifyPage,
   dashboardPage,
+  feedbackManagementPage,
+  labManagementPage,
   deviceManagementPage,
   workFormPage,
   contentFormPage,

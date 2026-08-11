@@ -29,6 +29,8 @@ Desktop.ini
 !/admin-server/data/schema.sql
 /admin-server/uploads/*
 !/admin-server/uploads/.gitkeep
+/admin-server/lab-storage/*
+!/admin-server/lab-storage/.gitkeep
 /admin-server/backups/*
 !/admin-server/backups/.gitkeep
 /admin-server/content/**/*.tmp-*

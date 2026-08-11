@@ -4,9 +4,16 @@ const { randomUUID } = require('node:crypto');
 const { atomicWriteFile } = require('../lib/atomic-file');
 const { escapeHtml } = require('../lib/html');
 const { MEDIA_DIRECTORIES, safeParseGallery } = require('./content-service');
+const { buildProjectUrl } = require('./lab-service');
 const { GENERATED_MARKER } = require('../templates/shared');
-const { renderWorksList, renderWorkDetail } = require('../templates/works');
+const {
+  WORK_CATEGORIES,
+  renderWorkCategory,
+  renderWorkDetail,
+  renderWorksList,
+} = require('../templates/works');
 const { renderNotesList, renderNoteDetail } = require('../templates/notes');
+const { renderFeedbackPage } = require('../templates/feedback');
 
 class PublishError extends Error {
   constructor(message, cause) {
@@ -24,7 +31,7 @@ function assertSlug(slug) {
 }
 
 function resolveSiteFile(siteRoot, filename) {
-  if (!/^(?:works|notes)(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?\.html$/.test(filename)) {
+  if (!/^(?:(?:works|notes)(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?|feedback)\.html$/.test(filename)) {
     throw new PublishError(`发布目标不在允许范围内：${filename}`);
   }
   const root = path.resolve(siteRoot);
@@ -132,9 +139,41 @@ class PublishService {
       SELECT * FROM notes
       ORDER BY CASE WHEN display_order IS NULL THEN 1 ELSE 0 END, display_order ASC, note_date DESC, id DESC
     `).all();
+    const labProjects = this.database.prepare(`
+      SELECT * FROM lab_projects
+      WHERE is_visible = 1
+      ORDER BY updated_at DESC, id DESC
+    `).all().map((project) => ({
+      ...project,
+      accessUrl: buildProjectUrl(this.config.labBaseUrl, project.slug),
+    }));
+    const approvedComments = this.database.prepare(`
+      SELECT id, parent_id, author_name, body, created_at, is_admin_reply
+      FROM feedback_comments
+      WHERE status = 'approved'
+      ORDER BY created_at ASC, id ASC
+    `).all();
+    const feedbackTopics = [];
+    const feedbackTopicsById = new Map();
+    for (const comment of approvedComments) {
+      if (comment.parent_id !== null) continue;
+      const topic = { ...comment, replies: [] };
+      feedbackTopics.push(topic);
+      feedbackTopicsById.set(comment.id, topic);
+    }
+    for (const comment of approvedComments) {
+      if (comment.parent_id === null) continue;
+      feedbackTopicsById.get(comment.parent_id)?.replies.push(comment);
+    }
+    feedbackTopics.sort((left, right) => right.created_at.localeCompare(left.created_at) || right.id - left.id);
     const files = new Map([
-      ['works.html', renderWorksList(works)],
+      ['works.html', renderWorksList(works, labProjects)],
+      ...WORK_CATEGORIES.map((category) => [
+        `works-category-${category.slug}.html`,
+        renderWorkCategory(category.name, works),
+      ]),
       ['notes.html', renderNotesList(notes)],
+      ['feedback.html', renderFeedbackPage(feedbackTopics)],
     ]);
     const mediaFiles = new Map();
 

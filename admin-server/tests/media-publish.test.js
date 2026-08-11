@@ -93,11 +93,14 @@ test('作品媒体完成上传、发布复制、编辑清理与删除清理完�
   }
   await assert.rejects(fs.access(orphan), /ENOENT/);
   const listHtml = await fs.readFile(path.join(config.siteRoot, 'works.html'), 'utf8');
+  const programCategoryHtml = await fs.readFile(path.join(config.siteRoot, 'works-category-program.html'), 'utf8');
   const detailHtml = await fs.readFile(path.join(config.siteRoot, `works-${created.slug}.html`), 'utf8');
   assert.match(listHtml, /portfolio-cover portfolio-cover-photo/);
   assert.match(listHtml, new RegExp(cover.storedName));
   assert.match(listHtml, /<small>程序<\/small>/);
   assert.match(listHtml, /验证全部作品媒体字段。/);
+  assert.match(programCategoryHtml, new RegExp(cover.storedName));
+  assert.match(programCategoryHtml, /阶段二媒体测试作品/);
   assert.match(detailHtml, /class="showcase"/);
   assert.match(detailHtml, new RegExp(main.storedName));
   assert.match(detailHtml, new RegExp(galleryOne.storedName));
@@ -131,10 +134,15 @@ test('作品媒体完成上传、发布复制、编辑清理与删除清理完�
   await fs.access(path.join(config.siteRoot, ...replacementMainPath.split('/')));
   await fs.access(path.join(config.siteRoot, ...paths.galleryTwo.split('/')));
   const updatedHtml = await fs.readFile(path.join(config.siteRoot, `works-${created.slug}.html`), 'utf8');
+  const updatedProgramCategoryHtml = await fs.readFile(path.join(config.siteRoot, 'works-category-program.html'), 'utf8');
+  const updatedLifeCategoryHtml = await fs.readFile(path.join(config.siteRoot, 'works-category-life.html'), 'utf8');
   assert.match(updatedHtml, new RegExp(replacementMain.storedName));
   assert.doesNotMatch(updatedHtml, new RegExp(main.storedName));
   assert.doesNotMatch(updatedHtml, new RegExp(galleryOne.storedName));
   assert.match(updatedHtml, /<h2>v0\.2<\/h2>/);
+  assert.doesNotMatch(updatedProgramCategoryHtml, /阶段二媒体测试作品/);
+  assert.match(updatedLifeCategoryHtml, /阶段二媒体测试作品/);
+  assert.match(updatedLifeCategoryHtml, /媒体和分类已更新。/);
 
   await contentService.deleteWork(created.id);
   await publishService.publishAll();

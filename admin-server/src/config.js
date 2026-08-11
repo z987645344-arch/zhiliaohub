@@ -50,14 +50,16 @@ function loadConfig(overrides = {}) {
   const dataDir = overrides.dataDir || resolveLocalPath(process.env.DATA_DIR, 'data');
   const contentDir = overrides.contentDir || resolveLocalPath(process.env.CONTENT_DIR, 'content');
   const uploadsDir = overrides.uploadsDir || resolveLocalPath(process.env.UPLOAD_DIR, 'uploads');
+  const labStorageDir = overrides.labStorageDir || resolveLocalPath(process.env.LAB_STORAGE_DIR, 'lab-storage');
   const siteRoot = overrides.siteRoot || path.resolve(serverRoot, '..');
+  const port = positiveInteger(overrides.port ?? process.env.PORT, 'PORT', 3001);
 
   return {
     serverRoot,
     nodeEnv,
     isProduction: nodeEnv === 'production',
     host: overrides.host || process.env.HOST || '127.0.0.1',
-    port: positiveInteger(overrides.port ?? process.env.PORT, 'PORT', 3001),
+    port,
     trustProxyHops: nonNegativeInteger(
       overrides.trustProxyHops ?? process.env.TRUST_PROXY_HOPS,
       'TRUST_PROXY_HOPS',
@@ -109,9 +111,29 @@ function loadConfig(overrides = {}) {
       'DEVICE_AUTH_RATE_LIMIT_MAX',
       30,
     ),
+    feedbackRateLimitWindowMs: positiveInteger(
+      overrides.feedbackRateLimitWindowMs ?? process.env.FEEDBACK_RATE_LIMIT_WINDOW_MS,
+      'FEEDBACK_RATE_LIMIT_WINDOW_MS',
+      15 * 60 * 1000,
+    ),
+    feedbackRateLimitMax: positiveInteger(
+      overrides.feedbackRateLimitMax ?? process.env.FEEDBACK_RATE_LIMIT_MAX,
+      'FEEDBACK_RATE_LIMIT_MAX',
+      5,
+    ),
     uploadMaxBytes: positiveInteger(
       overrides.uploadMaxBytes ?? process.env.UPLOAD_MAX_BYTES,
       'UPLOAD_MAX_BYTES',
+      100 * 1024 * 1024,
+    ),
+    labMaxFiles: positiveInteger(
+      overrides.labMaxFiles ?? process.env.LAB_MAX_FILES,
+      'LAB_MAX_FILES',
+      500,
+    ),
+    labMaxUncompressedBytes: positiveInteger(
+      overrides.labMaxUncompressedBytes ?? process.env.LAB_MAX_UNCOMPRESSED_BYTES,
+      'LAB_MAX_UNCOMPRESSED_BYTES',
       100 * 1024 * 1024,
     ),
     contentMaxBytes: positiveInteger(
@@ -124,6 +146,10 @@ function loadConfig(overrides = {}) {
     schemaPath: overrides.schemaPath || resolveLocalPath(process.env.SCHEMA_PATH, 'data/schema.sql'),
     contentDir,
     uploadsDir,
+    labStorageDir,
+    labBaseUrl: String(
+      overrides.labBaseUrl || process.env.LAB_BASE_URL || `http://localhost:${port}/lab`,
+    ).replace(/\/+$/, ''),
     siteRoot,
   };
 }
