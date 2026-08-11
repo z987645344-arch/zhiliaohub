@@ -1,7 +1,7 @@
 # 知了hub 项目状态 · 协作记忆
 > 用于在后续协作中快速恢复项目上下文。
 > 本文只维护当前状态；历史改动见 `CHANGELOG.md`。
-> **最后更新：2026-08-11**（小作坊本地功能完成；真实子域名隔离待部署验证）
+> **最后更新：2026-08-11**（`v1.7` 已存档：Docker镜像真实构建验证与部署前提修复；真实部署与子域名隔离仍待验证）
 
 ---
 
@@ -11,7 +11,7 @@
 |------|------|
 | 项目名 | 知了hub（zhiliaohub） |
 | 项目路径 | `D:\zhiliao\zhiliaohub\zhiliaohub\` |
-| 当前版本 | `v1.6` |
+| 当前版本 | `v1.7` |
 | GitHub仓库 | `https://github.com/z987645344-arch/zhiliaohub`（Private，是否公开由用户在 GitHub 设置中决定） |
 | 定位 | 个人多作品展示网站 |
 | 当前主线 | 小作坊已支持后台上传受控ZIP、生成本地静态链接并按需展示在作品页；作品分组、反馈评论和五项导航能力继续保留 |
@@ -27,7 +27,7 @@
 
 | 项 | 说明 |
 |------|------|
-| 状态 | 🟡 `v1.6` 已完成四轮功能存档并与远程 `main` 同步；当前工作区有5处未提交改动（`admin-server/Dockerfile`、`src/config.js`、`.env.example`、`deploy/README.md`，以及 `CHANGELOG.md` 与本文件），等待用户确认后再决定是否存档 |
+| 状态 | 🟢 `v1.7` 已存档：提交 `427271d` 已推送到 `main` 并创建带注释标签 `v1.7`，CI `Static checks` 通过，工作区与远程同步 |
 | 本轮完成 | Docker打包两轮：先首次真实执行 `docker build` 并运行容器验证，修复 `npm ci` 无视 `better-sqlite3` 的 `gypfile:false` 触发 node-gyp 导致构建失败、以及 `/app` 属主为root导致非root用户 `mkdir /app/data` 报 EACCES 容器直接崩溃两个缺陷；再收尾修复由此暴露的两个部署方案缺口：为 `siteRoot` 增加 `SITE_ROOT` 环境变量覆盖，并把静态前台目录与 `lab-storage` 补进部署片段的卷挂载 |
 | 交互边界 | 小作坊当前通过localhost `/lab/<slug>/` 提供静态访问，`LAB_BASE_URL`为未来子域名预留。真实 `lab.zhiliaohub.com` DNS、证书及Cookie隔离效果尚未验证，必须在部署阶段测试，不能把本地结果表述为真实隔离完成 |
 | 验证结果 | Docker：镜像构建成功（387MB）；1号进程以 `node`（UID 1000）运行，`/app` 对其不可写；`/health` 宿主机与容器内均返回200，HEALTHCHECK为healthy；容器内59项测试在补齐 `data/schema.sql` 与两个前台文件的只读挂载后全部通过（裸镜像下51通过/8失败，8项全为镜像刻意不含的文件导致的ENOENT，无一与SQLite相关）；原始容器上 `POST /api/feedback/comments` 返回202并在容器内SQLite查到该行、中文UTF-8逐字节一致。存档时后台59项测试、42个JavaScript语法、19个HTML本地引用和生产依赖审计亦全部通过 |

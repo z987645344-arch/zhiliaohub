@@ -2,6 +2,14 @@
 > 每轮完成改动后在此追加记录。
 > **最后追加：2026-08-11**
 
+## 2026-08-11 v1.7 存档：Docker镜像真实构建验证与部署前提修复
+
+- 将首次真实Docker构建验证与随后的收尾修复作为单一 `v1.7` 提交 `427271d` 推送到 [GitHub仓库](https://github.com/z987645344-arch/zhiliaohub) 的 `main` 分支，并创建同名带注释标签 `v1.7`（标签信息："Docker镜像真实构建验证与部署前提修复"）。标签已确认存在于远程，本地 `main` 与 `origin/main` 同步。
+- 本次存档共6个文件、65行新增与15行删除：`admin-server/Dockerfile`（npm ci 原生模块修复与非root目录权限修复）、`admin-server/src/config.js`（SITE_ROOT 环境变量支持）、`admin-server/deploy/README.md`（lab-storage 与静态前台目录挂载、TRUST_PROXY_HOPS 必需项说明）、`admin-server/.env.example`（SITE_ROOT 注释）、`CHANGELOG.md` 与 `docs/claude_memory.md`。
+- 存档前确认：工作区无未跟踪文件；提交diff中不含任何测试用凭据、bcrypt哈希、session/TOTP密钥、本地临时目录路径、测试容器名或镜像摘要；`npm run check` 与后台59项测试均通过。
+- CI结果：`Static checks` 工作流针对提交 `427271de2526119ab68e202be9acc9ed8a058b2b` 运行 [#31488609749](https://github.com/z987645344-arch/zhiliaohub/actions/runs/31488609749) 成功通过，用时17秒。该CI只做JavaScript语法与HTML本地引用的静态检查，**不会**安装后端依赖、不会构建Docker镜像、也不会执行本轮的容器验证；本轮的构建与容器验证全部在本地真实执行，CI通过不等于镜像在CI环境被重新验证过。
+- 版本边界不变：`v1.7` 只包含可构建可运行的镜像与完整的部署片段，仍未连接真实服务器、域名、HTTPS 或 nginx。`<SITE_ROOT_PATH>` 与 nginx 站点根目录是否为同一目录、服务器目录属主与镜像内UID是否匹配，都必须在实际部署时人工核对；备份脚本仍未覆盖 `lab-storage` 数据面。
+
 ## 2026-08-11 Docker收尾：SITE_ROOT可配置与lab-storage持久化
 
 - 修复上一轮真实构建验证中记录的两个遗留问题，改动范围限定在 `config.js` 一行、`.env.example` 注释和 `deploy/README.md` 部署片段，没有附带其他调整。
