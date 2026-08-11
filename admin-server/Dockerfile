@@ -2,10 +2,14 @@
 FROM node:22-bookworm-slim AS development-dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# better-sqlite3 ships prebuilt binaries and declares "gypfile": false, but it keeps
+# binding.gyp at its package root; npm ci ignores that flag and starts an implicit
+# `node-gyp rebuild`, which fails because this slim image has no Python/compiler.
+# --ignore-scripts keeps the published prebuilds (bcrypt resolves its own via node-gyp-build).
+RUN npm ci --ignore-scripts
 
 FROM development-dependencies AS production-dependencies
-RUN npm prune --omit=dev && npm cache clean --force
+RUN npm prune --omit=dev --ignore-scripts && npm cache clean --force
 
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production \
@@ -23,6 +27,11 @@ COPY --chown=node:node content/works/.gitkeep ./content/works/.gitkeep
 COPY --chown=node:node content/notes/.gitkeep ./content/notes/.gitkeep
 COPY --chown=node:node uploads/.gitkeep ./uploads/.gitkeep
 COPY --chown=node:node backups/.gitkeep ./backups/.gitkeep
+
+# /app stays root-owned so the runtime user cannot rewrite application code.
+# initializeDatabase() creates these two directories at startup, so they must exist
+# and belong to node beforehand; without them the non-root process fails with EACCES.
+RUN mkdir -p data lab-storage && chown node:node data lab-storage
 
 USER node
 EXPOSE 3001

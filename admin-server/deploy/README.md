@@ -6,7 +6,8 @@
 
 - `<ADMIN_DOMAIN>`：管理后台最终子域名，例如由用户实际拥有域名下的 `admin` 子域名；本文不提供虚构域名。
 - `<ADMIN_HOST_PORT>`：服务器回环地址上分配给后台的实际端口。
-- `<ADMIN_DATA_PATH>`、`<ADMIN_CONTENT_PATH>`、`<ADMIN_UPLOADS_PATH>`、`<ADMIN_BACKUPS_PATH>`：服务器上四个独立持久化目录的绝对路径。
+- `<ADMIN_DATA_PATH>`、`<ADMIN_CONTENT_PATH>`、`<ADMIN_UPLOADS_PATH>`、`<ADMIN_BACKUPS_PATH>`、`<ADMIN_LAB_STORAGE_PATH>`：服务器上五个独立持久化目录的绝对路径。
+- `<SITE_ROOT_PATH>`：静态前台目录的绝对路径，即 `index.html`、`css/`、`js/`、`assets/` 实际所在的目录，也就是 nginx 对外提供主站静态文件的根目录。后台全量发布会往这里写入生成的HTML与作品媒体，因此必须与 nginx 的站点根指向同一目录，且对镜像内非root `node` 用户可写。
 - `<ADMIN_ENV_FILE>`：服务器上真实环境变量文件的绝对路径，权限应限制为服务维护者可读。
 - `<TLS_CERT_PATH>` 与 `<TLS_KEY_PATH>`：该真实域名对应的证书和私钥路径。
 - 如果 nginx 也运行在共享 Compose 网络内，还需确定实际网络名；此时可以不映射宿主机端口，改为通过服务名访问容器端口。
@@ -31,6 +32,7 @@ services:
       HOST: 0.0.0.0
       PORT: 3001
       SCHEMA_PATH: /app/schema/schema.sql
+      SITE_ROOT: /app/site
       TRUST_PROXY_HOPS: 1
     ports:
       - "127.0.0.1:<ADMIN_HOST_PORT>:3001"
@@ -39,6 +41,8 @@ services:
       - <ADMIN_CONTENT_PATH>:/app/content
       - <ADMIN_UPLOADS_PATH>:/app/uploads
       - <ADMIN_BACKUPS_PATH>:/app/backups
+      - <ADMIN_LAB_STORAGE_PATH>:/app/lab-storage
+      - <SITE_ROOT_PATH>:/app/site
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then((r)=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
@@ -64,7 +68,9 @@ DEVICE_AUTH_RATE_LIMIT_WINDOW_MS=900000
 DEVICE_AUTH_RATE_LIMIT_MAX=30
 ```
 
-不得把真实环境文件复制进镜像或提交到仓库。SQLite数据库、Markdown、上传文件与备份目录都必须挂载为持久卷，否则容器重建会丢失数据。当前备份只落在服务器本地独立目录；异地副本仍需另行设计。
+不得把真实环境文件复制进镜像或提交到仓库。SQLite数据库、Markdown、上传文件、备份目录与小作坊解压目录都必须挂载为持久卷，否则容器重建会丢失数据。当前备份只落在服务器本地独立目录，且只覆盖SQLite、Markdown与上传文件三个数据面，**不包含 `lab-storage`**；小作坊产物的备份策略和异地副本都仍需另行设计。
+
+`SITE_ROOT` 与 `<SITE_ROOT_PATH>:/app/site` 必须成对出现。不设置 `SITE_ROOT` 时后台会回退到 `admin-server/..`，在容器内即为根目录 `/`，非root用户不可写，全量发布会失败；本地开发不设置该变量时仍解析为仓库根目录，行为不变。挂载必须是可读写的，因为发布除了写HTML还会向站点目录内的作品媒体子目录复制文件。
 
 ## nginx 子域名片段
 
@@ -95,11 +101,11 @@ server {
 
 ## 人工部署顺序
 
-1. 在服务器创建四个持久目录和真实环境变量文件，确认目录属主/权限允许镜像内非root `node` 用户读写（应以实际构建镜像的UID/GID核对，不能默认放宽为全员可写）。
+1. 在服务器创建五个持久目录和真实环境变量文件，确认目录属主/权限允许镜像内非root `node` 用户读写（应以实际构建镜像的UID/GID核对，不能默认放宽为全员可写）。同时确认静态前台目录 `<SITE_ROOT_PATH>` 对同一UID可写，且就是 nginx 实际对外提供主站文件的目录。
 2. 将上述服务片段人工合并到共享 Compose 配置，替换所有占位符。
 3. 将 nginx 片段人工合并到服务器配置，填写真实域名与证书路径并由管理员校验语法。
 4. 构建并启动服务，确认容器健康检查和 `/health`。
-5. 实测密码、TOTP、服务重启后session、内容写入、上传及备份/恢复。
+5. 实测密码、TOTP、服务重启后session、内容写入、上传及备份/恢复；并确认保存内容后全量发布真的把生成的HTML写进了 `<SITE_ROOT_PATH>`、nginx 对外返回的就是这批新文件，以及容器重启后小作坊项目文件仍然存在。
 6. 再决定定时备份调度、异地复制、监控告警和正式对外开放时间。
 
 本轮没有执行以上步骤；这些片段只是仓库内的部署准备材料。

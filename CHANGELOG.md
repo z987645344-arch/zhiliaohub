@@ -2,6 +2,32 @@
 > 每轮完成改动后在此追加记录。
 > **最后追加：2026-08-11**
 
+## 2026-08-11 Docker收尾：SITE_ROOT可配置与lab-storage持久化
+
+- 修复上一轮真实构建验证中记录的两个遗留问题，改动范围限定在 `config.js` 一行、`.env.example` 注释和 `deploy/README.md` 部署片段，没有附带其他调整。
+- **`SITE_ROOT` 环境变量覆盖**：`config.js` 中 `siteRoot` 改为 `resolveLocalPath(process.env.SITE_ROOT, '..')`，与 `DATA_DIR`、`CONTENT_DIR`、`LAB_STORAGE_DIR` 等既有路径覆盖写法保持一致。未设置时仍解析为 `admin-server/..` 即仓库根目录，已实测与改动前完全相同，本地开发行为不受影响；`.env.example` 增加了对应的注释说明。
+- **部署片段补全**：Compose 片段新增 `SITE_ROOT: /app/site` 环境变量、`<SITE_ROOT_PATH>:/app/site` 与 `<ADMIN_LAB_STORAGE_PATH>:/app/lab-storage` 两个卷挂载；占位符清单由四个持久目录改为五个并新增静态前台目录说明；持久化说明写明 `lab-storage` 必须挂载且**不在**现有备份三个数据面之内；人工部署顺序第1步和第5步补充了站点目录属主核对与发布/重启后的实测项。
+- **静态发布已在容器内真实验证**：容器设置 `SITE_ROOT=/app/site` 并挂载一个独立的前台目录副本（不是仓库本体，避免污染工作区），通过真实API走完密码登录、TOTP绑定、`POST /admin/notes` 创建日记并触发全量发布，返回 `302 /admin?notice=日记已保存并发布。`。随后在**容器外**的宿主机目录上逐项核对内容，12项检查全部通过：`notes.html` 含新日记标题与摘要且带“自动生成”标记、生成了对应的日记详情页且Markdown正文已渲染为HTML、`works.html` 与 `feedback.html` 同步重新生成、手工维护的 `index.html` 校验和保持不变未被发布覆盖、`css/style.css` 与 `js/site.js` 仍在。共7个文件被真实写入挂载目录。
+- 验证过程中确认了一个部署前提：`NODE_ENV=production` 会使session cookie带上 `secure`，纯HTTP下 express-session 不会下发cookie、登录必然失败。因此 Compose 片段里的 `TRUST_PROXY_HOPS: 1` 是必需项而非可选项，必须由nginx终止TLS并转发 `X-Forwarded-Proto`。本轮验证即按该拓扑模拟完成，没有为了跑通而降低生产配置。
+- **lab-storage持久化已真实验证**：通过 `/api/admin/lab/upload` 真实上传ZIP并解压（返回201），随后不仅做了普通重启，还做了**完整重建**（`docker rm` 后从镜像重新 `docker run`）——新容器内文件仍在、`/lab/<slug>/` 返回200且页面标记内容正确、数据库记录同样保留。反向对照也做了：按旧配置重建（不挂载 `lab-storage`）时数据库仍列出该项目但目录为空、`/lab/<slug>/` 返回404，证明确实会产生记录与文件不一致的数据丢失，也证明本轮新增的挂载正是解决该问题的原因。
+- 回归：改动后本地59项测试全部通过，容器内59项测试同样全部通过（退出码0）。
+- 清理与边界：测试容器已全部删除，临时的前台副本、lab-storage、数据目录、测试ZIP与脚本已删除，无残留容器和悬空卷。本地开发数据库 `admin.sqlite3` 修改时间早于本轮全部容器操作，仓库内前台HTML/CSS/JS没有被发布写入过。本轮仍**没有**真实服务器、域名、HTTPS与nginx合并，`<SITE_ROOT_PATH>` 与 nginx 站点根是否为同一目录、真实服务器上的目录属主是否匹配镜像内UID，都只能在实际部署时核对。
+
+## 2026-08-11 首次真实Docker构建与容器运行验证
+
+- 这是 `admin-server/Dockerfile` 第一次被真正执行 `docker build`。此前该文件只经过静态代码审阅，从未构建过镜像。本轮在 Docker 29.6.2（Docker Desktop、linux/x86_64）上完成真实构建、启动容器并验证。
+- **首次构建失败**：`npm ci` 对 `better-sqlite3` 触发隐式 `node-gyp rebuild`，而 `node:22-bookworm-slim` 不含 Python 与编译器，报错 `Could not find any Python installation to use`。定位结论：`better-sqlite3@13.0.2` 自带 `prebuilds/linux-x64.node` 预编译产物并声明 `"gypfile": false`，但其包根目录仍保留 `binding.gyp`；`npm install` 会遵守 `gypfile:false`，`npm ci` 不遵守而强行走 node-gyp。使用仓库现有 lock 文件与容器内重新生成的 lock 文件分别复现，结果一致，因此与 lock 文件是否过期无关。
+- **为构建成功所做的改动（仅限 `admin-server/Dockerfile`，共两处）**：
+  1. `npm ci` 改为 `npm ci --ignore-scripts`，`npm prune --omit=dev` 同步加 `--ignore-scripts`，直接使用官方发布的预编译二进制，不在镜像内引入 Python/g++ 工具链。已验证 `better-sqlite3` 与 `bcrypt`（经 `node-gyp-build` 解析自带预编译）在容器内均可正常加载和执行。
+  2. 新增 `RUN mkdir -p data lab-storage && chown node:node data lab-storage`。此前容器启动即崩溃，报 `EACCES: permission denied, mkdir '/app/data'`：`WORKDIR /app` 由 root 创建且属主为 `root:root`，非root的 `node` 用户无法在其中创建 `initializeDatabase()` 启动时所需的 `data/` 与 `lab-storage/`。`/app` 本身保持 root 属主，运行用户无法改写应用代码。
+- **非root已真实生效**：容器内 `whoami` 为 `node`，`/proc/1/status` 显示 1 号进程（`node src/server.js`）`Uid: 1000`，宿主机 `docker top` 同样显示 UID 1000。写入探测确认 `/app` 对 `node` 不可写、`/app/data` 与 `/app/lab-storage` 可写。
+- **/health 正常**：宿主机 `http://127.0.0.1:13001/health` 与容器内 `127.0.0.1:3001/health` 均返回 `200` 及 `{"status":"ok","storage":"sqlite+markdown","deployment":"local-only"}`；Docker 内建 HEALTHCHECK 状态为 `healthy`。
+- **数据库读写已真实验证**：在容器内运行现有 59 项测试套件（`tests/` 被 `.dockerignore` 排除，以只读方式挂载）。裸镜像下 51 项通过、8 项失败，8 项全部为镜像刻意不包含的文件导致的 `ENOENT`——6 项因 `data/schema.sql` 已被 Dockerfile 移到 `/app/schema/schema.sql`（这些用例未传 `schemaPath`，回落到 `serverRoot/data/schema.sql`），2 项读取的是静态前台的 `/index.html` 与 `/js/site.js`。把这些路径只读补齐后，**59 项全部通过、退出码 0**，没有任何一项失败与 SQLite 或原生模块相关。
+- 另在未挂载任何内容的原始容器上完成一次端到端真实写入：`POST /api/feedback/comments` 返回 `202`，随后在容器内直接查询 `/app/data/admin.sqlite3`，记录数由 0 变为 1、`status` 为 `pending`，中文字段按 UTF-8 逐字节比对完全一致，`admin.sqlite3-wal` 与 `-shm` 均已生成，确认是真实落盘写入而非内存假象。
+- **本轮遗留问题（未修复，超出"让构建/运行成功"范围）**：`config.js` 中 `siteRoot = path.resolve(serverRoot, '..')`，在容器内解析为根目录 `/`，而 `/` 对非root用户不可写，因此容器内执行全量静态发布会失败。修复需要为 `siteRoot` 增加独立环境变量并挂载前台目录，属于部署方案设计，应单独讨论后再改。此外 `admin-server/deploy/README.md` 的 Compose 片段只挂载了 `data`、`content`、`uploads`、`backups` 四个卷，未挂载 `lab-storage`，小作坊数据会在容器重建时丢失，也未纳入备份范围。
+- 验证完成后已停止并删除测试容器，未残留知了hub相关容器或悬空卷；构建产物镜像 `zhiliaohub-admin:test`（387MB）保留备查。本地开发环境未被污染：`admin-server/data/admin.sqlite3` 等文件修改时间早于本轮容器操作，`git status` 仅显示 `admin-server/Dockerfile` 一处改动。
+- 需要明确的边界：本轮只验证了镜像可构建、容器可以非root启动、健康检查通过和SQLite可真实读写；仍**没有**真实服务器、域名、HTTPS、反向代理合并、生产数据卷与权限核对，也没有做任何真实部署。
+
 ## 2026-08-11 v1.6 四轮功能存档
 
 - 将反馈评论系统、作品分组展示、五项导航与智能工具占位页、小作坊四轮改动作为单一 `v1.6` 提交推送到 [GitHub仓库](https://github.com/z987645344-arch/zhiliaohub) 的 `main` 分支，并创建同名带注释标签。
