@@ -8,8 +8,15 @@ const { pipeline } = require('node:stream/promises');
 const Database = require('better-sqlite3');
 const tar = require('tar');
 const { atomicWriteFile } = require('../lib/atomic-file');
+const { createBackupDestination } = require('./backup-destination');
 
 const FORMAT_VERSION = 1;
+// Regular backups and automatic pre-restore snapshots share one directory but use
+// different filename prefixes, so each prunes against its own retention count and a
+// fresh pre-restore snapshot can never be evicted by the regular "latest N" policy.
+const BACKUP_PREFIX = 'backup';
+const PRE_RESTORE_PREFIX = 'pre-restore';
+const DEFAULT_PRE_RESTORE_RETENTION = 3;
 const ENCRYPTION_MAGIC = Buffer.from('ZHBACKUP1');
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
@@ -104,9 +111,10 @@ async function decryptArchive(source, destination, password) {
   );
 }
 
-async function pruneBackups(backupDir, retentionCount) {
+async function pruneBackups(backupDir, retentionCount, namePrefix = BACKUP_PREFIX) {
+  const pattern = new RegExp(`^${namePrefix}-\\d{8}T\\d{9}Z\\.tar\\.gz(?:\\.enc)?$`);
   const candidates = (await fs.readdir(backupDir, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && /^backup-\d{8}T\d{9}Z\.tar\.gz(?:\.enc)?$/.test(entry.name))
+    .filter((entry) => entry.isFile() && pattern.test(entry.name))
     .map((entry) => entry.name)
     .sort()
     .reverse();
@@ -115,15 +123,40 @@ async function pruneBackups(backupDir, retentionCount) {
   return removed;
 }
 
+// Copies a finished archive to the configured secondary destination. The local archive is
+// already complete and is the primary copy, so a replication failure is reported and logged
+// but never rethrown: it must not turn a successful backup into a failed one, and it must
+// never remove or rewrite the local file.
+async function replicateArchive(config, archivePath, options = {}) {
+  const destination = options.destination ?? createBackupDestination(config);
+  if (!destination) return { skipped: true, reason: 'no secondary backup destination configured' };
+  try {
+    const { location } = await destination.send(archivePath);
+    let removed = [];
+    if (typeof destination.prune === 'function') {
+      removed = await destination.prune(options.namePrefix, options.retentionCount);
+    }
+    return { ok: true, destination: destination.name, location, removed };
+  } catch (error) {
+    console.error(
+      `[backup] 本地归档已生成成功：${archivePath}\n`
+      + `[backup] 但同步到${destination.describe()}失败：${error.message}\n`
+      + '[backup] 本地备份不受影响，仍可正常用于恢复；请检查该目的地后手动补一次同步。',
+    );
+    return { ok: false, destination: destination.name, error: error.message };
+  }
+}
+
 async function createBackup(config, options = {}) {
   const now = options.now || new Date();
+  const namePrefix = options.namePrefix || BACKUP_PREFIX;
   const retentionCount = options.retentionCount ?? config.backupRetentionCount ?? 7;
   const password = options.encryptionPassword ?? config.backupEncryptionPassword ?? '';
   if (!Number.isSafeInteger(retentionCount) || retentionCount <= 0) {
     throw new Error('Backup retention count must be a positive integer.');
   }
   await fs.mkdir(config.backupDir, { recursive: true });
-  const baseName = `backup-${archiveTimestamp(now)}.tar.gz`;
+  const baseName = `${namePrefix}-${archiveTimestamp(now)}.tar.gz`;
   const finalPath = path.join(config.backupDir, password ? `${baseName}.enc` : baseName);
   if (await fs.stat(finalPath).then(() => true).catch(() => false)) {
     throw new Error(`Backup archive already exists: ${path.basename(finalPath)}`);
@@ -186,8 +219,13 @@ async function createBackup(config, options = {}) {
     } else {
       await fs.rename(temporaryArchive, finalPath);
     }
-    const removed = await pruneBackups(config.backupDir, retentionCount);
-    return { archivePath: finalPath, manifest, removed };
+    const removed = await pruneBackups(config.backupDir, retentionCount, namePrefix);
+    const replication = await replicateArchive(config, finalPath, {
+      destination: options.destination,
+      namePrefix,
+      retentionCount,
+    });
+    return { archivePath: finalPath, manifest, removed, replication };
   } catch (error) {
     await fs.unlink(temporaryArchive).catch(() => {});
     await fs.unlink(`${temporaryArchive}.enc`).catch(() => {});
@@ -251,6 +289,65 @@ async function replaceDirectory(source, target) {
   }
 }
 
+// Captures the data that a restore is about to overwrite, so an operator who picked the
+// wrong archive (or hit a failure part-way through) can still get back to this moment.
+// Reuses createBackup unchanged, so the snapshot carries the same manifest, SHA-256
+// checksums and optional encryption as any regular backup.
+// Tells "this machine genuinely has no database yet" apart from "a database is there but
+// cannot be inspected". Only the first is a safe reason to restore without a snapshot;
+// the second means something is already wrong locally and must reach the operator instead
+// of being silently treated as an empty machine.
+async function inspectLiveDatabase(databasePath) {
+  let stat = null;
+  try {
+    stat = await fs.stat(databasePath);
+  } catch (error) {
+    if (error.code === 'ENOENT') return { exists: false };
+    throw new Error(
+      `Restore aborted: the current database at ${databasePath} exists but could not be `
+      + `inspected (${error.code || error.message}). This is not treated as an empty machine, `
+      + 'because doing so would overwrite data that may still be recoverable. No data was '
+      + 'modified. Check the file permissions and the disk, then retry.',
+      { cause: error },
+    );
+  }
+  if (!stat.isFile()) {
+    throw new Error(
+      `Restore aborted: ${databasePath} exists but is not a regular file. No data was modified. `
+      + 'Check that the data directory is configured correctly, then retry.',
+    );
+  }
+  return { exists: true };
+}
+
+async function createPreRestoreSnapshot(config, options = {}) {
+  if (options.skipPreRestoreSnapshot) {
+    return { skipped: true, reason: 'explicitly skipped by --skip-pre-restore-snapshot' };
+  }
+  // A restore onto a machine with no database yet has nothing to protect; that is the
+  // only case allowed to proceed without a snapshot.
+  const live = await inspectLiveDatabase(config.databasePath);
+  if (!live.exists) {
+    return { skipped: true, reason: 'no existing database to protect' };
+  }
+  try {
+    return await createBackup(config, {
+      namePrefix: PRE_RESTORE_PREFIX,
+      now: options.now,
+      retentionCount: config.preRestoreRetentionCount ?? DEFAULT_PRE_RESTORE_RETENTION,
+    });
+  } catch (error) {
+    throw new Error(
+      `Restore aborted: the pre-restore snapshot could not be created (${error.message}). `
+      + 'The backup destination may be full or unwritable, or the current database may itself '
+      + 'be damaged and unreadable — that second case needs a human look before overwriting it. '
+      + 'No data was modified. Resolve the problem, or re-run with both --force and '
+      + '--skip-pre-restore-snapshot to restore without a safety net.',
+      { cause: error },
+    );
+  }
+}
+
 async function restoreBackup(config, archivePath, options = {}) {
   if (!options.force) throw new Error('Restore requires explicit force confirmation.');
   const extractionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-'));
@@ -276,6 +373,10 @@ async function restoreBackup(config, archivePath, options = {}) {
     });
     const manifest = await verifyExtractedBackup(unpackedRoot);
 
+    // Only snapshot once the incoming archive is known to be valid, and always before the
+    // first destructive write below. A failure here throws and leaves the live data intact.
+    const preRestoreSnapshot = await createPreRestoreSnapshot(config, options);
+
     const databaseBytes = await fs.readFile(path.join(unpackedRoot, 'data', 'admin.sqlite3'));
     await atomicWriteFile(config.databasePath, databaseBytes);
     await fs.unlink(`${config.databasePath}-wal`).catch(() => {});
@@ -283,16 +384,22 @@ async function restoreBackup(config, archivePath, options = {}) {
     await replaceDirectory(path.join(unpackedRoot, 'content', 'works'), path.join(config.contentDir, 'works'));
     await replaceDirectory(path.join(unpackedRoot, 'content', 'notes'), path.join(config.contentDir, 'notes'));
     await replaceDirectory(path.join(unpackedRoot, 'uploads'), config.uploadsDir);
-    return { manifest };
+    return { manifest, preRestoreSnapshot };
   } finally {
     await fs.rm(extractionRoot, { recursive: true, force: true });
   }
 }
 
 module.exports = {
+  BACKUP_PREFIX,
+  DEFAULT_PRE_RESTORE_RETENTION,
+  PRE_RESTORE_PREFIX,
   archiveTimestamp,
   createBackup,
+  createPreRestoreSnapshot,
   decryptArchive,
+  inspectLiveDatabase,
+  replicateArchive,
   encryptArchive,
   pruneBackups,
   restoreBackup,

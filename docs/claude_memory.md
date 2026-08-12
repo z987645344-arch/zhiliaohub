@@ -27,7 +27,8 @@
 
 | 项 | 说明 |
 |------|------|
-| 状态 | 🟢 `v1.7` 已存档：提交 `427271d` 已推送到 `main` 并创建带注释标签 `v1.7`，CI `Static checks` 通过，工作区与远程同步 |
+| 状态 | 🟡 `v1.7` 已存档并推送（提交 `427271d`、标签 `v1.7`、CI通过）；其后新增恢复前快照改动，当前工作区有6处未提交改动等待用户确认 |
+| 本轮进行中 | 备份/恢复体系两轮加固。上一轮：核实确认原恢复流程**没有**恢复前快照保护，补上自动快照、独立保留池与失败即中止。本轮：核实 `--skip-pre-restore-snapshot` **已有**双重确认（必须同时带 `--force`，无需改动）；修正"没有数据库"判断把 ENOENT 与"存在但读不出来"混为一谈的缺陷；新增进程内定时备份；新增备份目的地抽象与本地模拟异地；按"陌生人也能照做"重写恢复文档 |
 | 本轮完成 | Docker打包两轮：先首次真实执行 `docker build` 并运行容器验证，修复 `npm ci` 无视 `better-sqlite3` 的 `gypfile:false` 触发 node-gyp 导致构建失败、以及 `/app` 属主为root导致非root用户 `mkdir /app/data` 报 EACCES 容器直接崩溃两个缺陷；再收尾修复由此暴露的两个部署方案缺口：为 `siteRoot` 增加 `SITE_ROOT` 环境变量覆盖，并把静态前台目录与 `lab-storage` 补进部署片段的卷挂载 |
 | 交互边界 | 小作坊当前通过localhost `/lab/<slug>/` 提供静态访问，`LAB_BASE_URL`为未来子域名预留。真实 `lab.zhiliaohub.com` DNS、证书及Cookie隔离效果尚未验证，必须在部署阶段测试，不能把本地结果表述为真实隔离完成 |
 | 验证结果 | Docker：镜像构建成功（387MB）；1号进程以 `node`（UID 1000）运行，`/app` 对其不可写；`/health` 宿主机与容器内均返回200，HEALTHCHECK为healthy；容器内59项测试在补齐 `data/schema.sql` 与两个前台文件的只读挂载后全部通过（裸镜像下51通过/8失败，8项全为镜像刻意不含的文件导致的ENOENT，无一与SQLite相关）；原始容器上 `POST /api/feedback/comments` 返回202并在容器内SQLite查到该行、中文UTF-8逐字节一致。存档时后台59项测试、42个JavaScript语法、19个HTML本地引用和生产依赖审计亦全部通过 |
@@ -77,8 +78,10 @@
 | `admin-server/data/schema.sql` | 内容、TOTP、session、设备、配对码、挑战、反馈审核队列及 `lab_projects` 表结构；works媒体字段已贯通表单与发布，真实SQLite文件不入库 |
 | `admin-server/content/works/` / `content/notes/` | 后台生成的Markdown正文目录；未来内容版本历史依赖人工Git提交，本轮没有单独回滚系统 |
 | `admin-server/uploads/` | 白名单上传目录，支持带PK签名校验的ZIP，默认统一上限100MiB；只提交 `.gitkeep`，真实文件由 `.gitignore` 排除 |
-| `admin-server/backups/` | 本地备份目标目录，只提交 `.gitkeep`；真实归档由 `.gitignore` 排除，默认保留最近7份 |
-| `admin-server/scripts/backup.js` / `restore.js` | 创建与恢复SQLite、Markdown和上传文件归档；恢复要求显式 `--force` 且服务必须停止 |
+| `admin-server/backups/` | 本地备份目标目录，只提交 `.gitkeep`；真实归档由 `.gitignore` 排除。常规备份 `backup-` 前缀默认保留最近7份，恢复前快照 `pre-restore-` 前缀按 `PRE_RESTORE_RETENTION_COUNT`（默认3）独立保留，两个池互不清理 |
+| `admin-server/scripts/backup.js` / `restore.js` | 创建与恢复SQLite、Markdown和上传文件归档；恢复要求显式 `--force` 且服务必须停止。恢复在归档校验通过后、写入前会自动生成 `pre-restore-<时间戳>` 快照，选错归档可用它退回；快照失败即中止恢复。只有数据库文件确实不存在（ENOENT）才跳过快照，"存在但读不出来"会明确报错而非静默跳过。跳过安全网必须同时带 `--force` 与 `--skip-pre-restore-snapshot`，缺一不可 |
+| `admin-server/src/services/backup-scheduler.js` | 进程内定时备份，随 `server.js` 启动与关闭；复用 `createBackup`，上次备份时间从最新归档文件名解析，重启不漏不重；失败只记录明确日志不抛出 |
+| `admin-server/src/services/backup-destination.js` | 备份目的地契约与唯一的 `LocalMirrorDestination`（复制到同机另一目录）。⚠ 当前是**本地模拟**，不是真正异地容灾；真实远程存储尚未实现。同步失败不影响本地归档 |
 | `admin-server/scripts/hash-password.js` | 在交互式终端中无回显输入并确认管理员密码，只输出用于 `ADMIN_PASSWORD_HASH` 的 bcrypt 哈希 |
 | `admin-server/scripts/migrate-existing-content.js` | 一次性导入原8个作品与3篇日记；默认只预览，应用时要求显式确认服务已停止，并拒绝重复执行或非空内容表 |
 | `admin-server/Dockerfile` / `.dockerignore` | 非root多阶段后台镜像定义与构建上下文排除规则。**已在 2026-08-11 完成首次真实 `docker build` 与容器运行验证**：镜像可构建（387MB），非root `node`（UID 1000）真实生效，`/health` 返回200，容器内 better-sqlite3 可真实读写。为通过构建改了两处：`npm ci`/`npm prune` 加 `--ignore-scripts`（`npm ci` 会无视 `better-sqlite3` 的 `gypfile:false` 强行走 node-gyp，而slim镜像无Python），以及新增 `mkdir -p data lab-storage` 并 `chown node:node`（`/app` 属主为root，非root用户无法创建启动所需目录）。`tests/` 被 `.dockerignore` 排除，容器内跑测试需只读挂载 |
@@ -114,6 +117,10 @@
 | 单设备采用P-256挑战应答 | Node内置crypto验证Android兼容的 `SHA256withECDSA` DER签名；私钥始终留在App，新配对自动替换旧公钥并使旧设备session失效 |
 | 主站与App版本各自独立 | `zhiliaohub` 与 `zhiliaohub_app` 不强行对齐标签；通过 `admin-server/README.md` 兼容性说明维护服务端与App最低版本配对关系 |
 | 本地备份覆盖三个数据面 | SQLite快照、Markdown和上传文件共同进入带校验清单的归档；可选加密和保留策略已验证，但本地副本不能替代异地备份 |
+| 恢复必须先留回退点 | 恢复是覆盖性操作，因此在写入前自动快照当前数据，复用同一套 manifest/SHA-256/加密逻辑而不另造一套；快照失败一律中止恢复，避免在没有安全网时覆盖。快照与常规备份同目录，只防选错版本和中途失败，防不了整个备份目录或磁盘损坏 |
+| 定时备份放在服务进程内 | 不用操作系统cron：宿主机的cron不随镜像分发，容器化后行为会不一致。进程内 `setInterval` 在本地与容器中表现相同。"上次备份时间"直接从最新归档文件名解析而不另存状态文件，重启安全因此是结构自带的而非额外逻辑 |
+| 异地备份先做接口再做实现 | `backup-destination.js` 先固定 `send()` 契约，当前只有复制到同机另一目录的模拟实现。这样接真实对象存储时只需实现同一契约、不改调用方；但**模拟不等于容灾**，文档必须始终写明服务器整机损毁时主备份与副本会一起丢失 |
+| 备份失败必须吵闹 | 静默失败的备份系统比没有更危险，因为它同时提供了"有保护"的错觉。定时备份失败会打印失败原因、连续失败次数，并写明"现在没有产生新的备份" |
 | 单管理员采用密码 + TOTP | 密码只从环境变量读取bcrypt哈希，TOTP密钥加密后本地保存；失败按IP限流但不锁账号，避免账号锁定型拒绝服务 |
 | 后台当前不是生产系统 | 持久化会话、本地备份、部署片段和已验证可构建可运行的Docker镜像都不等于上线；仍没有真实域名/HTTPS、服务器合并、定时与异地备份、监控或生产恢复演练 |
 
@@ -139,6 +146,6 @@
 - 后台部署：真实服务器、域名和证书就位后，由用户/运维人员把 `admin-server/deploy/README.md` 中的服务与nginx片段人工合并进共享配置，填写真实占位项并执行上线验证。镜像本身已在 2026-08-11 完成首次真实构建与容器运行验证，但真实部署仍未进行。
 - 容器内静态发布路径：已于 2026-08-11 修复并验证。`siteRoot` 支持 `SITE_ROOT` 环境变量覆盖，部署片段挂载 `<SITE_ROOT_PATH>:/app/site`。部署时仍需人工确认该目录就是nginx对外的站点根、且对镜像内非root UID可写。
 - 小作坊数据持久化：挂载问题已于 2026-08-11 修复并验证，部署片段新增 `<ADMIN_LAB_STORAGE_PATH>:/app/lab-storage`。但**备份策略仍是待办**：现有备份脚本只覆盖SQLite、Markdown和上传文件三个数据面，`lab-storage` 不在其中，需要单独决定是否纳入备份与异地复制。
-- 备份运维：决定定时调度、异地复制、失败告警、密钥托管和服务器恢复演练；当前只有已验证的本地手动备份/恢复。
+- 备份运维：**定时调度已完成**（进程内 `setInterval`，默认每24小时，重启不漏也不重复，已用真实定时器验证）；**异地复制只完成了本地模拟**（`BACKUP_MIRROR_DIR` 复制到同机另一目录，接口已抽象在 `src/services/backup-destination.js`）。**仍是待办**：接入真实远程存储（如腾讯云COS）——在那之前服务器整机损毁会同时失去主备份与副本，不能对外称已具备异地容灾；此外还有备份失败告警、密钥托管、服务器级恢复演练，以及把 `lab-storage/` 纳入备份范围。
 - 安卓App对接：现有 `zhiliaohub_app v0.1` 已验证Android Keystore P-256密钥、手动配对、DER签名、Cookie持久化、吊销处理与覆盖安装；后续破坏性接口变更需同步维护最低兼容版本。
 - Phase B：在部署层处理根域名、知天管理后台/API 子域名及反向代理；相关配置不提前放入本仓库。
