@@ -1,6 +1,25 @@
 # 知了hub 改动记录
 > 每轮完成改动后在此追加记录。
-> **最后追加：2026-08-11**
+> **最后追加：2026-08-13**
+
+## 2026-08-13 正式部署配置文件整理（未执行部署）
+
+- 将此前只存在于 `admin-server/deploy/README.md` 的Compose/Nginx设计片段整理为仓库根目录正式 `docker-compose.yml` 与 `deploy/nginx.conf`。Compose构建 `admin-server`，使用官方 `nginx:stable-alpine`，挂载SQLite、Markdown、上传、备份、小作坊五个后台持久目录，以及后台可写/Nginx只读的独立静态站点目录。
+- 新增根目录 `.env.example`，仅承载Compose拓扑变量：监听IP和端口、主站/小作坊主机名、TLS宿主路径、镜像标签与持久目录路径；根目录真实 `.env` 已加入 `.gitignore`，与保存后台密钥的 `admin-server/.env` 明确分层，二者不可混用。
+- Nginx正式配置启用80到HTTPS跳转，443下主站直接伺服静态文件，并把 `/admin`、`/api`、`/uploads`、`/health` 反代到后台；完整转发真实IP与协议请求头，对应后台强制 `TRUST_PROXY_HOPS=1`。小作坊使用独立主机名和只读目录，不反代到Node，并保留受限CSP。
+- 为防止错误暴露仓库，部署要求 `SITE_ROOT_PATH` 指向只含公开前台文件的独立目录，禁止把整个Git检出目录挂给Nginx；同时补齐 `.dockerignore` 对真实 `lab-storage` 内容的排除，避免其进入Docker构建上下文。
+- **修复一个会导致容器100%启动失败的配置缺陷。** 存档前真实执行 `docker compose config` 时发现：Compose 会对 `env_file` 的值做变量插值，而 bcrypt 哈希形如 `$2b$12$<盐与哈希>`，其中的 `$` 被当成变量引用，`$2b`、`$12`、`$<盐与哈希>` 三段均未定义而被替换为空，最终传入容器的 `ADMIN_PASSWORD_HASH` 只剩 `$2b$12`。后台启动时校验不通过、抛出 `ADMIN_PASSWORD_HASH must be a bcrypt hash.` 并直接退出，也就是说按修复前的配置部署，容器必然起不来。已改为 `env_file: - path: ./admin-server/.env` 配合 `format: raw` 关闭该文件的插值；任何含 `$` 的密钥（例如自定义的备份加密密码）都同样受此保护。已用合成哈希复现问题并验证修复，修复后 `docker compose config` 退出码为0且不再有"变量未设置"告警。
+- 配置未写入任何真实IP、域名、证书路径或凭据。**已实际执行**的验证：`docker compose config` 通过（本机有 Docker CLI 29.6.2 与 Compose v5.3.1，该命令为客户端侧解析，不需要守护进程），变量插值、六个绑定挂载、端口发布与两个服务的依赖关系均按预期解析。**未执行**的验证：本机 Docker 守护进程当前未运行，因此 `nginx -t`、镜像构建、容器启动、端到端联调均未进行；宿主机也没有安装 Nginx。Nginx 配置只完成逐项人工审阅，真实TLS、来源IP透传及小作坊Cookie隔离仍需在服务器上验证。
+- 需要在部署时人工确认的一点：主站与小作坊两个 `server` 块共用同一份 `fullchain.pem`。若 `SERVER_NAME` 与 `LAB_SERVER_NAME` 属于不同主机名，该证书必须同时覆盖两者（SAN 或通配符），否则小作坊站点会出现证书不匹配。
+
+## 2026-08-13 v1.8 存档：备份/恢复体系加固
+
+- 将备份/恢复体系的两轮加固作为单一 `v1.8` 提交 `836fc62` 推送到 [GitHub仓库](https://github.com/z987645344-arch/zhiliaohub) 的 `main` 分支，并创建同名带注释标签 `v1.8`（标签信息："备份/恢复体系加固：定时触发、异地模拟接口与文档重写"）。标签已确认存在于远程，本地 `main` 与 `origin/main` 同步。
+- 本次存档共13个文件、1054行新增与24行删除，其中3个为新增文件：`src/services/backup-scheduler.js`（进程内定时备份）、`src/services/backup-destination.js`（可插拔备份目的地接口）、`tests/backup-automation.test.js`（8项新测试）。其余为 `backup-service.js`、`backup-config.js`、`server.js`、两个CLI脚本、`backup.test.js`、`README.md`、`.env.example`、`CHANGELOG.md` 与 `docs/claude_memory.md`。
+- **本次提交包含两轮工作**：除本轮的四部分外，还一并收录了上一轮完成但尚未提交的"恢复前自动快照"功能（`createPreRestoreSnapshot` 在 `v1.7` 中并不存在）。提交正文中已单列该项，避免日后回看时漏掉这次提交里最核心的功能。
+- 存档前确认：工作区无未跟踪遗留；真实 `.env`、开发数据库 `admin.sqlite3` 与 `backups/` 下的真实归档均由 `.gitignore` 排除且未进入提交；提交diff中不含任何凭据、bcrypt哈希、session/TOTP密钥、本地临时目录路径或测试残留；新增文件中不含字面NUL字节；`npm run check` 与后台71项测试全部通过。
+- CI结果：`Static checks` 工作流针对提交 `836fc6204da73128beb6dc2bd62f5f9a54e9a7fb` 运行 [#31676075063](https://github.com/z987645344-arch/zhiliaohub/actions/runs/31676075063) 成功通过，用时12秒。该CI仍只做JavaScript语法与HTML本地引用的静态检查，**不会**安装后端依赖、不会执行71项测试、也不会验证定时备份或异地同步；本轮全部功能验证均在本地隔离环境真实执行，CI通过不等于这些能力在CI环境被重新验证过。
+- 版本边界不变：`v1.8` 只是让备份/恢复机制本身更可靠，**没有**解决服务器整机损毁的风险。`BACKUP_MIRROR_DIR` 仍只能指向同一台机器上的另一个目录，属于本地模拟而非真正异地容灾；真实远程存储接入、备份失败告警、服务器级恢复演练以及把 `lab-storage/` 纳入备份范围，都仍是待办。
 
 ## 2026-08-11 备份体系收尾：细节核实、定时触发、异地接口与面向陌生人的恢复文档
 

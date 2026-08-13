@@ -1,7 +1,7 @@
 # 知了hub 项目状态 · 协作记忆
 > 用于在后续协作中快速恢复项目上下文。
 > 本文只维护当前状态；历史改动见 `CHANGELOG.md`。
-> **最后更新：2026-08-11**（`v1.7` 已存档：Docker镜像真实构建验证与部署前提修复；真实部署与子域名隔离仍待验证）
+> **最后更新：2026-08-13**（正式Compose/Nginx配置已整理，尚未实际部署）
 
 ---
 
@@ -11,7 +11,7 @@
 |------|------|
 | 项目名 | 知了hub（zhiliaohub） |
 | 项目路径 | `D:\zhiliao\zhiliaohub\zhiliaohub\` |
-| 当前版本 | `v1.7` |
+| 当前版本 | `v1.8`（提交 `836fc62` 已推送到 `main`，带注释标签 `v1.8` 已存在于远程，CI `Static checks` 通过）。其后的正式部署配置改动尚未存档 |
 | GitHub仓库 | `https://github.com/z987645344-arch/zhiliaohub`（Private，是否公开由用户在 GitHub 设置中决定） |
 | 定位 | 个人多作品展示网站 |
 | 当前主线 | 小作坊已支持后台上传受控ZIP、生成本地静态链接并按需展示在作品页；作品分组、反馈评论和五项导航能力继续保留 |
@@ -19,7 +19,7 @@
 | CI状态 | 已配置 GitHub Actions；面向 `main` 的 push / pull request 执行 JavaScript 语法与 HTML 本地引用检查，最近运行结果以仓库 Actions 页面为准 |
 | 与知天的关系 | 两者是独立仓库、独立部署；知天是本站“作品展示”中的一个条目。计划在 Phase B 通过反向代理拼接子域名，本仓库不包含知天的任何业务逻辑代码 |
 | 协作模式 | 知了hub 由独立指挥师负责，与知天的指挥师属于不同协作线程；两边通过各自仓库的 `claude_memory.md` 保存项目状态，不共享对话上下文 |
-| 运行边界 | 前台内容读取仍是静态HTML且页面加载不请求后台；只有访客主动提交留言/回复时调用同源公开API。后台已有SQLite持久化session、设备认证、本地备份/恢复及Docker部署片段，且Docker镜像已完成首次真实构建与容器运行验证；安卓App代码位于独立仓库，本仓库仍没有真实服务器/域名/HTTPS、共享配置合并、异地备份或实际部署 |
+| 运行边界 | 前台内容读取仍是静态HTML且页面加载不请求后台；只有访客主动提交留言/回复时调用同源公开API。后台已有SQLite持久化session、设备认证、本地备份/恢复、已验证Docker镜像和正式Compose/Nginx配置；安卓App代码位于独立仓库。本仓库仍没有真实服务器、真实域名/HTTPS验证、远程异地备份或实际部署 |
 
 ---
 
@@ -27,13 +27,13 @@
 
 | 项 | 说明 |
 |------|------|
-| 状态 | 🟡 `v1.7` 已存档并推送（提交 `427271d`、标签 `v1.7`、CI通过）；其后新增恢复前快照改动，当前工作区有6处未提交改动等待用户确认 |
-| 本轮进行中 | 备份/恢复体系两轮加固。上一轮：核实确认原恢复流程**没有**恢复前快照保护，补上自动快照、独立保留池与失败即中止。本轮：核实 `--skip-pre-restore-snapshot` **已有**双重确认（必须同时带 `--force`，无需改动）；修正"没有数据库"判断把 ENOENT 与"存在但读不出来"混为一谈的缺陷；新增进程内定时备份；新增备份目的地抽象与本地模拟异地；按"陌生人也能照做"重写恢复文档 |
-| 本轮完成 | Docker打包两轮：先首次真实执行 `docker build` 并运行容器验证，修复 `npm ci` 无视 `better-sqlite3` 的 `gypfile:false` 触发 node-gyp 导致构建失败、以及 `/app` 属主为root导致非root用户 `mkdir /app/data` 报 EACCES 容器直接崩溃两个缺陷；再收尾修复由此暴露的两个部署方案缺口：为 `siteRoot` 增加 `SITE_ROOT` 环境变量覆盖，并把静态前台目录与 `lab-storage` 补进部署片段的卷挂载 |
-| 交互边界 | 小作坊当前通过localhost `/lab/<slug>/` 提供静态访问，`LAB_BASE_URL`为未来子域名预留。真实 `lab.zhiliaohub.com` DNS、证书及Cookie隔离效果尚未验证，必须在部署阶段测试，不能把本地结果表述为真实隔离完成 |
-| 验证结果 | Docker：镜像构建成功（387MB）；1号进程以 `node`（UID 1000）运行，`/app` 对其不可写；`/health` 宿主机与容器内均返回200，HEALTHCHECK为healthy；容器内59项测试在补齐 `data/schema.sql` 与两个前台文件的只读挂载后全部通过（裸镜像下51通过/8失败，8项全为镜像刻意不含的文件导致的ENOENT，无一与SQLite相关）；原始容器上 `POST /api/feedback/comments` 返回202并在容器内SQLite查到该行、中文UTF-8逐字节一致。存档时后台59项测试、42个JavaScript语法、19个HTML本地引用和生产依赖审计亦全部通过 |
+| 状态 | 🟡 本地 `main` 比 `origin/main` 领先1个既有备份体系提交；本轮部署配置改动保持未提交，等待用户确认，不执行推送或部署 |
+| 本轮进行中 | 把此前文档中的Compose/Nginx片段规范化为正式仓库配置，明确两层 `.env`、六个运行目录、TLS、反代信任和服务器现场填值方式 |
+| 本轮完成 | 新增根目录 `docker-compose.yml`、根目录 `.env.example` 与 `deploy/nginx.conf`；后台挂载data/content/uploads/backups/lab-storage和独立站点目录，Nginx只读伺服站点与小作坊并反代后台路径。根目录真实 `.env` 与runtime目录已排除，Docker构建上下文也排除真实lab-storage内容 |
+| 交互边界 | 小作坊当前通过localhost `/lab/<slug>/` 提供静态访问，`LAB_BASE_URL`为未来子域名预留。占位变量 `<LAB_SERVER_NAME>` 对应的真实DNS、证书及Cookie隔离效果尚未验证，必须在部署阶段测试，不能把本地结果表述为真实隔离完成 |
+| 验证结果 | 历史Docker镜像真实构建/运行验证结果继续有效。**已实际执行** `docker compose config`（本机有 Docker CLI 与 Compose，该命令为客户端侧解析、不需守护进程），退出码0、无未设置变量告警，插值/挂载/端口/服务依赖均按预期解析。借此发现并修复了一个会导致容器100%启动失败的缺陷：Compose 对 `env_file` 做变量插值，bcrypt 哈希里的 `$` 被当成变量引用，`ADMIN_PASSWORD_HASH` 会被截成 `$2b$12` 而使后台启动即退出；已用 `format: raw` 关闭该文件插值并验证修复。**未执行**：守护进程当前未运行，`nginx -t`、镜像构建、容器启动与端到端联调均未进行，Nginx配置只完成人工审阅，真实TLS、来源IP透传及小作坊Cookie隔离仍待服务器验证 |
 | 收尾验证结果 | 容器设 `SITE_ROOT=/app/site` 并挂载独立前台副本后，走完真实登录+TOTP+`POST /admin/notes` 触发全量发布，宿主机侧12项内容检查全部通过（新日记进入 `notes.html`、详情页Markdown已渲染、`works.html`/`feedback.html` 同步重建、手工 `index.html` 校验和不变）。`lab-storage` 挂载后真实上传ZIP并经完整重建（`docker rm` 后重新 `run`）仍保留文件、`/lab/<slug>/` 返回200；不挂载时重建后数据库仍有记录但目录为空、返回404，反向确认了数据丢失。改动后本地与容器内各59项测试全部通过 |
-| 部署前提 | `NODE_ENV=production` 会给session cookie加 `secure`，纯HTTP下 express-session 不下发cookie、登录必然失败。因此部署片段中的 `TRUST_PROXY_HOPS: 1` 是必需项，必须由nginx终止TLS并转发 `X-Forwarded-Proto`；`SITE_ROOT` 与 `<SITE_ROOT_PATH>:/app/site` 必须成对出现，且该目录要与nginx站点根是同一个 |
+| 部署前提 | `NODE_ENV=production` 会给session cookie加 `secure`，纯HTTP下 express-session 不下发cookie、登录必然失败。因此正式Compose配置中的 `TRUST_PROXY_HOPS=1` 是必需项，必须由Nginx终止TLS并转发 `X-Forwarded-Proto`；`SITE_ROOT=/app/site` 与 `SITE_ROOT_PATH` 挂载必须成对出现，且该宿主目录也必须是Nginx只读站点根 |
 
 ---
 
@@ -85,7 +85,9 @@
 | `admin-server/scripts/hash-password.js` | 在交互式终端中无回显输入并确认管理员密码，只输出用于 `ADMIN_PASSWORD_HASH` 的 bcrypt 哈希 |
 | `admin-server/scripts/migrate-existing-content.js` | 一次性导入原8个作品与3篇日记；默认只预览，应用时要求显式确认服务已停止，并拒绝重复执行或非空内容表 |
 | `admin-server/Dockerfile` / `.dockerignore` | 非root多阶段后台镜像定义与构建上下文排除规则。**已在 2026-08-11 完成首次真实 `docker build` 与容器运行验证**：镜像可构建（387MB），非root `node`（UID 1000）真实生效，`/health` 返回200，容器内 better-sqlite3 可真实读写。为通过构建改了两处：`npm ci`/`npm prune` 加 `--ignore-scripts`（`npm ci` 会无视 `better-sqlite3` 的 `gypfile:false` 强行走 node-gyp，而slim镜像无Python），以及新增 `mkdir -p data lab-storage` 并 `chown node:node`（`/app` 属主为root，非root用户无法创建启动所需目录）。`tests/` 被 `.dockerignore` 排除，容器内跑测试需只读挂载 |
-| `admin-server/deploy/README.md` | 需人工合并进服务器共享Compose/nginx的片段、占位项与上线顺序，不含真实域名、IP、密钥或证书路径。Compose片段挂载 data/content/uploads/backups/lab-storage 五个持久目录加静态前台目录，并设置 `SITE_ROOT` 与必需的 `TRUST_PROXY_HOPS: 1` |
+| `docker-compose.yml` / 根目录 `.env.example` | 正式双服务拓扑及Compose非密钥变量模板；真实根目录 `.env` 不入库。后台挂载五个持久数据目录和独立站点目录，Nginx挂载站点、小作坊与TLS文件 |
+| `deploy/nginx.conf` | 官方Nginx镜像读取的受限envsubst模板；主站HTTPS静态服务与后台反代、小作坊独立HTTPS主机名、真实IP/协议转发头和安全响应头 |
+| `admin-server/deploy/README.md` | 两层 `.env` 区别、服务器现场变量、独立公开站点目录、UID权限、初始化步骤、正式配置路径与部署后验证清单；不含真实域名、IP、密钥或证书路径 |
 | `admin-server/tests/device-auth.test.js` | 安卓设备配对、挑战登录、错误/重放/过期、吊销和自动替换的端到端验证 |
 | `admin-server/tests/` | 后台认证、安全边界、session持久化、设备认证、内容一致性、原子写入、上传及备份恢复验证；覆盖清单维护在 `admin-server/README.md`“测试”章节 |
 
@@ -122,7 +124,7 @@
 | 异地备份先做接口再做实现 | `backup-destination.js` 先固定 `send()` 契约，当前只有复制到同机另一目录的模拟实现。这样接真实对象存储时只需实现同一契约、不改调用方；但**模拟不等于容灾**，文档必须始终写明服务器整机损毁时主备份与副本会一起丢失 |
 | 备份失败必须吵闹 | 静默失败的备份系统比没有更危险，因为它同时提供了"有保护"的错觉。定时备份失败会打印失败原因、连续失败次数，并写明"现在没有产生新的备份" |
 | 单管理员采用密码 + TOTP | 密码只从环境变量读取bcrypt哈希，TOTP密钥加密后本地保存；失败按IP限流但不锁账号，避免账号锁定型拒绝服务 |
-| 后台当前不是生产系统 | 持久化会话、本地备份、部署片段和已验证可构建可运行的Docker镜像都不等于上线；仍没有真实域名/HTTPS、服务器合并、定时与异地备份、监控或生产恢复演练 |
+| 后台当前不是生产系统 | 持久化会话、本地备份、正式部署配置和已验证可构建可运行的Docker镜像都不等于上线；仍没有真实域名/HTTPS验收、服务器部署、真实异地备份、监控或生产恢复演练 |
 
 ---
 
@@ -138,14 +140,15 @@
 - 配套App仓库 `zhiliaohub_app` 已完成首次存档 `v0.1` 与真机验证；两仓库版本号各自独立，通过 `admin-server/README.md` 的兼容性说明记录配对关系，本仓库不加入App代码。
 - 反馈评论三阶段已经完成；后续日常流程为访客提交→pending→后台审核→手动全量发布，禁止绕过审核直接展示数据库记录。
 - 智能工具占位页和五项导航已经建立；智能工具与知天的真实工具、API及账号系统集成方案仍待单独讨论，当前页面仅为静态占位，不代表功能已经实现。
-- 小作坊本地上传、解压、静态访问和按需展示已经实现；部署时仍需按 `admin-server/deploy/lab-subdomain.md` 配置 `lab.zhiliaohub.com` 独立静态server块、DNS与HTTPS，并实测Cookie不跨子域共享。
+- 小作坊本地上传、解压、静态访问和按需展示已经实现；部署时仍需按 `admin-server/deploy/lab-subdomain.md` 为占位变量 `<LAB_SERVER_NAME>` 配置独立静态server块、DNS与HTTPS，并实测Cookie不跨子域共享。
 
 ### 待讨论的后续架构决定
 
 - 发布运维：部署时确保后台对静态站点目录拥有受限写权限，并把SQLite、Markdown与生成HTML纳入一致的备份/发布操作流程。
-- 后台部署：真实服务器、域名和证书就位后，由用户/运维人员把 `admin-server/deploy/README.md` 中的服务与nginx片段人工合并进共享配置，填写真实占位项并执行上线验证。镜像本身已在 2026-08-11 完成首次真实构建与容器运行验证，但真实部署仍未进行。
-- 容器内静态发布路径：已于 2026-08-11 修复并验证。`siteRoot` 支持 `SITE_ROOT` 环境变量覆盖，部署片段挂载 `<SITE_ROOT_PATH>:/app/site`。部署时仍需人工确认该目录就是nginx对外的站点根、且对镜像内非root UID可写。
-- 小作坊数据持久化：挂载问题已于 2026-08-11 修复并验证，部署片段新增 `<ADMIN_LAB_STORAGE_PATH>:/app/lab-storage`。但**备份策略仍是待办**：现有备份脚本只覆盖SQLite、Markdown和上传文件三个数据面，`lab-storage` 不在其中，需要单独决定是否纳入备份与异地复制。
+- 后台部署：正式配置已位于根目录 `docker-compose.yml` 与 `deploy/nginx.conf`。真实服务器就位后，由用户/运维人员现场创建根目录 `.env` 与 `admin-server/.env`，准备独立公开站点和持久目录，再按 `admin-server/deploy/README.md` 执行语法检查、构建、启动与上线验收；本轮没有实际部署。
+- 容器内静态发布路径：已于 2026-08-11 修复并验证。`siteRoot` 支持 `SITE_ROOT` 环境变量覆盖；正式Compose通过 `SITE_ROOT_PATH` 挂载到 `/app/site`，同一宿主目录以只读方式挂载给Nginx。部署时仍需确认该目录对镜像内非root UID可写，且只包含公开前台文件。
+- 小作坊数据持久化：挂载问题已于 2026-08-11 修复并验证；正式Compose通过 `ADMIN_LAB_STORAGE_PATH` 同时为后台提供读写挂载、为Nginx提供只读挂载。但**备份策略仍是待办**：现有备份脚本只覆盖SQLite、Markdown和上传文件三个数据面，`lab-storage` 不在其中，需要单独决定是否纳入备份与异地复制。
 - 备份运维：**定时调度已完成**（进程内 `setInterval`，默认每24小时，重启不漏也不重复，已用真实定时器验证）；**异地复制只完成了本地模拟**（`BACKUP_MIRROR_DIR` 复制到同机另一目录，接口已抽象在 `src/services/backup-destination.js`）。**仍是待办**：接入真实远程存储（如腾讯云COS）——在那之前服务器整机损毁会同时失去主备份与副本，不能对外称已具备异地容灾；此外还有备份失败告警、密钥托管、服务器级恢复演练，以及把 `lab-storage/` 纳入备份范围。
+- **优先级说明（2026-08-13）**：服务器已进入采购阶段。**真实远程存储接入应作为部署完成后的第一优先级任务，优先于任何新功能开发。** 理由是在此之前所有备份副本都在同一台机器上，服务器整机损毁会一次性失去全部数据，这是当前唯一没有任何缓解手段的单点风险；`backup-destination.js` 的接口已经预留好，接入时不需要改动调用方。
 - 安卓App对接：现有 `zhiliaohub_app v0.1` 已验证Android Keystore P-256密钥、手动配对、DER签名、Cookie持久化、吊销处理与覆盖安装；后续破坏性接口变更需同步维护最低兼容版本。
 - Phase B：在部署层处理根域名、知天管理后台/API 子域名及反向代理；相关配置不提前放入本仓库。

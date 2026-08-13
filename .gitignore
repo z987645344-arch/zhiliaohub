@@ -13,6 +13,8 @@ Desktop.ini
 
 # Runtime leftovers
 *.log
+/.env
+/runtime/
 
 # Local-only character reference supplied by the project owner
 /assets/reference/oc-three-view.jpg

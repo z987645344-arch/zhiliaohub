@@ -14,6 +14,8 @@ content/notes/*
 !content/notes/.gitkeep
 uploads/*
 !uploads/.gitkeep
+lab-storage/*
+!lab-storage/.gitkeep
 backups/*
 !backups/.gitkeep
 *.sqlite3

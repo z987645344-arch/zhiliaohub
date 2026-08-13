@@ -1,0 +1,110 @@
+name: zhiliaohub
+
+services:
+  admin-server:
+    build:
+      context: ./admin-server
+      dockerfile: Dockerfile
+    image: zhiliaohub-admin:${ZHILIAOHUB_IMAGE_TAG:-local}
+    env_file:
+      # format: raw disables Compose's variable interpolation for this file. Without it a
+      # bcrypt ADMIN_PASSWORD_HASH such as $2b$12$<salt+hash> is read as three unset
+      # variable references ($2b, $12, $<salt+hash>), silently collapsing to "$2b$12";
+      # the server then rejects it with "ADMIN_PASSWORD_HASH must be a bcrypt hash." and
+      # the container never starts. Any secret containing $ has the same problem.
+      - path: ./admin-server/.env
+        format: raw
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3001
+      TRUST_PROXY_HOPS: 1
+      SCHEMA_PATH: /app/schema/schema.sql
+      DATA_DIR: /app/data
+      CONTENT_DIR: /app/content
+      UPLOAD_DIR: /app/uploads
+      BACKUP_DIR: /app/backups
+      LAB_STORAGE_DIR: /app/lab-storage
+      SITE_ROOT: /app/site
+    expose:
+      - "3001"
+    volumes:
+      - type: bind
+        source: ${ADMIN_DATA_PATH}
+        target: /app/data
+      - type: bind
+        source: ${ADMIN_CONTENT_PATH}
+        target: /app/content
+      - type: bind
+        source: ${ADMIN_UPLOADS_PATH}
+        target: /app/uploads
+      - type: bind
+        source: ${ADMIN_BACKUPS_PATH}
+        target: /app/backups
+      - type: bind
+        source: ${ADMIN_LAB_STORAGE_PATH}
+        target: /app/lab-storage
+      - type: bind
+        source: ${SITE_ROOT_PATH}
+        target: /app/site
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - app-network
+
+  nginx:
+    image: nginx:stable-alpine
+    depends_on:
+      admin-server:
+        condition: service_healthy
+    environment:
+      SERVER_NAME: ${SERVER_NAME}
+      LAB_SERVER_NAME: ${LAB_SERVER_NAME}
+      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-100m}
+      NGINX_ENVSUBST_FILTER: ^(SERVER_NAME|LAB_SERVER_NAME|NGINX_CLIENT_MAX_BODY_SIZE)$$
+    ports:
+      - "${SERVER_PUBLIC_IP}:${SERVER_HTTP_PORT:-80}:80"
+      - "${SERVER_PUBLIC_IP}:${SERVER_HTTPS_PORT:-443}:443"
+    volumes:
+      - type: bind
+        source: ${SITE_ROOT_PATH}
+        target: /usr/share/nginx/html
+        read_only: true
+      - type: bind
+        source: ${ADMIN_LAB_STORAGE_PATH}
+        target: /srv/zhiliaohub-lab
+        read_only: true
+      - type: bind
+        source: ./deploy/nginx.conf
+        target: /etc/nginx/templates/default.conf.template
+        read_only: true
+      - type: bind
+        source: ${TLS_CERT_PATH}
+        target: /etc/nginx/tls/fullchain.pem
+        read_only: true
+      - type: bind
+        source: ${TLS_KEY_PATH}
+        target: /etc/nginx/tls/privkey.pem
+        read_only: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

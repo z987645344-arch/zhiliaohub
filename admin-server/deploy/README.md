@@ -1,111 +1,111 @@
-# 知了hub 管理后台部署片段
+# 知了hub 部署配置说明
 
-> 以下内容需要手动合并进服务器上的共享 `docker-compose` / nginx 配置。本轮不直接修改任何仓库外文件，也没有执行真实部署。
+仓库已经提供正式的部署配置文件：
 
-## 上线前必须由用户填写
+- 根目录 `docker-compose.yml`：构建并运行管理后台与官方Nginx镜像。
+- 根目录 `.env.example`：Docker Compose自身读取的非密钥变量模板。
+- `deploy/nginx.conf`：Nginx配置模板，负责HTTPS、静态前台、后台反代与小作坊独立主机名。
+- `admin-server/.env.example`：Node管理后台读取的业务配置与密钥模板。
+- `admin-server/deploy/lab-subdomain.md`：小作坊子域名的安全边界与上线验收补充说明。
 
-- `<ADMIN_DOMAIN>`：管理后台最终子域名，例如由用户实际拥有域名下的 `admin` 子域名；本文不提供虚构域名。
-- `<ADMIN_HOST_PORT>`：服务器回环地址上分配给后台的实际端口。
-- `<ADMIN_DATA_PATH>`、`<ADMIN_CONTENT_PATH>`、`<ADMIN_UPLOADS_PATH>`、`<ADMIN_BACKUPS_PATH>`、`<ADMIN_LAB_STORAGE_PATH>`：服务器上五个独立持久化目录的绝对路径。
-- `<SITE_ROOT_PATH>`：静态前台目录的绝对路径，即 `index.html`、`css/`、`js/`、`assets/` 实际所在的目录，也就是 nginx 对外提供主站静态文件的根目录。后台全量发布会往这里写入生成的HTML与作品媒体，因此必须与 nginx 的站点根指向同一目录，且对镜像内非root `node` 用户可写。
-- `<ADMIN_ENV_FILE>`：服务器上真实环境变量文件的绝对路径，权限应限制为服务维护者可读。
-- `<TLS_CERT_PATH>` 与 `<TLS_KEY_PATH>`：该真实域名对应的证书和私钥路径。
-- 如果 nginx 也运行在共享 Compose 网络内，还需确定实际网络名；此时可以不映射宿主机端口，改为通过服务名访问容器端口。
+这些文件只是部署准备。本轮没有连接服务器、构建镜像、启动Compose、申请证书或修改DNS。
 
-真实服务器IP、域名、密码哈希、session密钥、TOTP加密密钥、备份密码和TLS路径都不能从仓库推断，必须在实际部署时填写。
+## 两层 `.env` 不可混用
 
-## docker-compose 服务片段
+### 1. 仓库根目录 `.env`
 
-以下片段假设共享 Compose 文件可以从知了hub仓库路径构建镜像，且宿主机 nginx 通过回环端口访问容器。路径占位符必须先替换：
+由Docker Compose在解析 `docker-compose.yml` 时读取。服务器上从根目录 `.env.example` 复制创建，但真实 `.env` 已被 `.gitignore` 排除。
 
-```yaml
-services:
-  zhiliaohub-admin:
-    build:
-      context: <ZHILIAOHUB_REPOSITORY_PATH>/admin-server
-      dockerfile: Dockerfile
-    image: zhiliaohub-admin:<RELEASE_TAG>
-    env_file:
-      - <ADMIN_ENV_FILE>
-    environment:
-      NODE_ENV: production
-      HOST: 0.0.0.0
-      PORT: 3001
-      SCHEMA_PATH: /app/schema/schema.sql
-      SITE_ROOT: /app/site
-      TRUST_PROXY_HOPS: 1
-    ports:
-      - "127.0.0.1:<ADMIN_HOST_PORT>:3001"
-    volumes:
-      - <ADMIN_DATA_PATH>:/app/data
-      - <ADMIN_CONTENT_PATH>:/app/content
-      - <ADMIN_UPLOADS_PATH>:/app/uploads
-      - <ADMIN_BACKUPS_PATH>:/app/backups
-      - <ADMIN_LAB_STORAGE_PATH>:/app/lab-storage
-      - <SITE_ROOT_PATH>:/app/site
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then((r)=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-```
+它只保存部署拓扑参数：
 
-真实环境变量文件至少需要：
+- `SERVER_PUBLIC_IP`、HTTP/HTTPS宿主端口；
+- 主站/后台共用的 `SERVER_NAME` 与小作坊的 `LAB_SERVER_NAME`；
+- TLS证书和私钥在宿主机上的路径；
+- 五个后台持久目录和独立静态站点目录的宿主机路径；
+- Nginx上传上限与本地镜像标签。
 
-```dotenv
-ADMIN_PASSWORD_HASH=<BCRYPT_HASH>
-SESSION_SECRET=<AT_LEAST_32_RANDOM_CHARACTERS>
-TOTP_ENCRYPTION_KEY=<BASE64_ENCODED_32_BYTE_KEY>
-BACKUP_ENCRYPTION_PASSWORD=<STRONG_BACKUP_ONLY_PASSWORD>
-BACKUP_RETENTION_COUNT=7
-SESSION_MAX_AGE_MS=28800000
-SESSION_CLEANUP_INTERVAL_MS=900000
-PAIRING_CODE_TTL_MS=300000
-DEVICE_CHALLENGE_TTL_MS=120000
-DEVICE_AUTH_RATE_LIMIT_WINDOW_MS=900000
-DEVICE_AUTH_RATE_LIMIT_MAX=30
-```
+这里**不要**填写管理员密码哈希、session密钥、TOTP密钥或备份加密密码。
 
-不得把真实环境文件复制进镜像或提交到仓库。SQLite数据库、Markdown、上传文件、备份目录与小作坊解压目录都必须挂载为持久卷，否则容器重建会丢失数据。当前备份只落在服务器本地独立目录，且只覆盖SQLite、Markdown与上传文件三个数据面，**不包含 `lab-storage`**；小作坊产物的备份策略和异地副本都仍需另行设计。
+### 2. `admin-server/.env`
 
-`SITE_ROOT` 与 `<SITE_ROOT_PATH>:/app/site` 必须成对出现。不设置 `SITE_ROOT` 时后台会回退到 `admin-server/..`，在容器内即为根目录 `/`，非root用户不可写，全量发布会失败；本地开发不设置该变量时仍解析为仓库根目录，行为不变。挂载必须是可读写的，因为发布除了写HTML还会向站点目录内的作品媒体子目录复制文件。
+由Node容器通过Compose的 `env_file` 读取。服务器上从 `admin-server/.env.example` 复制创建，真实文件同样不入Git。
 
-## nginx 子域名片段
+`docker-compose.yml` 对这个文件显式声明了 `format: raw`，用来关闭Compose的变量插值。**不要去掉它**：bcrypt 哈希形如 `$2b$12$<盐与哈希>`，其中的 `$` 会被Compose当成变量引用，插值后只剩 `$2b$12`，后台启动时会以 `ADMIN_PASSWORD_HASH must be a bcrypt hash.` 直接退出。同理，这里的值**不需要**把 `$` 写成 `$$` 转义，按 `hash-password.js` 输出的原样粘贴即可。
 
-默认方案是独立子域名，因为当前应用路由和重定向都以 `/admin`、`/api/admin` 为根路径：
+它保存后台业务与敏感配置，例如：
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name <ADMIN_DOMAIN>;
+- `ADMIN_PASSWORD_HASH`；
+- `SESSION_SECRET`；
+- `TOTP_ENCRYPTION_KEY`；
+- `BACKUP_ENCRYPTION_PASSWORD`；
+- 认证、反馈、上传、小作坊和备份策略参数；
+- `LAB_BASE_URL=https://<小作坊真实域名>`。
 
-    ssl_certificate     <TLS_CERT_PATH>;
-    ssl_certificate_key <TLS_KEY_PATH>;
+Compose会强制覆盖容器内的 `NODE_ENV=production`、`HOST=0.0.0.0`、`PORT=3001`、`TRUST_PROXY_HOPS=1` 以及所有挂载目录路径，避免服务器 `.env` 意外把容器拓扑改回本地开发值。
 
-    location / {
-        proxy_pass http://127.0.0.1:<ADMIN_HOST_PORT>;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
+`BACKUP_MIRROR_DIR` 当前只是同机副本模拟，默认应留空。若未来启用，必须先给该目录增加独立持久卷挂载；不能把它指向容器未挂载且不可写的 `/app` 路径，更不能把同机副本描述为真实异地容灾。
 
-如果 nginx 与后台都在同一个 Compose 网络，`proxy_pass` 可在人工确认网络和服务名后改为 `http://zhiliaohub-admin:3001`，同时删除宿主机 `ports` 映射并使用 `expose`。
+## 目录与权限
 
-如果最终选择路径前缀（例如主站 `/admin/`）而不是子域名，不能只改一条 nginx rewrite：当前应用的路由、绝对重定向、Cookie路径和页面表单地址都要加入统一的 `BASE_PATH` 支持，并重新验证CSRF、登录跳转和静态引用。本仓库尚未实现路径前缀部署。
+根目录 `.env.example` 使用 `./runtime/...` 作为安全的本地占位路径。正式服务器建议把下面变量改成专用绝对路径，而不是修改Compose文件：
 
-## 人工部署顺序
+- `ADMIN_DATA_PATH` → `/app/data`
+- `ADMIN_CONTENT_PATH` → `/app/content`
+- `ADMIN_UPLOADS_PATH` → `/app/uploads`
+- `ADMIN_BACKUPS_PATH` → `/app/backups`
+- `ADMIN_LAB_STORAGE_PATH` → `/app/lab-storage`
+- `SITE_ROOT_PATH` → `/app/site`（后台读写）与 `/usr/share/nginx/html`（Nginx只读）
 
-1. 在服务器创建五个持久目录和真实环境变量文件，确认目录属主/权限允许镜像内非root `node` 用户读写（应以实际构建镜像的UID/GID核对，不能默认放宽为全员可写）。同时确认静态前台目录 `<SITE_ROOT_PATH>` 对同一UID可写，且就是 nginx 实际对外提供主站文件的目录。
-2. 将上述服务片段人工合并到共享 Compose 配置，替换所有占位符。
-3. 将 nginx 片段人工合并到服务器配置，填写真实域名与证书路径并由管理员校验语法。
-4. 构建并启动服务，确认容器健康检查和 `/health`。
-5. 实测密码、TOTP、服务重启后session、内容写入、上传及备份/恢复；并确认保存内容后全量发布真的把生成的HTML写进了 `<SITE_ROOT_PATH>`、nginx 对外返回的就是这批新文件，以及容器重启后小作坊项目文件仍然存在。
-6. 再决定定时备份调度、异地复制、监控告警和正式对外开放时间。
+前五项和静态站点目录都必须持久化。镜像内应用以非root `node` 用户运行；当前官方Node镜像中的UID/GID为1000，部署时仍应以实际构建镜像核对，并让五个后台目录和静态站点目录对该用户可读写。不要用全员可写权限规避属主问题。
 
-本轮没有执行以上步骤；这些片段只是仓库内的部署准备材料。
+`SITE_ROOT_PATH` 必须是一个**只包含公开前台文件的独立目录**，不能直接指向整个Git仓库。否则仓库中的 `admin-server/`、文档或服务器现场配置可能被Nginx当作静态文件暴露。首次启动前，应把以下已提交前台文件复制到该目录：
+
+- 根目录的 `index.html`、`works*.html`、`notes*.html`、`feedback.html`、`tools.html`；
+- `assets/`、`css/`、`js/` 三个目录。
+
+`ADMIN_CONTENT_PATH` 是运行时Markdown目录。全新部署若不是从备份恢复，应先把仓库内 `admin-server/content/` 的初始内容复制进去；空的bind mount会遮住镜像内随附的占位Markdown。
+
+## Nginx路由与代理信任
+
+`deploy/nginx.conf` 由官方Nginx镜像作为模板读取。Compose设置 `NGINX_ENVSUBST_FILTER`，只替换 `SERVER_NAME`、`LAB_SERVER_NAME` 和上传上限，配置中的原生 `$host`、`$remote_addr`、`$scheme` 等Nginx变量不会被错误替换。
+
+主站主机名下：
+
+- `/admin`、`/api`、`/uploads` 与 `/health` 反代到 `admin-server:3001`；
+- 其他请求直接读取只读挂载的静态前台目录；
+- 代理发送 `Host`、`X-Real-IP`、`X-Forwarded-For`、`X-Forwarded-Proto`。
+
+后台设置 `TRUST_PROXY_HOPS=1`，只信任紧邻它的这一个Nginx代理。生产session Cookie带 `Secure`，因此Nginx必须终止TLS并正确传递 `X-Forwarded-Proto=https`；纯HTTP部署无法正常登录。配置中的80端口只负责重定向到HTTPS。
+
+小作坊主机名使用单独的Nginx `server` 块，直接只读访问同一份 `ADMIN_LAB_STORAGE_PATH`，不经过Node管理进程，并附加受限CSP等安全响应头。证书必须同时覆盖 `SERVER_NAME` 与 `LAB_SERVER_NAME`，也可以使用包含两者的SAN证书。
+
+## 服务器现场需要填写什么
+
+不要替换或提交仓库文件中的占位值。服务器上执行：
+
+1. 复制根目录 `.env.example` 为根目录 `.env`。
+2. 在根目录 `.env` 填写真实监听IP、两个真实主机名、证书/私钥路径和六个持久目录路径。
+3. 复制 `admin-server/.env.example` 为 `admin-server/.env`。
+4. 在 `admin-server/.env` 写入现场生成的密码哈希与随机密钥，并令 `LAB_BASE_URL` 与根目录 `.env` 的 `LAB_SERVER_NAME` 对应，例如 `https://<LAB_SERVER_NAME>`（尖括号只是说明符，不能原样保留）。
+5. 不修改 `docker-compose.yml` 或 `deploy/nginx.conf` 来写入真实IP、域名、密钥或证书路径。
+
+根目录 `.env` 的 `SERVER_PUBLIC_IP=0.0.0.0` 表示监听所有宿主接口；也可填写服务器实际绑定IP。仓库示例默认 `127.0.0.1`，目的是避免有人未审阅配置就意外对公网开放。`SERVER_NAME=localhost` 和 `LAB_SERVER_NAME=lab.localhost` 也只是本地占位示例，不是生产域名。
+
+## 实际部署顺序（后续执行，本轮不运行）
+
+1. 在服务器检出已确认版本，并安装Docker Engine与Compose插件。
+2. 创建根目录 `.env` 和 `admin-server/.env`，逐项替换现场值；确保两者都没有被Git跟踪。
+3. 创建六个持久目录与TLS文件，设置最小必要权限；初始化独立静态站点目录和Markdown目录。
+4. 先运行 `docker compose config --quiet` 检查变量与Compose语法，确认输出不报缺失变量或文件。
+5. 运行 `docker compose build --no-cache admin-server`；代码或依赖变化后必须显式重建镜像。
+6. 运行 `docker compose up -d`，检查两个服务的health状态和Nginx日志。
+7. 验证HTTP到HTTPS重定向、主站静态文件、`/health`、密码+TOTP登录、真实来源IP、反馈提交、作品发布、上传、备份和小作坊独立主机名。
+8. 重建容器后再次确认SQLite、Markdown、上传、备份、小作坊文件和已发布前台均未丢失。
+9. 最后再配置DNS、外部防火墙、监控、真实远程备份与正式开放时间。
+
+## 当前未验证边界
+
+- 本轮电脑没有可用的Docker或Nginx命令，所以没有执行 `docker compose config`、`nginx -t`、镜像构建或容器启动；只完成配置文件的静态解析与逐项人工审阅。
+- 没有连接真实服务器，没有写入真实IP、域名、证书、路径或凭据。
+- 小作坊真实子域名Cookie隔离、HTTPS证书行为、反向代理来源IP和反馈真实访客流量仍需部署后验证。
+- 当前归档备份不包含 `lab-storage`；真实远程对象存储也尚未实现。
