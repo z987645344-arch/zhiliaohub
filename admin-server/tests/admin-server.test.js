@@ -26,7 +26,7 @@ async function createRuntime(overrides = {}) {
   const adminPasswordHash = overrides.adminPasswordHash || await bcrypt.hash(password, 4);
   const totpEncryptionKey = overrides.totpEncryptionKey || crypto.randomBytes(32);
   const context = createApp({
-    nodeEnv: 'test',
+    nodeEnv: overrides.nodeEnv || 'test',
     host: '127.0.0.1',
     port: 3001,
     sessionSecret,
@@ -176,6 +176,28 @@ test('未登录访问管理页面会重定向，访问管理 API 会返回 401',
   const apiResponse = await client.request('/api/admin/works');
   assert.equal(apiResponse.status, 401);
   assert.match((await apiResponse.json()).error, /需要管理员登录/);
+});
+
+test('/health根据运行环境准确区分本地与生产部署', async (t) => {
+  const localRuntime = await createRuntime();
+  const productionRuntime = await createRuntime({ nodeEnv: 'production' });
+  t.after(() => Promise.all([localRuntime.close(), productionRuntime.close()]));
+
+  let response = await fetch(`${localRuntime.baseUrl}/health`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    status: 'ok',
+    storage: 'sqlite+markdown',
+    deployment: 'local-only',
+  });
+
+  response = await fetch(`${productionRuntime.baseUrl}/health`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    status: 'ok',
+    storage: 'sqlite+markdown',
+    deployment: 'production',
+  });
 });
 
 test('密码错误会被明确拒绝，正确密码会进入首次 TOTP 绑定', async (t) => {

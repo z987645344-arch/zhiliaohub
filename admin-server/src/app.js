@@ -296,7 +296,11 @@ function createApp(overrides = {}) {
   }));
 
   app.get('/health', (_request, response) => {
-    response.json({ status: 'ok', storage: 'sqlite+markdown', deployment: 'local-only' });
+    response.json({
+      status: 'ok',
+      storage: 'sqlite+markdown',
+      deployment: config.isProduction ? 'production' : 'local-only',
+    });
   });
 
   app.post('/api/feedback/comments', feedbackLimiter, (request, response, next) => {

@@ -1,16 +1,28 @@
 # 知了hub
 
-知了hub 是一个用于整理与展示个人作品、学习心得和持续探索的静态网站。
+知了hub 是用于整理和展示个人作品、学习心得、反馈交流与持续探索的多页面网站，生产入口为 [https://zhiliaohub.com](https://zhiliaohub.com)。当前已存档版本为 `v2.0`。
 
-知了hub 是主站；“知天”（zhitian）是“作品展示”板块中的一个独立作品。两者分别使用独立仓库和独立部署，后续仅计划在 Phase B 通过反向代理与子域名完成访问层拼接。本仓库不包含知天的业务逻辑、后台服务或反向代理配置。
+访客前台仍使用原生 HTML、CSS 和 JavaScript，不需要前端构建工具；作品、日记和已审核反馈由独立的 Node.js/Express 管理后台在发布时生成静态 HTML。页面读取保持静态，只有访客主动提交留言或回复时会调用后台公开 API。
 
-## 当前阶段
+“知天”（zhitian）是“作品展示”中的一个独立作品，与知了hub 使用独立仓库、账号、数据和部署。本仓库不包含知天业务代码。
 
-项目处于静态内容结构扩展阶段，使用原生 HTML、CSS 与 JavaScript，实现多页面导航、响应式布局、首页 Canvas 雨雾视觉，以及作品与日记详情模板。当前不包含后端、数据库、登录系统或构建工具链，可直接在浏览器中打开根目录 HTML 文件预览。
+## 当前能力
 
-## 页面结构
+- 五项静态前台：首页、作品展示、学习心得、智能工具、反馈中心。
+- 作品按程序/影视/生活分组，支持分类二级页、媒体展示、版本日志和按作品开关控制的公开下载。
+- `admin-server/` 提供密码+TOTP、P-256设备挑战登录、SQLite持久会话、作品/日记管理、静态发布和受控上传。
+- 反馈系统采用公开提交、pending审核队列、后台通过/隐藏/站长回复和approved-only静态发布。
+- 小作坊支持管理员上传经过安全校验的网页ZIP，并生成独立静态访问内容。
+- 备份体系覆盖SQLite、Markdown和普通上传，支持校验、可选加密、恢复前快照、定时备份和同机副本模拟；真实异地容灾仍未完成。
+- 配套 Android App 位于独立仓库 `zhiliaohub_app`，当前版本为 v0.3。
 
-- `index.html`：首页
-- `works.html`：8类作品索引；8个 `works-*.html` 文件提供统一详情占位结构
-- `notes.html`：占位日记索引；3个 `notes-*.html` 文件用于详情模板预览
-- `feedback.html`：反馈表单与评论/跟评界面预览，当前不会发送、保存或公开展示内容
+## 仓库结构
+
+- 根目录 HTML、`css/`、`js/`、`assets/`：访客静态前台。
+- `admin-server/`：Express后台、SQLite/Markdown数据层、静态生成、上传、反馈、小作坊和备份恢复。
+- `docker-compose.yml`、`deploy/nginx.conf`：生产 Compose/Nginx/HTTPS 部署基线。
+- `docs/claude_memory.md`：当前状态。
+- `docs/zhiliaohub_structure.md`：技术架构。
+- `docs/claude_skill.md`：协作与验证规范。
+
+本地后台运行、接口和备份说明见 [`admin-server/README.md`](admin-server/README.md)，生产更新与迁移说明见 [`admin-server/deploy/README.md`](admin-server/deploy/README.md)。真实 `.env`、SQLite、上传、备份、小作坊运行文件和服务器路径均不进入 Git。
