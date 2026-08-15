@@ -23,7 +23,7 @@
 - 新增后台编码、安全隐私、文件职责和分层验证规范：后台要求 `npm run check` 与 `npm test`，部署区分静态审阅、配置解析、本地容器和真实线上验证，CI覆盖范围不得被夸大。
 - 本轮只修改协作手册与改动记录，不涉及功能、数据库、部署配置或线上服务变更；审计发现的其他过期文档口径留待用户确认后单独校准。
 
-## 2026-08-13 正式部署配置文件整理（未执行部署）
+## 2026-08-13 v1.9 存档：正式部署配置文件整理（当时未执行部署）
 
 - 将此前只存在于 `admin-server/deploy/README.md` 的Compose/Nginx设计片段整理为仓库根目录正式 `docker-compose.yml` 与 `deploy/nginx.conf`。Compose构建 `admin-server`，使用官方 `nginx:stable-alpine`，挂载SQLite、Markdown、上传、备份、小作坊五个后台持久目录，以及后台可写/Nginx只读的独立静态站点目录。
 - 新增根目录 `.env.example`，仅承载Compose拓扑变量：监听IP和端口、主站/小作坊主机名、TLS宿主路径、镜像标签与持久目录路径；根目录真实 `.env` 已加入 `.gitignore`，与保存后台密钥的 `admin-server/.env` 明确分层，二者不可混用。
