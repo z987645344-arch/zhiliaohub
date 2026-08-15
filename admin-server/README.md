@@ -39,10 +39,10 @@ PORT=3001
 
 作品/日记的结构化字段保存在SQLite，正文保存在 `content/works/`、`content/notes/` 的Markdown文件。管理后台新增、编辑或删除成功后会立即全量发布，不设置草稿状态：
 
-- 生成根目录 `works.html`、`notes.html` 及全部 `works-<slug>.html`、`notes-<slug>.html` 详情页。
+- 生成根目录 `works.html`、三个固定作品分类页、`notes.html`、`feedback.html` 及全部 `works-<slug>.html`、`notes-<slug>.html` 详情页。
 - 使用 `src/templates/` 中的统一页面骨架和现有 `css/style.css`、`js/site.js`，访客访问生成页时不请求后台。
 - 每个生成文件首行都有“此文件由知了hub后台自动生成，请勿手动编辑”标记；内容修改应通过管理后台，骨架修改应通过模板。
-- 全量发布只清理带生成标记且已不在数据库中的详情页，不修改 `index.html`、`feedback.html`、`css/` 或 `js/`。
+- 全量发布只清理带生成标记且已不在数据库中的详情页和受控作品媒体副本，不修改手写的 `index.html`、`tools.html`、`css/` 或 `js/`；`feedback.html` 本身属于生成目标。
 - 标题首次创建时生成稳定slug，重名追加数字后缀；后续修改标题不会改变既有URL。
 - 管理面板显示“已发布”状态、最近发布时间和当前作品/日记数量，并提供手动“重新全量发布”用于故障恢复。
 
@@ -125,7 +125,7 @@ FEEDBACK_RATE_LIMIT_MAX=5
 
 ## 设备配对与挑战应答登录
 
-设备登录是密码+TOTP之外的第二种登录入口，不替代原流程。首次配对或更换设备仍必须先通过密码+TOTP登录网页后台，在 `/admin/device` 手动生成配对码。本仓库只提供服务端接口；配套安卓App将在独立仓库 `zhiliaohub_app` 中开发。
+设备登录是密码+TOTP之外的第二种登录入口，不替代原流程。首次配对或更换设备仍必须先通过密码+TOTP登录网页后台，在 `/admin/device` 手动生成配对码。本仓库只提供服务端接口；配套安卓App已在独立仓库 `zhiliaohub_app` 中实现并持续维护。
 
 当前只允许一个有效设备：新配对成功会自动吊销旧设备及其未完成挑战。主动吊销后，旧公钥、未完成挑战和该设备建立的既有session都会立即失效；重新使用必须再次通过密码+TOTP生成配对码。
 

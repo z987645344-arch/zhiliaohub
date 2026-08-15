@@ -36,4 +36,4 @@ server {
 
 ## 当前验证边界
 
-本轮只准备了正式Compose/Nginx配置，没有连接服务器或启动容器。此前也只在localhost完成功能、安全响应头和无 `Set-Cookie` 验证；浏览器请求层面的真实子域名Cookie隔离无法在本轮证明，必须等真实域名、证书和独立Nginx `server` 块启用后再验收。
+仓库中的Compose/Nginx基线已经用于主站真实部署，但现有证据对小作坊仍只覆盖localhost下的功能、安全响应头和无 `Set-Cookie` 验证。浏览器请求层面的真实子域名Cookie隔离尚未验收；必须在真实小作坊域名、证书和独立Nginx `server` 块启用后，用真实浏览器确认Cookie、CSP、MIME、缓存和下载行为。

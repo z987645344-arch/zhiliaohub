@@ -61,7 +61,7 @@ zhiliaohub/
 │   ├── feedback-oc-message-slot.webp  # 反馈页栏目插画
 │   └── reference/
 │       └── oc-three-view.jpg   # 用户提供的 OC 角色三视图参考
-├── admin-server/               # 独立本地管理后台；不与静态前台混合
+├── admin-server/               # 独立管理后台；不与静态前台混合
 │   ├── package.json            # 后端独立依赖与运行命令
 │   ├── package-lock.json       # 后端依赖锁文件
 │   ├── .env.example            # 环境变量名称和安全占位值
@@ -85,7 +85,7 @@ zhiliaohub/
 │   └── workflows/
 │       └── ci.yml              # JavaScript语法与HTML本地引用检查
 ├── docs/
-│   ├── claude_skill.md         # 指挥师工作手册
+│   ├── claude_skill.md         # Claude Code指挥师与执行agent调度手册
 │   ├── claude_memory.md        # 项目当前状态
 │   └── zhiliaohub_structure.md # 本技术架构文档
 ├── README.md                   # 项目简介与页面说明
@@ -267,7 +267,7 @@ index.html 额外 defer 加载 js/particles.js
 | 当前连接 | 知天详情页只有未开放按钮，不包含正式地址 | 尚未通过本仓库配置对外地址 |
 | 访问层关系 | 知了hub主站、后台和API已通过自身生产域名组织 | 知天继续使用自身独立部署；尚未由本仓库提供正式入口 |
 
-知了hub 的Compose/Nginx反向代理拓扑已作为正式配置进入仓库并用于真实域名和HTTPS部署。该事实不改变知天的独立边界：本仓库仍不代理、托管或共享知天的代码、账号和数据。两个项目的指挥师属于不同协作线程，各自依赖对应仓库的项目记忆恢复状态。
+知了hub 的Compose/Nginx反向代理拓扑已作为正式配置进入仓库并用于真实域名和HTTPS部署。该事实不改变知天的独立边界：本仓库仍不代理、托管或共享知天的代码、账号和数据。两个项目的协作上下文必须分别依据对应仓库的项目记忆恢复；Claude Code 指挥师需要先明确目标仓库，再按任务性质选择执行 agent，不能把一个项目的状态或授权带入另一个项目。
 
 ---
 
@@ -463,7 +463,7 @@ SQLite当前包含：
 
 ## 十二、架构变更规则
 
-以下事项属于架构变化，必须先由用户与指挥师讨论，再交给执行者：
+以下事项属于架构变化，必须先由用户与 Claude Code 指挥师讨论，再由指挥师按任务性质选择执行 agent：
 
 - 引入或替换前端框架、构建工具、包管理器。
 - 新增后端、数据库、第三方表单或分析服务。
@@ -471,7 +471,7 @@ SQLite当前包含：
 - 把知天代码、部署配置或 API 直接并入本仓库。
 - 将反馈内容发送到任何外部目标。
 
-执行完成后，必须同步本文档的当前结构、`claude_memory.md` 的当前状态和 `CHANGELOG.md` 的架构决定理由。
+执行 agent 完成后，指挥师必须根据真实证据验收，并同步本文档的当前结构、`claude_memory.md` 的当前状态和 `CHANGELOG.md` 的架构决定理由。
 
 ---
 
@@ -479,7 +479,7 @@ SQLite当前包含：
 
 | 文档 | 只回答什么 |
 |------|------------|
-| `docs/claude_skill.md` | 指挥师如何工作、如何写指令、执行者遵守什么规范 |
+| `docs/claude_skill.md` | Claude Code 指挥师如何工作、如何选择执行 agent、如何写指令与验收 |
 | `docs/claude_memory.md` | 项目现在是什么状态、当前主线和下一步是什么 |
 | `docs/zhiliaohub_structure.md` | 当前技术结构、边界以及未来演进的决策位置 |
 | `CHANGELOG.md` | 过去每轮真正发生了什么、为什么这样决定 |
