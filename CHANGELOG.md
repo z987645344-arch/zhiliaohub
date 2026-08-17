@@ -1,7 +1,18 @@
 # 知了hub 改动记录
 > 每轮完成改动后在此追加记录（新条目追加在**最前**，本文件为新在前的倒序）。
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
-> **最后追加：2026-08-16**
+> **最后追加：2026-08-17**
+
+## 2026-08-17 修复接入 Cloudflare 后限流按边缘节点分桶：Nginx 层还原真实客户端 IP
+
+- **修复的是一个线上已存在、但不报错也不崩溃的功能缺陷。** 链路为 访客 → Cloudflare → Nginx → Express：Cloudflare 会向源站发 `X-Forwarded-For: <访客IP>` 与 `CF-Connecting-IP: <访客IP>`，但 Nginx 的 `$remote_addr` 是 **Cloudflare 边缘 IP**（实证：日志中出现 `client: 162.158.114.222`，落在 CF 的 `162.158.0.0/15` 段内），`$proxy_add_x_forwarded_for` 追加后 XFF 变为 `<访客IP>, <CF边缘IP>`，而后台 `TRUST_PROXY_HOPS=1` 只跳过最右一跳，`req.ip` 取到的正是 CF 边缘 IP。接 Cloudflare **之前** XFF 只有一项、取最右恰好是访客，所以这是接入之后才悄悄产生的错误。
+- **受影响的真实功能共四处**：`src/app.js` 中的四个限流器（密码登录、TOTP、**设备认证 `deviceAuthLimiter`**、留言提交）均未设置自定义 `keyGenerator`，因此全部走 `express-rate-limit` 默认的 `req.ip` 分桶，等同按 CF 边缘节点分桶——一个访客触发限流会连累同边缘节点的其他访客，且 429 文案「该IP的认证尝试过于频繁」中的 IP 实际是边缘地址；第四处是 `feedback_comments.ip_address` 记录的来源 IP（同样记成边缘地址，无取证价值）。设备认证限流是本轮实际核对代码时发现的，原问题描述只列了其中三处。
+- **改动仅一处**：`deploy/nginx.conf` 顶部、第一个 `server` 块之前新增 15 条 IPv4 与 7 条 IPv6 共 22 条 Cloudflare 官方网段的 `set_real_ip_from`，加 `real_ip_header CF-Connecting-IP;`。该文件渲染进 `conf.d/default.conf`，位于 `http {}` 上下文内，因此三个 `server` 块（80 跳转、443 主站、443 小作坊）一次生效，无需逐块重复。取 `CF-Connecting-IP` 而非 XFF，是因为前者由 Cloudflare 保证为单个真实访客 IP、不含代理链，无需开启 `real_ip_recursive`。
+- **刻意不写 `0.0.0.0/0`，也刻意不改 `TRUST_PROXY_HOPS`。** 本站源站可被直连（实测 `https://<源站IP>/` 返回 200，Cloudflare 不是唯一入口），无条件信任 `CF-Connecting-IP` 等于允许任何人直连源站伪造来源 IP、绕过全部 IP 限流；限定网段后，非 CF 来源发来的该头会被忽略。同理，把 `TRUST_PROXY_HOPS` 由 1 改成 2 虽然也能取到访客 IP，但那是盲信 XFF、同样可被直连伪造，方向错误，明确不采纳。
+- 其余指令一律未动，包括 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`。real_ip 生效后 XFF 会变成 `<访客>, <访客>`，取最右仍是访客；若有人绕过 Cloudflare 直连源站，`set_real_ip_from` 不匹配、`$remote_addr` 保持真实对端，XFF 末位仍是真实来源。两条路径都正确，无需改写。`git diff` 为 63 行纯新增、0 行删除。
+- **网段列表需人工维护**：来源为 `https://www.cloudflare.com/ips-v4` 与 `ips-v6`，当前列表取于 2026-08-17。列表过期的失败模式是「新网段来的请求退回记 CF 边缘 IP」——只影响限流精度，属优雅降级、不中断服务，因此刻意不做成启动时联网拉取（那会给容器启动引入网络依赖）。新增内容不含 `${}` 形式变量，无需扩展 `NGINX_ENVSUBST_FILTER` 白名单。
+- **本轮只完成部署验证四层中的第 1 层（静态审阅）。** 已实际执行：22 条网段与官方列表逐条程序化比对（顺序一致、无重复、无笔误）、确认全部指令位于第一个 `server` 块之前、确认实证边缘 IP `162.158.114.222` 确实被 `162.158.0.0/15` 覆盖（并有反例对照）、确认新增区块仅在注释中出现 `$remote_addr` 字样而无 `${}` 变量、确认文件行尾仍全为 LF。**未执行**：`nginx -t`、`docker compose config`、容器构建与启动、任何线上验证——本机不跑 Compose/nginx，只跑 `npm start`，因此这些不能由本轮声称完成。
+- 待指挥师在服务器完成：拉取、`nginx -t`、重建 nginx 容器，并以日志中的来源 IP 由 Cloudflare 段变为真实访客 IP 作为生效证据，同时复核三个入口仍 200、容器仍 healthy。**仓库改动不等于线上生效。**
 
 ## 2026-08-16 v2.0.1 与 v2.0.2 文档补丁存档：协作架构交接与共用域名拓扑
 

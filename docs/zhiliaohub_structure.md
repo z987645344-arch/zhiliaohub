@@ -382,9 +382,10 @@ SQLite当前包含：
 1. Compose包含独立的 `admin-server` 与官方Nginx服务；后台只在内部网络暴露3001端口。
 2. 后台使用 `admin-server/.env` 读取业务配置与密钥；根目录 `.env` 只保存Compose拓扑变量。两者均由服务器现场创建且不入库。
 3. SQLite数据、Markdown正文、上传文件、本地备份、小作坊站点和独立公开站点目录均通过宿主机路径持久挂载。
-4. Nginx从只读公开站点目录伺服前台，代理 `/admin`、`/api`、`/health` 与后台上传预览，并设置真实IP/协议转发头；后台固定使用 `TRUST_PROXY_HOPS=1` 与单层代理对应。
-5. 小作坊设计为独立HTTPS主机名和只读静态目录，不反向代理到Node；其真实DNS、证书范围及Cookie边界仍须单独完成验收。
-6. SQLite方案默认只支持单后台实例；如果未来需要多实例，必须重新讨论数据库、会话和文件存储，不能直接水平扩容。
+4. Nginx从只读公开站点目录伺服前台，代理 `/admin`、`/api`、`/health` 与后台上传预览，并设置真实IP/协议转发头；后台固定使用 `TRUST_PROXY_HOPS=1`。
+5. **代理信任链实际是 访客 → Cloudflare → Nginx → Express，不是Nginx单层。** Cloudflare向源站发 `CF-Connecting-IP: <访客IP>`，而Nginx自身看到的 `$remote_addr` 是Cloudflare边缘IP。`deploy/nginx.conf` 在http级（第一个 `server` 块之前）用Cloudflare官方网段的 `set_real_ip_from` 加 `real_ip_header CF-Connecting-IP` 把 `$remote_addr` 还原为真实访客IP，转发出去的 `X-Forwarded-For` 末位随之也是访客IP，因此后台取最右一跳仍然正确，`TRUST_PROXY_HOPS` 保持1不变——改成2是盲信XFF，直连源站伪造该头即可绕过限流。网段必须限定而不能写 `0.0.0.0/0`：源站可被直连，无条件信任该头等于允许任意伪造。该列表需人工维护，来源见 `admin-server/deploy/README.md`。**该配置本轮新增，仅完成静态审阅，尚未执行 `nginx -t` 或线上验证。**
+6. 小作坊设计为独立HTTPS主机名和只读静态目录，不反向代理到Node；其真实DNS、证书范围及Cookie边界仍须单独完成验收。
+7. SQLite方案默认只支持单后台实例；如果未来需要多实例，必须重新讨论数据库、会话和文件存储，不能直接水平扩容。
 
 服务器公开IP、域名、宿主端口、持久目录与TLS文件位置统一通过根目录 `.env` 注入；管理员密码哈希、session/TOTP/备份密钥等只进入 `admin-server/.env`。仓库文件中不得写入真实凭据、真实IP或真实域名。路径前缀部署仍未实现，因为当前绝对路由、重定向、Cookie路径和表单地址需要先统一支持 `BASE_PATH`。
 

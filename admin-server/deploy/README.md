@@ -83,6 +83,23 @@ Compose中的 `environment` 会覆盖该文件里的运行拓扑值，避免现�
 
 后台只信任紧邻它的一层Nginx代理（`TRUST_PROXY_HOPS=1`）。生产session Cookie带 `Secure`，因此代理必须终止TLS并正确传递 `X-Forwarded-Proto=https`；直接用纯HTTP访问后台不能作为生产登录方式。
 
+### 真实客户端IP还原（Cloudflare网段列表**需人工维护**）
+
+实际请求链是 **访客 → Cloudflare → Nginx → admin-server**，不止Nginx一层。Cloudflare会向源站发 `CF-Connecting-IP: <访客IP>`，但Nginx自身看到的 `$remote_addr` 是Cloudflare边缘IP。因此 `deploy/nginx.conf` 在文件顶部、第一个 `server` 块之前（即http级，三个 `server` 块一次生效）配置了Cloudflare官方网段的 `set_real_ip_from` 与 `real_ip_header CF-Connecting-IP`，把 `$remote_addr` 还原为真实访客IP；转发出去的 `X-Forwarded-For` 末位随之也是访客IP，所以 `TRUST_PROXY_HOPS` 仍然**保持1、不要改成2**（改层数是盲信XFF，直连源站伪造该头即可绕过限流）。
+
+缺少这段配置时不会报错也不会崩溃，只是静默算错：登录、TOTP、设备认证和留言提交四个限流器都按 `req.ip` 分桶，会退化成按Cloudflare边缘节点分桶，一个访客触发限流可能连累同边缘节点的其他访客，`feedback_comments` 记录的IP也失去取证价值。
+
+`set_real_ip_from` 的网段必须逐条限定，**绝不能写 `0.0.0.0/0`**：本站源站可以被直连，Cloudflare不是唯一入口。无条件信任 `CF-Connecting-IP` 等于允许任何人直连源站伪造该头、绕过全部按IP的限流。限定网段后，非Cloudflare来源发来的该头会被忽略。
+
+⚠️ **这份网段列表需要人工维护**，仓库内的版本取自 2026-08-17（IPv4 15条 + IPv6 7条），更新来源只有这两个官方URL：
+
+- IPv4：<https://www.cloudflare.com/ips-v4>
+- IPv6：<https://www.cloudflare.com/ips-v6>
+
+Cloudflare偶尔增删网段。列表过期的失败模式是「新网段来的请求退回记成CF边缘IP」——只影响限流精度，属优雅降级、不会中断服务，因此刻意没有做成容器启动时联网拉取（那会给启动引入网络依赖）。修改该列表后需在服务器执行 `nginx -t`，通过后再重建或重载Nginx容器才会生效。生效证据以Nginx日志中的来源IP由Cloudflare段变为真实访客IP为准。
+
+> 该配置为 2026-08-17 新增，仓库内仅完成静态审阅与网段逐条核对；在服务器拉取并重载Nginx之前，线上仍按Cloudflare边缘IP限流。
+
 小作坊主机名使用独立Nginx `server` 块，直接只读访问 `ADMIN_LAB_STORAGE_PATH`，不代理到Node，并附加受限CSP等响应头。证书必须覆盖主站和小作坊两个主机名。真实小作坊子域名的Cookie隔离仍需按 `lab-subdomain.md` 单独验收。
 
 ## 现有服务器的日常代码更新
