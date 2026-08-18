@@ -102,6 +102,95 @@ Cloudflare偶尔增删网段。列表过期的失败模式是「新网段来的�
 
 小作坊主机名使用独立Nginx `server` 块，直接只读访问 `ADMIN_LAB_STORAGE_PATH`，不代理到Node，并附加受限CSP等响应头。证书必须覆盖主站和小作坊两个主机名。真实小作坊子域名的Cookie隔离仍需按 `lab-subdomain.md` 单独验收。
 
+## 本机 Compose 验证
+
+在开发机上跑一遍完整的 Compose，把 nginx 配置、TLS、路由、响应头和编排关系提前验一遍。
+在这套流程之前，这些东西**要到服务器才第一次真实运行**——此前两个证书问题（挂载方式
+写错、`standalone` 占不到 80 端口）都是这样漏到线上的。
+
+**核心约束：本机与服务器共用同一份 `docker-compose.yml` 和同一份 `deploy/nginx.conf`，
+只换 `.env`。** 不要新建 `docker-compose.local.yml`、`docker-compose.override.yml` 或本机
+专用的 nginx 配置——那会制造第二个真相源，本机验的就不再是生产要跑的东西。Compose 已
+把全部可变项外置成环境变量，因此不需要第二份文件。
+
+### 前置：Docker Desktop 必须已启动
+
+这一步是 GUI 操作，需要人工完成。确认守护进程就绪：
+
+```bash
+docker version --format 'Server: {{.Server.Version}}'
+```
+
+拿不到 Server 版本就是守护进程没起，先去启动 Docker Desktop，不要尝试用命令行拉起它。
+
+### 启动步骤
+
+```bash
+cp .env.local.example .env.local
+sh deploy/generate-local-tls.sh
+mkdir -p runtime/admin-data runtime/admin-content runtime/admin-uploads \
+         runtime/admin-backups runtime/lab-storage runtime/site
+cp -r admin-server/content/. runtime/admin-content/
+cp index.html tools.html runtime/site/ && cp -r css js runtime/site/
+docker compose --env-file .env.local config --quiet
+docker compose --env-file .env.local up -d --build
+```
+
+几点说明：
+
+- `.env.local` 与整个 `runtime/` 都被 `.gitignore` 忽略，证书和运行数据不会入库。改动
+  忽略规则后请按 7.7 的方法复验，不要靠读 `.gitignore` 推断。
+- 本机用 **8080/8443**，服务器仍是 80/443。Windows 上 80/443 常被占用或需要特权。
+- `runtime/` 下的数据目录与 `admin-server/data/` 是**分开的**，跑 Compose 不会动本地开发库。
+- `SITE_ROOT_PATH` 指向 `runtime/site`，只放公开前台文件；**绝不能指向整个 Git 检出**，
+  否则源码与现场配置会被 nginx 当静态文件暴露。这条约束本机与生产一致。
+- `admin-server/.env` 本机也需要存在，且 `SESSION_SECRET`、`ADMIN_PASSWORD_HASH`、
+  `TOTP_ENCRYPTION_KEY` 必须是合法值，否则后台启动即退出。**本机值必须是当场生成的
+  一次性假值，绝不从服务器复制真实值下来，也绝不写进任何入库文件。** 生成方式：
+  session 密钥用 `openssl rand -hex 32`；TOTP 密钥用 `openssl rand -base64 32`；
+  密码哈希在 `admin-server/` 下用 `node -e "console.log(require('bcrypt').hashSync('<本机弱口令>',12))"`。
+
+### 该验什么
+
+```bash
+docker compose --env-file .env.local ps                      # 两个容器都应 healthy
+docker compose --env-file .env.local exec nginx nginx -t     # 配置语法
+docker compose --env-file .env.local exec nginx \
+  grep -c set_real_ip_from /etc/nginx/conf.d/default.conf     # 渲染后的实际配置
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' http://localhost:8080/
+curl -sk -o /dev/null -w '%{http_code}\n' https://localhost:8443/health
+curl -sk --resolve lab.localhost:8443:127.0.0.1 -D- -o /dev/null https://lab.localhost:8443/
+```
+
+**「容器 healthy」不能单独作为配置已生效的证据**，必须查容器内渲染后的实际配置——
+`docker compose up -d` 不因挂载内容变化而重建容器，2026-08-17 部署 real_ip 时就踩过：
+`nginx -t` 通过、入口全 200、容器 healthy，但渲染结果里 `set_real_ip_from` 是 0 条。
+
+用完清理：
+
+```bash
+docker compose --env-file .env.local down
+```
+
+### ⚠️ 本机验证能力的边界：本机通过 ≠ 线上通过
+
+这一节的作用是防止将来有人拿本机结果当线上证据。**以下这些本机根本验不到：**
+
+| 验不到的东西 | 为什么 |
+|---|---|
+| **Cloudflare 在前的一切** | CF 网段匹配、`CF-Connecting-IP` 还原出的真实访客 IP、WAF、DDoS 吸收。本机是直连 nginx，`set_real_ip_from` 那 22 条**一条都不会命中** |
+| **真实来源 IP 与限流分桶** | 承上。本机看到的永远是 `127.0.0.1`，限流按谁分桶验不出来 |
+| **真实 DNS 与信任链** | 本机是自签证书，浏览器会警告；Origin CA、证书续期、SAN 是否覆盖真实主机名，都只能在服务器上验 |
+| **HTTP→HTTPS 跳转的落点** | 本机跳转 `Location` 指向 `https://localhost/`（**不带端口**，因为 nginx 用 `$host`），落到没在监听的 443。服务器上 80/443 是默认端口所以正确。**这是本机端口映射的产物，不是配置缺陷，也不要为迁就本机去改 nginx** |
+| **生产 `.env` 的真实值及其副作用** | 本机用的是一次性假值 |
+| **Compose 版本差** | 服务器 **5.4.0**，本机 **5.3.1**。`env_file.format: raw` 要求 ≥ 2.30.0，两边都满足，但**本机通过不等于服务器一定通过** |
+| **真实数据与真实负载** | 本机是空库空目录，发布链路、备份体积、并发行为都不具代表性 |
+
+**本机能验到的是**：Compose 能否解析与编排、镜像能否构建、两个容器能否 healthy、nginx
+配置语法与**渲染结果**、静态根与反代路由的分工、小作坊主机名的隔离（不反代到 Node、
+带受限 CSP、不下发 Cookie）、以及 `X-Forwarded-Proto` 是否被后台采信（Secure Cookie
+能否下发）。这些此前全部要到服务器才第一次运行。
+
 ## 现有服务器的日常代码更新
 
 以下命令必须由用户、服务器运维人员或获得明确授权的执行 agent 在生产服务器执行。任何 agent 在没有单独授权和服务器连接方式时，都不得自行连接生产环境。

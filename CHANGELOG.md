@@ -3,6 +3,15 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-08-18**
 
+## 2026-08-18 补本机 Compose 验证能力：nginx / TLS / 路由不再到服务器才第一次运行
+
+- **补的是一个有因果证据的盲区**：此前本机只能 `npm start`（Node 直接监听 3001），nginx 配置、TLS、路由、CSP 头与 Compose 编排**全都要到服务器才第一次真实运行**——此前两个证书问题（挂载方式写错、`standalone` 占不到 80 端口）本机跑一遍就能暴露。本轮交付 `.env.local.example`、`deploy/generate-local-tls.sh`（自签证书，SAN 覆盖 `localhost` 与 `lab.localhost`）与 `admin-server/deploy/README.md` 新增的「本机 Compose 验证」一节。
+- **设计决定：同一份 `docker-compose.yml`、同一份 `deploy/nginx.conf`，只换 `.env`。** 核实 compose 已把全部可变项外置成 15 个环境变量，唯一写死的是容器内部地址与挂载目标（本就不该参数化），因此**不需要** override 文件。刻意不建 `docker-compose.local.yml`：那会制造第二个真相源，本机验的就不再是生产要跑的东西，这件事的意义直接归零。
+- **本机实测通过的（全部真跑，不是审阅）**：`docker compose config --quiet` 退出码 0；镜像构建成功、两容器 healthy；`nginx -t` 通过；**容器内渲染后的配置确有 22 条 `set_real_ip_from`**（1.6 第 2 条要求的那道检查）。HTTP 8080 → 301；HTTPS 8443 的 `/`、`/index.html`、`/tools.html`、`/health`、`/admin/login` 全 200，`/health` 返回 `deployment: production`，不存在路径 404。`lab.localhost` 那条 server_name 独立生效：根目录 403（空 lab-storage 的正确行为）、`/health` 404 证明**它不反代到 Node**、CSP/CORP/Referrer-Policy/nosniff 四个头齐备、**0 个 Set-Cookie**；主站不带小作坊的 CSP。主站会话 Cookie 为 `HttpOnly; Secure; SameSite=Strict`——**这条同时证明 nginx 转发的 `X-Forwarded-Proto=https` 被后台采信了**，否则 Secure Cookie 在后台眼中的「HTTP 连接」上根本不会下发。
+- **本机验不到的（已写成文档里最重要的一节，防止将来拿本机结果当线上证据）**：Cloudflare 在前的一切（22 条 CF 网段本机一条都不会命中、`CF-Connecting-IP` 还原、WAF、DDoS 吸收）、真实来源 IP 与限流分桶、真实 DNS 与证书信任链（本机自签）、生产 `.env` 真实值及其副作用、服务器 Compose **5.4.0** 与本机 **5.3.1** 的版本差、以及真实数据与负载。另记录一个本机专属现象：80→443 跳转的 `Location` 不带端口（nginx 用 `$host`），本机落到没在监听的 443——**这是端口映射的产物，不是配置缺陷，不要为迁就本机去改 nginx**。
+- **过程中发现并修复一处会让本轮交付静默落空的问题**：`.env.local.example` 命中上一轮新加的 `.env.*` 规则**会被忽略**，提交时静默排除、文件永远进不了仓库。已把 `!.env.example` 放宽为 `!.env*.example`，并按 7.7 用落盘探针复验：`.env`、`.env.local`、`.env.bak-1`、`.env.production`、`admin-server/.env` 仍**全部被挡**，只有 `*.example` 模板放行；`runtime/` 整个目录与 `.env.local` 也确认被忽略，`git add -An` 证明只有 4 个预期文件会进暂存区。
+- **凭据与清理**：本机 `admin-server/.env` 用的是机器上原有的一次性开发值，**未从服务器复制任何真实值，也未写进任何入库文件**；文档只写生成方法、不写结果。验证完已 `docker compose down`，无残留容器与网络，`runtime/` 与 `.env.local` 均不入库。本轮**未改** `docker-compose.yml`、`deploy/nginx.conf` 与任何应用代码，未连接云服务器，未碰 `zhiliaohub_app`。按 8.1 不打标签，本条为普通工作条目、不含版本号。
+
 ## 2026-08-18 手册新增 7.7「判断文件是否被 Git 忽略」
 
 - **把上一轮踩到的工具陷阱写成规则**：判断文件会不会被 `.gitignore` 挡住，不能靠读 `.gitignore` 推断，也不能想当然用 `git check-ignore` 的退出码。三个坑：① 加 `-v` 后只要有任何规则命中就返回 **0**——**包括 `!` 开头的否定规则**，于是一个「本就不该被忽略」的文件同样返回 0，看起来像被忽略了；② 判断要用 `-q`，**0 = 被忽略、1 = 未被忽略**；③ **已跟踪文件默认被跳过、永远返回 1**，要测必须加 `--no-index`。拿不准时以真实文件为准：建一个未跟踪探针文件，看 `git status --ignored` 把它归进 `!!` 还是 `??`。
