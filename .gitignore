@@ -13,7 +13,9 @@ Desktop.ini
 
 # Runtime leftovers
 *.log
-/.env
+.env
+.env.*
+!.env.example
 /runtime/
 
 # Local-only character reference supplied by the project owner
@@ -23,7 +25,6 @@ Desktop.ini
 # Admin server dependencies and secrets
 /admin-server/node_modules/
 /admin-server/.npm-cache/
-/admin-server/.env
 
 # Admin server runtime data
 /admin-server/data/*
