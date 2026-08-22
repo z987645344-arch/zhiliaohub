@@ -68,6 +68,10 @@ Compose中的 `environment` 会覆盖该文件里的运行拓扑值，避免现�
 - `index.html`、`works*.html`、`notes*.html`、`feedback.html`、`tools.html`；
 - `assets/`、`css/`、`js/`。
 
+**这个目录不会随 `git pull` 更新。** 每次改动前台文件（含新增图片、字体等任何
+资源）后，都必须把它们单独复制到该目录，具体见「现有服务器的日常代码更新」下
+的「前台静态资源必须单独同步到站点根」。
+
 `ADMIN_CONTENT_PATH` 是运行时Markdown目录。新服务器如果不是从备份恢复，应先复制仓库中的初始 `admin-server/content/`；空bind mount会遮住镜像内随附内容。
 
 ## Nginx路由与代理信任
@@ -131,7 +135,7 @@ sh deploy/generate-local-tls.sh
 mkdir -p runtime/admin-data runtime/admin-content runtime/admin-uploads \
          runtime/admin-backups runtime/lab-storage runtime/site
 cp -r admin-server/content/. runtime/admin-content/
-cp index.html tools.html runtime/site/ && cp -r css js runtime/site/
+cp index.html tools.html runtime/site/ && cp -r assets css js runtime/site/
 docker compose --env-file .env.local config --quiet
 docker compose --env-file .env.local up -d --build
 ```
@@ -227,6 +231,30 @@ curl --fail --silent https://zhiliaohub.com/health
 ```
 
 随后人工打开主站和 `/admin/login`。本轮不要求重新绑定TOTP、重新配对App或清空session；如果出现这类现象，应停止继续操作并检查持久挂载和 `SESSION_SECRET` 是否被改变。
+
+### ⚠️ 前台静态资源必须单独同步到站点根
+
+上面的命令只更新**后台容器**。前台是 Nginx 直接伺服 `SITE_ROOT_PATH`
+指向的独立站点目录的静态文件，**`git pull` 不会把它们送过去**——站点根是一份
+独立于 Git 检出的目录（见「持久目录与权限」，它绝不能指向仓库本体）。
+
+**只要本轮改动了任何前台文件——HTML、`css/`、`js/`，以及新增的图片、字体等
+任何资源——都必须把它们一并复制到站点根**，否则线上仍是旧版：
+
+```bash
+cp index.html tools.html works*.html notes*.html feedback.html <站点根>/
+cp -r assets css js <站点根>/
+```
+
+**新增资源尤其容易漏。** 2026-08-22 部署 `v2.3` 时实测：站点根的 `assets/`
+里只有 4 张旧图，该版本新增的 `tools-oc-planning-workbench.webp` **不在其中**
+——不同步就会让新版页面引用到一个不存在的文件。同一次还发现站点根的
+`css/style.css` 停在 08-13，也就是说**改了共享 CSS 不同步，新样式完全不生效**。
+
+这类遗漏**本地看不出来**：本机验证用的是自己的 `runtime/site`，仓库 diff 与 CI
+也都不会报——CI 只做语法和本地引用检查，它检查的是仓库里的文件，不是服务器上
+的文件。**唯一可靠的确认方式是部署后在真实域名上打开页面、并核对站点根的实际
+文件**（例如比对新增资源是否存在、`css/style.css` 的修改时间是否是本次）。
 
 如果改动同时涉及 `docker-compose.yml` 或 `deploy/nginx.conf`，不要使用上面的“仅后台”快捷流程：先备份现场配置和数据，运行完整配置检查，再执行 `docker compose up -d` 并回归全部代理路径。
 

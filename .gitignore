@@ -22,6 +22,17 @@ Desktop.ini
 /assets/reference/oc-three-view.jpg
 /assets/concepts/
 
+# Image source material. assets/ tracks finished .webp only; raster sources and
+# generation prompts stay local. Binaries pushed to this public repo stay in Git
+# history forever and cannot be removed. These patterns are anchored to the
+# assets/ root, so subdirectories are unaffected. If a raster file ever genuinely
+# belongs in the repo, convert it to .webp (the established convention) or
+# override deliberately with `git add -f`.
+/assets/*.png
+/assets/*.jpg
+/assets/*.jpeg
+/assets/image-prompts/
+
 # Admin server dependencies and secrets
 /admin-server/node_modules/
 /admin-server/.npm-cache/
