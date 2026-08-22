@@ -818,10 +818,6 @@ function createApp(overrides = {}) {
     }
   }
 
-  app.post('/admin/uploads', requireAdmin, upload.single('file'), requireCsrf, (request, response, next) => {
-    finishUpload(request, response, next, false);
-  });
-
   app.post('/api/admin/uploads', requireAdmin, upload.single('file'), requireCsrf, (request, response, next) => {
     finishUpload(request, response, next, true);
   });

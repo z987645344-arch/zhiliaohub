@@ -166,8 +166,8 @@ test('手写首页与智能工具页使用统一五项导航，工具页不伪�
   const toolsHtml = await fs.readFile(path.join(siteRoot, 'tools.html'), 'utf8');
   assertFiveItemNavigation(indexHtml, 'index.html');
   assertFiveItemNavigation(toolsHtml, 'tools.html');
-  assert.match(toolsHtml, /建设和规划中/);
-  assert.match(toolsHtml, /不承诺具体上线时间/);
+  assert.match(toolsHtml, /本站工具与账号集成仍在规划/);
+  assert.match(toolsHtml, /当前不设具体上线时间表/);
   assert.match(toolsHtml, /href="works-zhitian\.html"/);
   assert.doesNotMatch(toolsHtml, /<(?:form|input|textarea|select)\b/i);
 });

@@ -178,6 +178,25 @@ test('未登录访问管理页面会重定向，访问管理 API 会返回 401',
   assert.match((await apiResponse.json()).error, /需要管理员登录/);
 });
 
+test('仪表盘不再提供孤儿文件上传入口，旧页面上传路由返回 404', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const client = createClient(runtime.baseUrl);
+  const { csrf } = await bindAndAuthenticate(client, runtime);
+
+  const dashboardResponse = await client.request('/admin');
+  assert.equal(dashboardResponse.status, 200);
+  const dashboardHtml = await dashboardResponse.text();
+  assert.doesNotMatch(dashboardHtml, /<h2>文件上传<\/h2>/);
+  assert.doesNotMatch(dashboardHtml, /action="\/admin\/uploads"/);
+
+  const legacyUploadResponse = await client.request('/admin/uploads', {
+    method: 'POST',
+    body: form({ _csrf: csrf }),
+  });
+  assert.equal(legacyUploadResponse.status, 404);
+});
+
 test('/health根据运行环境准确区分本地与生产部署', async (t) => {
   const localRuntime = await createRuntime();
   const productionRuntime = await createRuntime({ nodeEnv: 'production' });
