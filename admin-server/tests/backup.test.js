@@ -1,10 +1,12 @@
 // Proves backup integrity, encrypted restore, destructive recovery and retention cleanup.
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const Database = require('better-sqlite3');
+const tar = require('tar');
 
 const { initializeDatabase } = require('../src/db');
 const { ContentService } = require('../src/services/content-service');
@@ -12,6 +14,7 @@ const {
   PRE_RESTORE_PREFIX,
   createBackup,
   restoreBackup,
+  verifyExtractedBackup,
 } = require('../src/services/backup-service');
 
 function createConfig(runtimeRoot) {
@@ -51,7 +54,115 @@ async function seedStorage(config) {
   return { work, note };
 }
 
-test('加密备份可在原始数据被破坏后完整恢复 SQLite、Markdown 与上传文件', async () => {
+test('备份排除ZIP但保留清单元数据和非ZIP上传，恢复时明确提示补齐', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-excluded-zip-'));
+  const freshRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-excluded-zip-restore-'));
+  const config = createConfig(runtimeRoot);
+  const freshConfig = createConfig(freshRoot);
+  const zipName = '1787417000000-11111111-2222-4333-8444-555555555555.zip';
+  const imageName = '1787417000001-66666666-7777-4888-8999-aaaaaaaaaaaa.png';
+  const zipPath = path.join(config.uploadsDir, zipName);
+  const zipBytes = crypto.randomBytes(2 * 1024 * 1024);
+  const imageBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const zipSha256 = crypto.createHash('sha256').update(zipBytes).digest('hex');
+  try {
+    await seedStorage(config);
+    await fs.writeFile(zipPath, zipBytes);
+    await fs.writeFile(path.join(config.uploadsDir, imageName), imageBytes);
+
+    const excludedBackup = await createBackup(config, { now: new Date('2026-08-04T00:01:00.000Z') });
+    const excludedArchiveSize = (await fs.stat(excludedBackup.archivePath)).size;
+    assert.equal(excludedBackup.manifest.formatVersion, 2);
+    assert.ok(excludedBackup.manifest.files.some((file) => file.path === 'uploads/proof.txt'));
+    assert.deepEqual(excludedBackup.manifest.excluded, [{
+      path: `uploads/${zipName}`,
+      size: zipBytes.length,
+      sha256: zipSha256,
+    }]);
+
+    const unpacked = path.join(runtimeRoot, 'unpacked-excluded');
+    await fs.mkdir(unpacked);
+    await tar.x({ cwd: unpacked, file: excludedBackup.archivePath, strict: true });
+    assert.equal(await fs.readFile(path.join(unpacked, 'uploads', 'proof.txt'), 'utf8'), 'uploaded-file-proof\n');
+    assert.deepEqual(await fs.readFile(path.join(unpacked, 'uploads', imageName)), imageBytes);
+    assert.equal(
+      await fs.stat(path.join(unpacked, 'uploads', zipName)).then(() => true).catch(() => false),
+      false,
+      '被排除的ZIP不得出现在解包内容中。',
+    );
+    const unpackedManifest = JSON.parse(await fs.readFile(path.join(unpacked, 'manifest.json'), 'utf8'));
+    assert.deepEqual(unpackedManifest.excluded, excludedBackup.manifest.excluded);
+
+    const restored = await restoreBackup(freshConfig, excludedBackup.archivePath, { force: true });
+    assert.deepEqual(restored.excludedFiles, excludedBackup.manifest.excluded);
+    assert.equal(restored.warnings.length, 2);
+    assert.match(restored.warnings.join('\n'), /未包含 1 个 ZIP 文件/);
+    assert.match(restored.warnings.join('\n'), /manifest\.excluded/);
+    assert.equal(await fs.readFile(path.join(freshConfig.uploadsDir, 'proof.txt'), 'utf8'), 'uploaded-file-proof\n');
+    assert.deepEqual(await fs.readFile(path.join(freshConfig.uploadsDir, imageName)), imageBytes);
+    assert.equal(await fs.stat(path.join(freshConfig.uploadsDir, zipName)).then(() => true).catch(() => false), false);
+
+    const controlRoot = path.join(runtimeRoot, 'control-with-zip');
+    await fs.cp(unpacked, controlRoot, { recursive: true });
+    await fs.writeFile(path.join(controlRoot, 'uploads', zipName), zipBytes);
+    const controlManifest = {
+      ...unpackedManifest,
+      files: [...unpackedManifest.files, ...unpackedManifest.excluded],
+      excluded: [],
+    };
+    await fs.writeFile(
+      path.join(controlRoot, 'manifest.json'),
+      `${JSON.stringify(controlManifest, null, 2)}\n`,
+      'utf8',
+    );
+    await verifyExtractedBackup(controlRoot);
+    const controlArchive = path.join(runtimeRoot, 'control-with-zip.tar.gz');
+    await tar.c({ cwd: controlRoot, file: controlArchive, gzip: true, portable: true }, [
+      'manifest.json', 'data', 'content', 'uploads',
+    ]);
+    const includedArchiveSize = (await fs.stat(controlArchive)).size;
+    assert.ok(
+      includedArchiveSize > excludedArchiveSize + (zipBytes.length * 0.9),
+      '同一份ZIP进入归档时，归档体积应明显大于排除ZIP时。',
+    );
+    console.log(`备份体积对比：含 .zip ${includedArchiveSize} 字节；排除 .zip ${excludedArchiveSize} 字节；减少 ${includedArchiveSize - excludedArchiveSize} 字节。`);
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+    await fs.rm(freshRoot, { recursive: true, force: true });
+  }
+});
+
+test('格式2恢复器继续接受没有excluded字段的旧格式1清单', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-v1-manifest-'));
+  try {
+    const relativePath = 'data/admin.sqlite3';
+    const absolutePath = path.join(root, 'data', 'admin.sqlite3');
+    const bytes = Buffer.from('legacy-manifest-proof');
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, bytes);
+    await fs.writeFile(path.join(root, 'manifest.json'), `${JSON.stringify({
+      formatVersion: 1,
+      createdAt: '2026-08-04T00:00:00.000Z',
+      encryption: 'none',
+      files: [{
+        path: relativePath,
+        size: bytes.length,
+        sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+      }],
+    }, null, 2)}\n`, 'utf8');
+
+    const manifest = await verifyExtractedBackup(root);
+    assert.equal(manifest.formatVersion, 1);
+    assert.deepEqual(manifest.excluded, []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('加密备份可在原始数据被破坏后完整恢复 SQLite、Markdown 与非ZIP上传文件', async () => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-flow-'));
   const config = createConfig(runtimeRoot);
   const password = 'test-only-backup-password';

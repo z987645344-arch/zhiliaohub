@@ -1,6 +1,6 @@
 # 知了hub（zhiliaohub）技术架构
 > 记录当前已经存在的技术结构、文件职责和明确边界；未来方案只放在“预留演进”章节，不视为已实现。
-> **最后更新：2026-08-14**（校准 v2.0、真实生产部署与配套 App v0.3）
+> **最后更新：2026-08-23**（校准 v2.0、真实生产部署与配套 App v0.3；补充备份排除 ZIP、manifest 留痕与恢复补齐机制）
 
 ---
 
@@ -285,7 +285,7 @@ index.html 额外 defer 加载 js/particles.js
 | 正文 | `content/works/` 与 `content/notes/` 下的Markdown文件 |
 | 静态发布 | marked渲染Markdown，服务端模板全量生成列表/详情HTML，并记录最近发布时间 |
 | 上传 | multer写入 `uploads/`，限制单文件大小并校验白名单、MIME与文件签名 |
-| 备份 | better-sqlite3在线快照 + tar/gzip归档；manifest记录字节数与SHA-256，可选scrypt + AES-256-GCM加密并保留最近N份 |
+| 备份 | better-sqlite3在线快照 + tar/gzip归档；SQLite、Markdown和非ZIP上传入包，上传ZIP仅写入manifest的 `excluded` 路径/大小/SHA-256，可选scrypt + AES-256-GCM加密并保留最近N份 |
 | 安全补充 | Helmet响应头、会话CSRF令牌、按请求IP统计失败次数的限流 |
 
 `admin-server/` 是知了hub自己的后台服务，与静态前台物理隔离，也与知天的管理后台、账号、数据库和会话完全独立。当前没有跨仓库共享代码。
@@ -369,9 +369,11 @@ SQLite当前包含：
 
 ### 9.6 本地备份与恢复
 
-`scripts/backup.js` 对SQLite使用better-sqlite3在线备份API生成有效快照，同时复制作品/日记Markdown与上传文件；归档内 `manifest.json` 对每个文件记录相对路径、字节数和SHA-256。可通过 `BACKUP_ENCRYPTION_PASSWORD` 使用scrypt派生密钥并以AES-256-GCM加密，通过 `BACKUP_RETENTION_COUNT` 保留最近N份（默认7份）。真实归档写入 `.gitignore` 排除的 `backups/`。
+`scripts/backup.js` 对SQLite使用better-sqlite3在线备份API生成有效快照，同时复制作品/日记Markdown与 `uploads/` 下的非ZIP文件。上传ZIP不复制进归档；格式2的 `manifest.json` 用 `files` 记录入包文件，用独立的 `excluded` 数组记录每个未入包ZIP的相对路径、字节数和SHA-256。可通过 `BACKUP_ENCRYPTION_PASSWORD` 使用scrypt派生密钥并以AES-256-GCM加密，通过 `BACKUP_RETENTION_COUNT` 保留最近N份（默认仍为7份）。真实归档写入 `.gitignore` 排除的 `backups/`。
 
-`scripts/restore.js` 要求显式指定归档和 `--force`，先安全解包、核对manifest、校验全部文件并拒绝未声明内容，再原子替换SQLite文件和三个数据目录。自动化测试已真实执行“加密备份 → 错误密码拒绝 → 删除数据库记录/Markdown/上传文件 → 正确恢复 → 数据一致性确认”。
+`scripts/restore.js` 要求显式指定归档和 `--force`，先安全解包、核对manifest、校验全部入包文件并拒绝未声明内容，再原子替换SQLite文件和三个数据目录。新恢复器继续接受格式1旧清单；读到格式2的 `excluded` 时会逐条打印待补路径、大小与SHA-256，明确要求用户从本地补回ZIP，而不是把数据库中指向缺失下载文件的记录当作归档损坏或静默跳过。自动化测试已真实执行“加密备份 → 错误密码拒绝 → 删除数据库记录/Markdown/非ZIP上传 → 正确恢复 → 数据一致性确认”，并单独覆盖ZIP排除、清单元数据与人工补齐提示。
+
+**备份不含 `.zip`，恢复后需由用户从本地补齐，清单见 `manifest.excluded`。一份“静默地少了东西”的备份比没有备份更危险。**这项容量取舍只影响备份内容；上传池、前台下载、发布副本和 `lab-storage` 均不因此改变。
 
 跨SQLite、Markdown和上传目录不存在统一事务。SQLite在线快照本身一致，但要获得三类数据的单一恢复点，人工灾难备份应先暂停写入，最好停止服务；恢复必须在服务停止时进行。当前已实现手动备份/恢复、完整性校验、可选加密、保留策略、恢复前快照和进程内定时调度；`BACKUP_MIRROR_DIR` 只会复制到同机目录，尚未实现真实异地副本、外部失败告警或服务器灾难恢复演练。
 
@@ -408,7 +410,7 @@ SQLite当前包含：
 | 生成页不可手改 | 作品/日记/反馈生成页首行带自动生成标记；应修改后台数据、审核状态或模板后重新全量发布 |
 | 没有自动化构建和浏览器测试 | CI只检查JavaScript语法和HTML本地引用；视觉与交互仍需按任务进行真实浏览器回归 |
 | 生产更新不是自动完成 | 后台已在真实HTTPS域名运行；代码或依赖变化后仍必须在服务器显式拉取、构建镜像和重启，`docker compose up` 不保证自动使用最新代码 |
-| 备份仍限于同机数据面 | SQLite、Markdown与上传已支持定时归档、校验、加密、保留和恢复；仍没有真实异地副本、外部失败告警、`lab-storage`备份或服务器恢复演练 |
+| 备份仍限于同机数据面 | SQLite、Markdown与非ZIP上传已支持定时归档、校验、加密、保留和恢复；上传ZIP仅在manifest留痕并依赖用户本地原件补齐；仍没有真实异地副本、外部失败告警、`lab-storage`备份或服务器恢复演练 |
 | 仍是单实例架构 | SQLite会话可跨服务重启持久化，但不支持多个后台实例共享写入或直接水平扩容 |
 | 安卓App位于独立仓库 | `zhiliaohub_app v0.3` 已完成prod/qa并装、设备认证、会话隔离与网络容错真机验证；本仓库只保留服务端协议和兼容性说明，不包含Android代码 |
 
@@ -450,7 +452,7 @@ SQLite当前包含：
 
 ### 11.7 备份运维演进
 
-**本地机制和生产进程内定时触发已实现，异地容灾仍未实现。** 当前脚本已覆盖完整性清单、SHA-256、可选加密、最近N份保留、恢复前快照和恢复验证；调度器随后台进程运行。后续仍要接入真实异地目标、外部告警、密钥托管、容量监控、`lab-storage`备份与定期服务器恢复演练。
+**本地机制和生产进程内定时触发已实现，异地容灾仍未实现。** 当前脚本已覆盖完整性清单、ZIP排除留痕、SHA-256、可选加密、最近N份保留、恢复前快照和恢复验证；调度器随后台进程运行。上传ZIP原件按用户决定由本地另行保存，不纳入归档容量；后续仍要接入真实异地目标、外部告警、密钥托管、容量监控、`lab-storage`备份与定期服务器恢复演练。
 
 ### 11.8 独立安卓App对接
 

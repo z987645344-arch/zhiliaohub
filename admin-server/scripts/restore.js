@@ -17,7 +17,7 @@ if (!archive || !force) {
   process.exitCode = 1;
 } else {
   restoreBackup(loadBackupConfig(), path.resolve(archive), { force: true, skipPreRestoreSnapshot })
-    .then(({ manifest, preRestoreSnapshot }) => {
+    .then(({ manifest, preRestoreSnapshot, excludedFiles, warnings }) => {
       if (preRestoreSnapshot.skipped) {
         console.warn(`未创建恢复前快照（${preRestoreSnapshot.reason}）；本次恢复没有回退点。`);
       } else {
@@ -26,6 +26,10 @@ if (!archive || !force) {
       }
       console.log(`恢复完成；备份创建时间：${manifest.createdAt}`);
       console.log(`已校验文件数：${manifest.files.length}`);
+      for (const warning of warnings) console.warn(`注意：${warning}`);
+      for (const file of excludedFiles) {
+        console.warn(`待补齐：${file.path}（${file.size} 字节，SHA-256 ${file.sha256}）`);
+      }
     })
     .catch((error) => {
       console.error(`恢复失败：${error.message}`);

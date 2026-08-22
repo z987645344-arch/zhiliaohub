@@ -1,4 +1,4 @@
-// Creates, verifies and restores complete local snapshots of SQLite, Markdown and uploads.
+// Creates, verifies and restores local snapshots of SQLite, Markdown and non-ZIP uploads.
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
@@ -10,7 +10,8 @@ const tar = require('tar');
 const { atomicWriteFile } = require('../lib/atomic-file');
 const { createBackupDestination } = require('./backup-destination');
 
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
+const SUPPORTED_FORMAT_VERSIONS = new Set([1, FORMAT_VERSION]);
 // Regular backups and automatic pre-restore snapshots share one directory but use
 // different filename prefixes, so each prunes against its own retention count and a
 // fresh pre-restore snapshot can never be evicted by the regular "latest N" policy.
@@ -53,17 +54,26 @@ async function collectFiles(directory, relativeRoot = '') {
   return collected;
 }
 
-async function copyBackupDirectory(source, destination, archiveRoot) {
+async function copyBackupDirectory(source, destination, archiveRoot, options = {}) {
   await fs.mkdir(destination, { recursive: true });
   const sourceExists = await fs.stat(source).then((value) => value.isDirectory()).catch(() => false);
-  if (!sourceExists) return [];
+  if (!sourceExists) return { files: [], excluded: [] };
   const files = await collectFiles(source);
+  const copied = [];
+  const excluded = [];
   for (const file of files) {
+    const archivePath = path.posix.join(archiveRoot, file.relativePath);
+    if (options.exclude?.(file.relativePath)) {
+      const stat = await fs.stat(file.absolutePath);
+      excluded.push({ path: archivePath, size: stat.size, sha256: await sha256(file.absolutePath) });
+      continue;
+    }
     const destinationPath = path.join(destination, ...file.relativePath.split('/'));
     await fs.mkdir(path.dirname(destinationPath), { recursive: true });
     await fs.copyFile(file.absolutePath, destinationPath);
+    copied.push(archivePath);
   }
-  return files.map((file) => path.posix.join(archiveRoot, file.relativePath));
+  return { files: copied, excluded };
 }
 
 async function encryptArchive(source, destination, password) {
@@ -175,21 +185,25 @@ async function createBackup(config, options = {}) {
     }
 
     const archivePaths = ['data/admin.sqlite3'];
-    archivePaths.push(...await copyBackupDirectory(
+    const works = await copyBackupDirectory(
       path.join(config.contentDir, 'works'),
       path.join(stagingRoot, 'content', 'works'),
       'content/works',
-    ));
-    archivePaths.push(...await copyBackupDirectory(
+    );
+    archivePaths.push(...works.files);
+    const notes = await copyBackupDirectory(
       path.join(config.contentDir, 'notes'),
       path.join(stagingRoot, 'content', 'notes'),
       'content/notes',
-    ));
-    archivePaths.push(...await copyBackupDirectory(
+    );
+    archivePaths.push(...notes.files);
+    const uploads = await copyBackupDirectory(
       config.uploadsDir,
       path.join(stagingRoot, 'uploads'),
       'uploads',
-    ));
+      { exclude: (relativePath) => relativePath.toLowerCase().endsWith('.zip') },
+    );
+    archivePaths.push(...uploads.files);
 
     const files = [];
     for (const relativePath of [...new Set(archivePaths)].sort()) {
@@ -202,6 +216,7 @@ async function createBackup(config, options = {}) {
       createdAt: now.toISOString(),
       encryption: password ? 'aes-256-gcm+scrypt' : 'none',
       files,
+      excluded: uploads.excluded.sort((left, right) => left.path.localeCompare(right.path)),
     };
     await fs.writeFile(path.join(stagingRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
     await tar.c({
@@ -245,9 +260,14 @@ function safeArchivePath(value) {
 async function verifyExtractedBackup(root) {
   const manifestPath = path.join(root, 'manifest.json');
   const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
-  if (manifest.formatVersion !== FORMAT_VERSION || !Array.isArray(manifest.files)) {
+  if (!SUPPORTED_FORMAT_VERSIONS.has(manifest.formatVersion) || !Array.isArray(manifest.files)) {
     throw new Error('Backup manifest format is unsupported.');
   }
+  if (manifest.formatVersion >= 2 && !Array.isArray(manifest.excluded)) {
+    throw new Error('Backup manifest format is unsupported.');
+  }
+  const excluded = manifest.excluded ?? [];
+  if (!Array.isArray(excluded)) throw new Error('Backup manifest format is unsupported.');
   const expected = new Set();
   for (const file of manifest.files) {
     if (!safeArchivePath(file.path) || expected.has(file.path)) throw new Error('Backup manifest contains an unsafe path.');
@@ -259,13 +279,35 @@ async function verifyExtractedBackup(root) {
       throw new Error(`Backup checksum validation failed: ${file.path}`);
     }
   }
+  for (const file of excluded) {
+    if (!safeArchivePath(file.path) || expected.has(file.path)) {
+      throw new Error('Backup manifest contains an unsafe excluded path.');
+    }
+    if (!String(file.path).startsWith('uploads/') || !String(file.path).toLowerCase().endsWith('.zip')) {
+      throw new Error('Backup manifest excluded entries may only describe ZIP files under uploads/.');
+    }
+    if (!Number.isSafeInteger(file.size) || file.size < 0 || !/^[0-9a-f]{64}$/.test(file.sha256)) {
+      throw new Error(`Backup manifest contains invalid excluded metadata: ${file.path}`);
+    }
+    expected.add(file.path);
+  }
   const actualFiles = (await collectFiles(root))
     .map((file) => file.relativePath)
     .filter((relativePath) => relativePath !== 'manifest.json');
-  if (actualFiles.length !== expected.size || actualFiles.some((file) => !expected.has(file))) {
+  const includedPaths = new Set(manifest.files.map((file) => file.path));
+  if (actualFiles.length !== includedPaths.size || actualFiles.some((file) => !includedPaths.has(file))) {
     throw new Error('Backup archive contains files not declared by its manifest.');
   }
+  manifest.excluded = excluded;
   return manifest;
+}
+
+function excludedRestoreWarnings(excluded) {
+  if (!excluded.length) return [];
+  return [
+    `该备份按策略未包含 ${excluded.length} 个 ZIP 文件；恢复后相关下载记录会暂时缺少文件。`,
+    '请从本地按 manifest.excluded 中的相对路径补齐，并逐一核对文件大小与 SHA-256。',
+  ];
 }
 
 async function replaceDirectory(source, target) {
@@ -384,7 +426,12 @@ async function restoreBackup(config, archivePath, options = {}) {
     await replaceDirectory(path.join(unpackedRoot, 'content', 'works'), path.join(config.contentDir, 'works'));
     await replaceDirectory(path.join(unpackedRoot, 'content', 'notes'), path.join(config.contentDir, 'notes'));
     await replaceDirectory(path.join(unpackedRoot, 'uploads'), config.uploadsDir);
-    return { manifest, preRestoreSnapshot };
+    return {
+      manifest,
+      preRestoreSnapshot,
+      excludedFiles: manifest.excluded,
+      warnings: excludedRestoreWarnings(manifest.excluded),
+    };
   } finally {
     await fs.rm(extractionRoot, { recursive: true, force: true });
   }
@@ -401,6 +448,7 @@ module.exports = {
   inspectLiveDatabase,
   replicateArchive,
   encryptArchive,
+  excludedRestoreWarnings,
   pruneBackups,
   restoreBackup,
   verifyExtractedBackup,

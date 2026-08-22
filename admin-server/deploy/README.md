@@ -265,13 +265,15 @@ cp -r assets css js <站点根>/
 1. 在服务器检出已确认版本，安装受支持的Docker Engine与Compose插件。
 2. 从两个 `.env.example` 分别创建根目录 `.env` 和 `admin-server/.env`，填写现场值，并确认两者均未被Git跟踪。
 3. 创建六个持久目录和TLS文件，设置最小必要权限。
-4. 从已验证备份恢复SQLite、Markdown和普通上传，或初始化全新数据；单独处理当前备份未覆盖的 `lab-storage/`。
+4. 从已验证备份恢复SQLite、Markdown和非ZIP上传，或初始化全新数据；恢复命令若列出 `manifest.excluded` 条目，必须从用户本地按清单路径补回ZIP，并核对大小与SHA-256；单独处理当前备份未覆盖的 `lab-storage/`。
 5. 初始化独立公开站点目录，确保其中不含Git仓库、后台源码或现场配置。
 6. 运行 `docker compose config --quiet`。
 7. 运行 `docker compose build --no-cache admin-server`。
 8. 对Nginx模板执行真实 `nginx -t`（可通过官方容器完成），然后运行 `docker compose up -d`。
 9. 检查两个服务healthy和日志，验证HTTP→HTTPS、静态站、`/health`、密码+TOTP、App设备登录、来源IP、反馈提交/审核/发布、作品上传/发布、备份和小作坊主机名。
 10. 重建容器后再次确认SQLite、Markdown、上传、备份、小作坊文件和已发布前台均未丢失。
+
+**备份不含 `.zip`，恢复后需由用户从本地补齐，清单见 `manifest.excluded`。一份“静默地少了东西”的备份比没有备份更危险。**灾难重建验收不能只看恢复命令退出码，还要把清单列出的ZIP补齐并校验后，再检查作品下载链接。
 
 真实IP、域名、证书路径、宿主目录和凭据始终通过服务器现场 `.env` 提供，不修改仓库内Compose或Nginx文件来硬编码。
 
