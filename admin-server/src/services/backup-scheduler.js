@@ -1,30 +1,45 @@
 // In-process daily backup trigger.
 //
 // Deliberately not an OS-level cron entry: the service is meant to run containerised, and a
-// cron job living outside the container would not ship with the image. A plain interval
-// inside the long-running process behaves identically everywhere.
+// cron job living outside the container would not ship with the image. The trigger uses an
+// explicit fixed UTC+8 offset instead of the process timezone, because production containers
+// may run in UTC and China Standard Time has no daylight-saving transitions.
 //
 // "When did we last back up?" is answered by reading the newest backup-<timestamp> archive
 // already sitting in the backup directory, rather than by keeping a separate state file.
 // That makes restarts safe for free: the answer survives process death, a restart shortly
 // after a backup will not trigger a duplicate, and a restart after a long outage notices the
-// backup is overdue and takes one immediately.
+// scheduled boundary has passed and takes one immediately.
 const fs = require('node:fs/promises');
 const { BACKUP_PREFIX, createBackup } = require('./backup-service');
 
-const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const UTC_PLUS_8_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DEFAULT_LOCAL_TIME = '00:00';
 
 // Matches the archiveTimestamp() format: YYYYMMDD 'T' HHMMSSmmm 'Z'.
 const ARCHIVE_PATTERN = new RegExp(`^${BACKUP_PREFIX}-(\\d{8})T(\\d{9})Z\\.tar\\.gz(?:\\.enc)?$`);
 
-// Picks a unit that stays readable at both the 24-hour default and the short intervals used
-// in tests; a fixed "hours" unit prints a meaningless "every 0 hours" for anything smaller.
-function formatDuration(milliseconds) {
-  if (milliseconds >= 3600000) return `${Math.round(milliseconds / 3600000)} 小时`;
-  if (milliseconds >= 60000) return `${Math.round(milliseconds / 60000)} 分钟`;
-  if (milliseconds >= 1000) return `${Math.round(milliseconds / 1000)} 秒`;
-  return `${milliseconds} 毫秒`;
+function parseLocalTime(value = DEFAULT_LOCAL_TIME) {
+  const match = /^(?:([01]\d|2[0-3])):([0-5]\d)$/.exec(String(value));
+  if (!match) throw new Error('Backup schedule local time must use 24-hour HH:MM format.');
+  return (Number(match[1]) * 60) + Number(match[2]);
+}
+
+// Returns the most recent configured wall-clock boundary in an explicit UTC+8 timeline.
+// It never calls getHours()/getDate(), so the host or container timezone cannot move the
+// trigger to 08:00 China time by mistake.
+function scheduledBoundaryAtOrBefore(now, localTime = DEFAULT_LOCAL_TIME) {
+  const shiftedNow = now.getTime() + UTC_PLUS_8_OFFSET_MS;
+  const shiftedDayStart = Math.floor(shiftedNow / DAY_MS) * DAY_MS;
+  let shiftedBoundary = shiftedDayStart + (parseLocalTime(localTime) * MINUTE_MS);
+  if (shiftedBoundary > shiftedNow) shiftedBoundary -= DAY_MS;
+  return new Date(shiftedBoundary - UTC_PLUS_8_OFFSET_MS);
+}
+
+function nextScheduledAt(now, localTime = DEFAULT_LOCAL_TIME) {
+  return new Date(scheduledBoundaryAtOrBefore(now, localTime).getTime() + DAY_MS);
 }
 
 function parseArchiveTimestamp(name) {
@@ -51,12 +66,15 @@ async function lastBackupAt(backupDir) {
 class BackupScheduler {
   constructor(config, options = {}) {
     this.config = config;
-    this.intervalMs = config.backupIntervalMs ?? DEFAULT_INTERVAL_MS;
-    this.checkIntervalMs = config.backupScheduleCheckIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS;
+    this.localTime = config.backupScheduleLocalTime ?? DEFAULT_LOCAL_TIME;
+    parseLocalTime(this.localTime);
     this.createBackup = options.createBackup || createBackup;
     this.now = options.now || (() => new Date());
     this.logger = options.logger || console;
+    this.setTimeout = options.setTimeout || setTimeout;
+    this.clearTimeout = options.clearTimeout || clearTimeout;
     this.timer = null;
+    this.stopped = false;
     this.inFlight = false;
     this.createdCount = 0;
     this.failureCount = 0;
@@ -70,8 +88,14 @@ class BackupScheduler {
     try {
       const now = this.now();
       const last = await lastBackupAt(this.config.backupDir);
-      if (last && now.getTime() - last.getTime() < this.intervalMs) {
-        return { skipped: true, reason: 'not due yet', lastBackupAt: last };
+      const scheduledBoundaryAt = scheduledBoundaryAtOrBefore(now, this.localTime);
+      if (last && last >= scheduledBoundaryAt) {
+        return {
+          skipped: true,
+          reason: 'already backed up since scheduled boundary',
+          lastBackupAt: last,
+          scheduledBoundaryAt,
+        };
       }
       const result = await this.createBackup(this.config, { now });
       this.createdCount += 1;
@@ -81,7 +105,7 @@ class BackupScheduler {
       } else if (result.replication && !result.replication.skipped) {
         this.logger.error(`[backup] 定时备份的异地同步失败：${result.replication.error}（本地备份仍然有效）`);
       }
-      return { created: true, result, lastBackupAt: last };
+      return { created: true, result, lastBackupAt: last, scheduledBoundaryAt };
     } catch (error) {
       // Loud on purpose. A backup system that fails quietly is worse than none, because it
       // produces confidence without protection.
@@ -102,22 +126,44 @@ class BackupScheduler {
       this.logger.log('[backup] 定时备份已通过 BACKUP_SCHEDULE_ENABLED=false 关闭；只能手动运行 npm run backup。');
       return this;
     }
-    // Check once at boot so a restart cannot make an overdue backup wait a whole interval.
+    this.stopped = false;
+    // Check once at boot: an empty directory gets protection immediately, and a process
+    // returning after a missed boundary catches up without waiting for tomorrow.
     this.tick();
-    this.timer = setInterval(() => { this.tick(); }, this.checkIntervalMs);
-    if (typeof this.timer.unref === 'function') this.timer.unref();
+    this.scheduleNext();
     this.logger.log(
-      `[backup] 定时备份已启用：每 ${formatDuration(this.intervalMs)}一次，`
-      + `每 ${formatDuration(this.checkIntervalMs)}检查一次是否到期。`,
+      `[backup] 定时备份已启用：每日 UTC+8 ${this.localTime}；`
+      + '启动时会读取现有归档并补做缺失的当日备份。',
     );
     return this;
   }
 
+  scheduleNext() {
+    const now = this.now();
+    const scheduledAt = nextScheduledAt(now, this.localTime);
+    const delay = Math.max(0, scheduledAt.getTime() - now.getTime());
+    this.timer = this.setTimeout(async () => {
+      this.timer = null;
+      await this.tick();
+      if (!this.stopped) this.scheduleNext();
+    }, delay);
+    if (typeof this.timer?.unref === 'function') this.timer.unref();
+    return scheduledAt;
+  }
+
   stop() {
-    if (this.timer) clearInterval(this.timer);
+    this.stopped = true;
+    if (this.timer) this.clearTimeout(this.timer);
     this.timer = null;
     return this;
   }
 }
 
-module.exports = { BackupScheduler, lastBackupAt, parseArchiveTimestamp };
+module.exports = {
+  BackupScheduler,
+  UTC_PLUS_8_OFFSET_MS,
+  lastBackupAt,
+  nextScheduledAt,
+  parseArchiveTimestamp,
+  scheduledBoundaryAtOrBefore,
+};

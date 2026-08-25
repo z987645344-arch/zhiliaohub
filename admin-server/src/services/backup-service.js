@@ -1,4 +1,4 @@
-// Creates, verifies and restores local snapshots of SQLite, Markdown and non-ZIP uploads.
+// Creates, verifies and restores local snapshots of SQLite, Markdown and uploads.
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
@@ -160,7 +160,7 @@ async function replicateArchive(config, archivePath, options = {}) {
 async function createBackup(config, options = {}) {
   const now = options.now || new Date();
   const namePrefix = options.namePrefix || BACKUP_PREFIX;
-  const retentionCount = options.retentionCount ?? config.backupRetentionCount ?? 7;
+  const retentionCount = options.retentionCount ?? config.backupRetentionCount ?? 3;
   const password = options.encryptionPassword ?? config.backupEncryptionPassword ?? '';
   if (!Number.isSafeInteger(retentionCount) || retentionCount <= 0) {
     throw new Error('Backup retention count must be a positive integer.');
@@ -201,7 +201,11 @@ async function createBackup(config, options = {}) {
       config.uploadsDir,
       path.join(stagingRoot, 'uploads'),
       'uploads',
-      { exclude: (relativePath) => relativePath.toLowerCase().endsWith('.zip') },
+      {
+        exclude: config.backupExcludeZip
+          ? (relativePath) => relativePath.toLowerCase().endsWith('.zip')
+          : undefined,
+      },
     );
     archivePaths.push(...uploads.files);
 

@@ -50,6 +50,8 @@
 
 Compose中的 `environment` 会覆盖该文件里的运行拓扑值，避免现场 `.env` 把生产容器改回开发监听或错误路径。`BACKUP_MIRROR_DIR` 当前仍只是同机副本模拟；若启用，必须增加独立持久挂载，且不能描述为真实异地容灾。
 
+定时备份使用 `BACKUP_SCHEDULE_LOCAL_TIME="00:00"`（24小时制 `HH:MM`），代码始终按固定 **UTC+8** 解释，不依赖容器 `TZ`。从旧配置升级时应删除已经失效的 `BACKUP_INTERVAL_MS`、`BACKUP_SCHEDULE_CHECK_INTERVAL_MS`，在服务器现场的 `admin-server/.env` 写入新的时钟配置；本仓库不会修改生产 `.env`。
+
 ## 持久目录与权限
 
 根目录 `.env` 中的以下路径必须指向宿主机持久目录：
@@ -265,7 +267,7 @@ cp -r assets css js <站点根>/
 1. 在服务器检出已确认版本，安装受支持的Docker Engine与Compose插件。
 2. 从两个 `.env.example` 分别创建根目录 `.env` 和 `admin-server/.env`，填写现场值，并确认两者均未被Git跟踪。
 3. 创建六个持久目录和TLS文件，设置最小必要权限。
-4. 从已验证备份恢复SQLite、Markdown和非ZIP上传，或初始化全新数据；恢复命令若列出 `manifest.excluded` 条目，必须从用户本地按清单路径补回ZIP，并核对大小与SHA-256；单独处理当前备份未覆盖的 `lab-storage/`。
+4. 从已验证备份恢复SQLite、Markdown和上传文件，或初始化全新数据；备份默认包含ZIP，若现场设置了 `BACKUP_EXCLUDE_ZIP=true` 且恢复命令列出 `manifest.excluded` 条目，必须从用户本地按清单路径补回ZIP，并核对大小与SHA-256；单独处理当前备份未覆盖的 `lab-storage/`。
 5. 初始化独立公开站点目录，确保其中不含Git仓库、后台源码或现场配置。
 6. 运行 `docker compose config --quiet`。
 7. 运行 `docker compose build --no-cache admin-server`。
@@ -273,7 +275,7 @@ cp -r assets css js <站点根>/
 9. 检查两个服务healthy和日志，验证HTTP→HTTPS、静态站、`/health`、密码+TOTP、App设备登录、来源IP、反馈提交/审核/发布、作品上传/发布、备份和小作坊主机名。
 10. 重建容器后再次确认SQLite、Markdown、上传、备份、小作坊文件和已发布前台均未丢失。
 
-**备份不含 `.zip`，恢复后需由用户从本地补齐，清单见 `manifest.excluded`。一份“静默地少了东西”的备份比没有备份更危险。**灾难重建验收不能只看恢复命令退出码，还要把清单列出的ZIP补齐并校验后，再检查作品下载链接。
+**备份默认包含ZIP；如需排除，设置 `BACKUP_EXCLUDE_ZIP=true`，此时恢复后需由用户从本地补齐，清单见 `manifest.excluded`。一份“静默地少了东西”的备份比没有备份更危险。**启用排除后的灾难重建验收不能只看恢复命令退出码，还要把清单列出的ZIP补齐并校验后，再检查作品下载链接。
 
 真实IP、域名、证书路径、宿主目录和凭据始终通过服务器现场 `.env` 提供，不修改仓库内Compose或Nginx文件来硬编码。
 

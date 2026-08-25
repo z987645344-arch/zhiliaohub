@@ -15,7 +15,13 @@ const {
   restoreBackup,
 } = require('../src/services/backup-service');
 const { LocalMirrorDestination } = require('../src/services/backup-destination');
-const { BackupScheduler, lastBackupAt, parseArchiveTimestamp } = require('../src/services/backup-scheduler');
+const {
+  BackupScheduler,
+  nextScheduledAt,
+  lastBackupAt,
+  parseArchiveTimestamp,
+  scheduledBoundaryAtOrBefore,
+} = require('../src/services/backup-scheduler');
 
 function createConfig(runtimeRoot, overrides = {}) {
   const dataDir = path.join(runtimeRoot, 'data');
@@ -26,10 +32,12 @@ function createConfig(runtimeRoot, overrides = {}) {
     contentDir: path.join(runtimeRoot, 'content'),
     uploadsDir: path.join(runtimeRoot, 'uploads'),
     backupDir: path.join(runtimeRoot, 'backups'),
-    backupRetentionCount: 7,
+    backupRetentionCount: 3,
+    backupExcludeZip: false,
     preRestoreRetentionCount: 3,
     backupEncryptionPassword: '',
     backupMirrorDir: '',
+    backupScheduleLocalTime: '00:00',
     contentMaxBytes: 64 * 1024,
     ...overrides,
   };
@@ -109,48 +117,80 @@ test('数据库存在但无法读取时恢复中止，不会被当成全新机�
   }
 });
 
-test('定时备份在到期时触发、未到期时跳过，重启后不会重复也不会漏掉', async () => {
+test('定时备份按UTC+8零点分日：空目录立即备份、同日重启不重复、次日零点再备份', async () => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-schedule-'));
-  const config = createConfig(runtimeRoot, {
-    backupIntervalMs: 24 * 60 * 60 * 1000,
-    backupScheduleCheckIntervalMs: 60 * 1000,
-  });
+  const config = createConfig(runtimeRoot);
   try {
     await seedStorage(config);
+    // 2026-08-11 00:00 UTC is 08:00 at UTC+8. No archive exists, so startup protection
+    // must happen immediately instead of waiting until the next local midnight.
     let clock = new Date('2026-08-11T00:00:00.000Z');
     const scheduler = new BackupScheduler(config, { now: () => clock, logger: silentLogger });
-
-    // First ever run: no archive exists, so one is taken immediately.
     const first = await scheduler.tick();
     assert.equal(first.created, true, '没有任何备份时应立即创建。');
+    assert.equal(first.scheduledBoundaryAt.toISOString(), '2026-08-10T16:00:00.000Z');
 
-    // A restart right afterwards must not produce a second archive.
-    clock = new Date('2026-08-11T00:05:00.000Z');
-    const afterRestart = await new BackupScheduler(config, { now: () => clock, logger: silentLogger }).tick();
-    assert.equal(afterRestart.created, undefined);
-    assert.equal(afterRestart.skipped, true);
-    assert.equal(afterRestart.reason, 'not due yet');
+    // Three independent scheduler instances stand in for three process restarts during the
+    // same UTC+8 day. The archive directory is the only shared state.
+    for (const instant of [
+      '2026-08-11T00:05:00.000Z',
+      '2026-08-11T08:00:00.000Z',
+      '2026-08-11T15:59:59.999Z',
+    ]) {
+      clock = new Date(instant);
+      const restarted = await new BackupScheduler(config, { now: () => clock, logger: silentLogger }).tick();
+      assert.equal(restarted.skipped, true);
+      assert.equal(restarted.reason, 'already backed up since scheduled boundary');
+    }
 
-    // Once a full interval has passed, the next check backs up again.
-    clock = new Date('2026-08-12T00:00:01.000Z');
+    // UTC+8 2026-08-12 00:00 is exactly UTC 2026-08-11 16:00. Crossing this fixed
+    // boundary, rather than waiting 24 hours after the 08:00 startup backup, makes it due.
+    clock = new Date('2026-08-11T16:00:00.000Z');
     const due = await scheduler.tick();
-    assert.equal(due.created, true, '超过一个周期后应再次备份。');
+    assert.equal(due.created, true, 'UTC+8次日零点应创建第二份备份。');
+    assert.equal(due.scheduledBoundaryAt.toISOString(), '2026-08-11T16:00:00.000Z');
 
-    // A restart after a long outage notices the overdue backup at boot rather than waiting.
-    clock = new Date('2026-08-20T00:00:00.000Z');
-    const afterOutage = await new BackupScheduler(config, { now: () => clock, logger: silentLogger }).tick();
-    assert.equal(afterOutage.created, true, '长时间停机后重启应立即补一次备份。');
-
-    const archives = (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('backup-'));
-    assert.equal(archives.length, 3, `应恰好产生3份归档，实际：${archives.join(', ')}`);
+    const archives = (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('backup-')).sort();
+    assert.deepEqual(archives, [
+      'backup-20260811T000000000Z.tar.gz',
+      'backup-20260811T160000000Z.tar.gz',
+    ]);
 
     // The recorded "last backup" really is derived from the newest archive on disk.
-    assert.equal((await lastBackupAt(config.backupDir)).toISOString(), '2026-08-20T00:00:00.000Z');
+    assert.equal((await lastBackupAt(config.backupDir)).toISOString(), '2026-08-11T16:00:00.000Z');
     assert.equal(parseArchiveTimestamp('backup-20260811T000000000Z.tar.gz').toISOString(), '2026-08-11T00:00:00.000Z');
     assert.equal(parseArchiveTimestamp('pre-restore-20260811T000000000Z.tar.gz'), null, '恢复前快照不参与定时判断。');
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
   }
+});
+
+test('UTC+8的00:00严格映射为UTC前一日16:00，不读取容器本地时区', () => {
+  const before = new Date('2026-08-11T15:59:59.999Z');
+  const boundary = new Date('2026-08-11T16:00:00.000Z');
+  assert.equal(nextScheduledAt(before, '00:00').toISOString(), boundary.toISOString());
+  assert.equal(scheduledBoundaryAtOrBefore(boundary, '00:00').toISOString(), boundary.toISOString());
+  assert.equal(nextScheduledAt(boundary, '00:00').toISOString(), '2026-08-12T16:00:00.000Z');
+
+  let actualDelay = null;
+  let cleared = false;
+  const timerHandle = { unref() {} };
+  const scheduler = new BackupScheduler({
+    backupDir: 'unused-in-this-clock-only-test',
+    backupScheduleLocalTime: '00:00',
+  }, {
+    now: () => before,
+    logger: silentLogger,
+    setTimeout: (_callback, delay) => {
+      actualDelay = delay;
+      return timerHandle;
+    },
+    clearTimeout: (handle) => { cleared = handle === timerHandle; },
+  });
+  assert.equal(scheduler.scheduleNext().toISOString(), boundary.toISOString());
+  assert.equal(actualDelay, 1, '运行时计时器应瞄准UTC 16:00，而不是容器本地零点。');
+  scheduler.stop();
+  assert.equal(cleared, true);
 });
 
 test('定时备份失败时记录明确日志且不抛出，不会静默失败', async () => {

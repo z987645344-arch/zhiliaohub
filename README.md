@@ -1,6 +1,6 @@
 # 知了hub
 
-知了hub 是用于整理和展示个人作品、学习心得、反馈交流与持续探索的多页面网站，生产入口为 [https://zhiliaohub.com](https://zhiliaohub.com)。当前已存档版本为 `v2.0`。
+知了hub 是用于整理和展示个人作品、学习心得、反馈交流与持续探索的多页面网站，生产入口为 [https://zhiliaohub.com](https://zhiliaohub.com)。当前最新Git标签为 `v2.5`。
 
 访客前台仍使用原生 HTML、CSS 和 JavaScript，不需要前端构建工具；作品、日记和已审核反馈由独立的 Node.js/Express 管理后台在发布时生成静态 HTML。页面读取保持静态，只有访客主动提交留言或回复时会调用后台公开 API。
 
@@ -13,7 +13,7 @@
 - `admin-server/` 提供密码+TOTP、P-256设备挑战登录、SQLite持久会话、作品/日记管理、静态发布和受控上传。
 - 反馈系统采用公开提交、pending审核队列、后台通过/隐藏/站长回复和approved-only静态发布。
 - 小作坊支持管理员上传经过安全校验的网页ZIP，并生成独立静态访问内容。
-- 备份体系覆盖SQLite、Markdown和 `uploads/` 下的非ZIP文件，支持校验、可选加密、恢复前快照、定时备份和同机副本模拟；上传ZIP不进入归档，只在 `manifest.excluded` 留存路径、大小与SHA-256，恢复后需由用户从本地补齐。**一份“静默地少了东西”的备份比没有备份更危险。**真实异地容灾仍未完成。
+- 备份体系默认覆盖SQLite、Markdown和 `uploads/` 全部文件，支持校验、可选加密、恢复前快照、定时备份和同机副本模拟；如设置 `BACKUP_EXCLUDE_ZIP=true`，ZIP内容不入归档，只在 `manifest.excluded` 留存路径、大小与SHA-256，恢复后需由用户从本地补齐。**一份“静默地少了东西”的备份比没有备份更危险。**常规备份默认保留3份，真实异地容灾仍未完成。
 - 配套 Android App 位于独立仓库 `zhiliaohub_app`，当前版本为 v0.3。
 
 ## 仓库结构

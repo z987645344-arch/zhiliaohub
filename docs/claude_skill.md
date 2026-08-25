@@ -3,7 +3,7 @@
 > 每次任务开始前，先读本文档 + `docs/claude_memory.md` + `CHANGELOG.md` 最近条目，再看真实工作区。
 > **指挥师侧的工作方法**（执行者选型、指令格式、云服务器操作）见 `D:\zhiliao\与指挥师的对话\记录\指挥师手册.md`，**不在本仓库内**，你不需要读。
 > **章节编号保留历史值**，空档是 2026-08-17 移出指挥师内容留下的，**勿重排**。
-> **最后更新：2026-08-23**（移出指挥师侧内容；4.5 升为第十章；补回 1.5 文档权威性原则；新增 1.6 本机运行 compose 的约束、1.7 开工前的 Git 检查、1.8 地址与主机名的公开边界，以及第一章第 7 条「自检不构成验收」；7.7 判断文件是否被 Git 忽略；1.2.3 改动超出指令范围时怎么办、1.2.4 两个执行者的分工、1.9 跨项目工作时的边界（原编为 1.3，按「旧号不复用」改号并移至 1.8 之后），其禁区已扩为根目录 14 项白名单；存档授权口径由「三次独立授权」改为「各需授权、可一并授权，但发现问题必须停下」；补充备份排除 ZIP、manifest 留痕及恢复补齐规则）
+> **最后更新：2026-08-25**（移出指挥师侧内容；4.5 升为第十章；补回 1.5 文档权威性原则；新增 1.6 本机运行 compose 的约束、1.7 开工前的 Git 检查、1.8 地址与主机名的公开边界，以及第一章第 7 条「自检不构成验收」；7.7 判断文件是否被 Git 忽略；1.2.3 改动超出指令范围时怎么办、1.2.4 两个执行者的分工、1.9 跨项目工作时的边界（原编为 1.3，按「旧号不复用」改号并移至 1.8 之后），其禁区已扩为根目录 14 项白名单；存档授权口径由「三次独立授权」改为「各需授权、可一并授权，但发现问题必须停下」；补充ZIP默认入备份、可选排除时的manifest留痕与恢复补齐规则，以及定时备份固定UTC+8时钟要求）
 
 ---
 
@@ -243,7 +243,7 @@
 #### 上传、小作坊和发布
 
 - 上传继续复用扩展名、MIME、文件签名和大小上限的组合校验，不能只信任客户端文件名。
-- 备份只收 `uploads/` 下的非ZIP文件；被排除ZIP必须在 `manifest.excluded` 记录路径、大小和SHA-256，恢复时明确提示用户从本地补齐，不得静默缺失。**一份“静默地少了东西”的备份比没有备份更危险。**
+- 备份默认收录 `uploads/` 全部文件；只有 `BACKUP_EXCLUDE_ZIP=true` 时排除ZIP。被排除ZIP必须在 `manifest.excluded` 记录路径、大小和SHA-256，恢复时明确提示用户从本地补齐，不得静默缺失。**一份“静默地少了东西”的备份比没有备份更危险。**
 - 小作坊 ZIP 必须在写出前完成路径穿越、解压总量、文件数、扩展名、符号链接和加密条目检查；失败时拒绝整个包。
 - 发布采用全量同步，清理范围必须受自动生成标记或受控媒体目录约束；不得扩大到 `index.html`、源码、配置或其他非目标文件。
 - 发布失败必须恢复发布前状态，不把半完成静态文件暴露给访客。
@@ -253,6 +253,7 @@
 - 预期的校验/业务错误返回明确中文提示和合适 HTTP 状态；未知异常对用户只返回通用错误，详细异常仅进入服务器日志。
 - 日志不得记录密码、TOTP、配对码、挑战签名、Cookie、CSRF、邮箱全文、备份密码或密钥材料。
 - 定时备份、镜像同步等后台任务失败不能静默；日志应写明失败动作、影响和最后成功状态，但不得泄露敏感配置。
+- 定时备份的日历时刻必须显式使用固定UTC+8计算，不得用容器的 `getHours()` 等本地时区结果代替；默认目标为 `BACKUP_SCHEDULE_LOCAL_TIME="00:00"`，去重状态继续来自备份目录里的归档。
 - 新的公开接口要审查是否会通过错误差异、响应时间或隐藏字段泄露审核状态、账号存在性或反滥用规则。
 
 #### 测试
@@ -305,7 +306,7 @@
 | 会话/TOTP | `admin-server/src/lib/sqlite-session-store.js`、`admin-server/src/lib/totp-secret.js`、`admin-server/src/app.js`、`admin-server/src/config.js` | Cookie、密钥、重启/过期、代理HTTPS |
 | 普通上传 | `admin-server/src/lib/upload-policy.js`、`admin-server/src/app.js`、`admin-server/src/config.js` | MIME/签名/大小、认证/CSRF、媒体发布 |
 | 小作坊 | `admin-server/src/services/lab-service.js`、后台路由/视图、`admin-server/src/services/publish-service.js` | ZIP安全、`lab-storage`、CSP、Nginx独立主机名 |
-| 备份/恢复 | `admin-server/src/services/backup-*.js`、`admin-server/scripts/backup.js`、`admin-server/scripts/restore.js` | SQLite/Markdown/非ZIP uploads、`manifest.excluded`、人工补齐提示、快照、保留、镜像、真实边界 |
+| 备份/恢复 | `admin-server/src/services/backup-*.js`、`admin-server/scripts/backup.js`、`admin-server/scripts/restore.js` | SQLite/Markdown/uploads、可选ZIP排除、`manifest.excluded`、人工补齐提示、快照、保留、镜像、真实边界 |
 | 后台配置 | `admin-server/.env.example`、`admin-server/src/config.js` | 不写真实凭据、Docker强制覆盖项、README |
 | 容器镜像 | `admin-server/Dockerfile`、`.dockerignore` | 原生依赖、非root权限、持久卷、实际构建 |
 | Compose拓扑 | 根目录 `docker-compose.yml`、`.env.example` | 两层 `.env`、bind mount、healthcheck、镜像重建 |

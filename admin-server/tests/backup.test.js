@@ -9,6 +9,7 @@ const Database = require('better-sqlite3');
 const tar = require('tar');
 
 const { initializeDatabase } = require('../src/db');
+const { loadBackupConfig } = require('../src/backup-config');
 const { ContentService } = require('../src/services/content-service');
 const {
   PRE_RESTORE_PREFIX,
@@ -26,7 +27,8 @@ function createConfig(runtimeRoot) {
     contentDir: path.join(runtimeRoot, 'content'),
     uploadsDir: path.join(runtimeRoot, 'uploads'),
     backupDir: path.join(runtimeRoot, 'backups'),
-    backupRetentionCount: 7,
+    backupRetentionCount: 3,
+    backupExcludeZip: false,
     backupEncryptionPassword: '',
     contentMaxBytes: 64 * 1024,
   };
@@ -54,7 +56,34 @@ async function seedStorage(config) {
   return { work, note };
 }
 
-test('备份排除ZIP但保留清单元数据和非ZIP上传，恢复时明确提示补齐', async () => {
+test('备份配置默认包含ZIP并保留3份，环境开关可启用ZIP排除', () => {
+  const previousRetention = process.env.BACKUP_RETENTION_COUNT;
+  const previousExcludeZip = process.env.BACKUP_EXCLUDE_ZIP;
+  const previousScheduleLocalTime = process.env.BACKUP_SCHEDULE_LOCAL_TIME;
+  try {
+    delete process.env.BACKUP_RETENTION_COUNT;
+    delete process.env.BACKUP_EXCLUDE_ZIP;
+    delete process.env.BACKUP_SCHEDULE_LOCAL_TIME;
+    const defaults = loadBackupConfig();
+    assert.equal(defaults.backupRetentionCount, 3);
+    assert.equal(defaults.backupExcludeZip, false);
+    assert.equal(defaults.backupScheduleLocalTime, '00:00');
+
+    process.env.BACKUP_EXCLUDE_ZIP = 'true';
+    assert.equal(loadBackupConfig().backupExcludeZip, true);
+    process.env.BACKUP_SCHEDULE_LOCAL_TIME = '24:00';
+    assert.throws(() => loadBackupConfig(), /BACKUP_SCHEDULE_LOCAL_TIME must use 24-hour HH:MM format/);
+  } finally {
+    if (previousRetention === undefined) delete process.env.BACKUP_RETENTION_COUNT;
+    else process.env.BACKUP_RETENTION_COUNT = previousRetention;
+    if (previousExcludeZip === undefined) delete process.env.BACKUP_EXCLUDE_ZIP;
+    else process.env.BACKUP_EXCLUDE_ZIP = previousExcludeZip;
+    if (previousScheduleLocalTime === undefined) delete process.env.BACKUP_SCHEDULE_LOCAL_TIME;
+    else process.env.BACKUP_SCHEDULE_LOCAL_TIME = previousScheduleLocalTime;
+  }
+});
+
+test('默认备份包含ZIP，开启排除后保留清单元数据并在恢复时明确提示补齐', async () => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-excluded-zip-'));
   const freshRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-excluded-zip-restore-'));
   const config = createConfig(runtimeRoot);
@@ -73,7 +102,22 @@ test('备份排除ZIP但保留清单元数据和非ZIP上传，恢复时明确�
     await fs.writeFile(zipPath, zipBytes);
     await fs.writeFile(path.join(config.uploadsDir, imageName), imageBytes);
 
-    const excludedBackup = await createBackup(config, { now: new Date('2026-08-04T00:01:00.000Z') });
+    const includedBackup = await createBackup(config, { now: new Date('2026-08-04T00:00:00.000Z') });
+    const includedArchiveSize = (await fs.stat(includedBackup.archivePath)).size;
+    assert.equal(includedBackup.manifest.formatVersion, 2);
+    assert.ok(includedBackup.manifest.files.some((file) => file.path === `uploads/${zipName}`));
+    assert.deepEqual(includedBackup.manifest.excluded, []);
+
+    const unpackedIncluded = path.join(runtimeRoot, 'unpacked-included');
+    await fs.mkdir(unpackedIncluded);
+    await tar.x({ cwd: unpackedIncluded, file: includedBackup.archivePath, strict: true });
+    assert.deepEqual(await fs.readFile(path.join(unpackedIncluded, 'uploads', zipName)), zipBytes);
+    assert.deepEqual((await verifyExtractedBackup(unpackedIncluded)).excluded, []);
+
+    const excludedBackup = await createBackup(
+      { ...config, backupExcludeZip: true },
+      { now: new Date('2026-08-04T00:01:00.000Z') },
+    );
     const excludedArchiveSize = (await fs.stat(excludedBackup.archivePath)).size;
     assert.equal(excludedBackup.manifest.formatVersion, 2);
     assert.ok(excludedBackup.manifest.files.some((file) => file.path === 'uploads/proof.txt'));
@@ -105,25 +149,6 @@ test('备份排除ZIP但保留清单元数据和非ZIP上传，恢复时明确�
     assert.deepEqual(await fs.readFile(path.join(freshConfig.uploadsDir, imageName)), imageBytes);
     assert.equal(await fs.stat(path.join(freshConfig.uploadsDir, zipName)).then(() => true).catch(() => false), false);
 
-    const controlRoot = path.join(runtimeRoot, 'control-with-zip');
-    await fs.cp(unpacked, controlRoot, { recursive: true });
-    await fs.writeFile(path.join(controlRoot, 'uploads', zipName), zipBytes);
-    const controlManifest = {
-      ...unpackedManifest,
-      files: [...unpackedManifest.files, ...unpackedManifest.excluded],
-      excluded: [],
-    };
-    await fs.writeFile(
-      path.join(controlRoot, 'manifest.json'),
-      `${JSON.stringify(controlManifest, null, 2)}\n`,
-      'utf8',
-    );
-    await verifyExtractedBackup(controlRoot);
-    const controlArchive = path.join(runtimeRoot, 'control-with-zip.tar.gz');
-    await tar.c({ cwd: controlRoot, file: controlArchive, gzip: true, portable: true }, [
-      'manifest.json', 'data', 'content', 'uploads',
-    ]);
-    const includedArchiveSize = (await fs.stat(controlArchive)).size;
     assert.ok(
       includedArchiveSize > excludedArchiveSize + (zipBytes.length * 0.9),
       '同一份ZIP进入归档时，归档体积应明显大于排除ZIP时。',
@@ -162,7 +187,7 @@ test('格式2恢复器继续接受没有excluded字段的旧格式1清单', asyn
   }
 });
 
-test('加密备份可在原始数据被破坏后完整恢复 SQLite、Markdown 与非ZIP上传文件', async () => {
+test('加密备份可在原始数据被破坏后完整恢复 SQLite、Markdown 与上传文件', async () => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-flow-'));
   const config = createConfig(runtimeRoot);
   const password = 'test-only-backup-password';
@@ -396,21 +421,20 @@ test('目标环境还没有数据库时跳过恢复前快照并继续恢复', as
   }
 });
 
-test('备份保留策略只保留最近 N 份归档', async () => {
+test('默认备份保留策略连续产出4份后只保留最近3份归档', async () => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-retention-'));
   const config = createConfig(runtimeRoot);
   try {
     await seedStorage(config);
-    const dates = [
-      new Date('2026-08-04T01:00:00.001Z'),
-      new Date('2026-08-04T01:00:00.002Z'),
-      new Date('2026-08-04T01:00:00.003Z'),
-    ];
-    for (const now of dates) await createBackup(config, { now, retentionCount: 2 });
+    const dates = [1, 2, 3, 4].map(
+      (millisecond) => new Date(`2026-08-04T01:00:00.00${millisecond}Z`),
+    );
+    for (const now of dates) await createBackup(config, { now });
     const archives = (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('backup-')).sort();
     assert.deepEqual(archives, [
       'backup-20260804T010000002Z.tar.gz',
       'backup-20260804T010000003Z.tar.gz',
+      'backup-20260804T010000004Z.tar.gz',
     ]);
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });

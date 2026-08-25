@@ -20,6 +20,14 @@ function booleanFlag(value, fallback) {
   return !['false', '0', 'no', 'off'].includes(String(value).trim().toLowerCase());
 }
 
+function localTime(value, name, fallback) {
+  const candidate = String(value === undefined || value === '' ? fallback : value).trim();
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(candidate)) {
+    throw new Error(`${name} must use 24-hour HH:MM format.`);
+  }
+  return candidate;
+}
+
 function loadBackupConfig(overrides = {}) {
   const dataDir = overrides.dataDir || resolveLocalPath(process.env.DATA_DIR, 'data');
   return {
@@ -32,8 +40,12 @@ function loadBackupConfig(overrides = {}) {
     backupRetentionCount: positiveInteger(
       overrides.backupRetentionCount ?? process.env.BACKUP_RETENTION_COUNT,
       'BACKUP_RETENTION_COUNT',
-      7,
+      3,
     ),
+    // ZIP files are included by default. Operators who keep ZIP originals elsewhere may
+    // opt into metadata-only exclusion without changing backup code again.
+    backupExcludeZip: overrides.backupExcludeZip
+      ?? booleanFlag(process.env.BACKUP_EXCLUDE_ZIP, false),
     // Automatic pre-restore snapshots prune against their own count, so a regular backup
     // schedule can never evict the snapshot a restore just created.
     preRestoreRetentionCount: positiveInteger(
@@ -44,15 +56,10 @@ function loadBackupConfig(overrides = {}) {
     // In-process daily backup trigger; see services/backup-scheduler.js.
     backupScheduleEnabled: overrides.backupScheduleEnabled
       ?? booleanFlag(process.env.BACKUP_SCHEDULE_ENABLED, true),
-    backupIntervalMs: positiveInteger(
-      overrides.backupIntervalMs ?? process.env.BACKUP_INTERVAL_MS,
-      'BACKUP_INTERVAL_MS',
-      24 * 60 * 60 * 1000,
-    ),
-    backupScheduleCheckIntervalMs: positiveInteger(
-      overrides.backupScheduleCheckIntervalMs ?? process.env.BACKUP_SCHEDULE_CHECK_INTERVAL_MS,
-      'BACKUP_SCHEDULE_CHECK_INTERVAL_MS',
-      15 * 60 * 1000,
+    backupScheduleLocalTime: localTime(
+      overrides.backupScheduleLocalTime ?? process.env.BACKUP_SCHEDULE_LOCAL_TIME,
+      'BACKUP_SCHEDULE_LOCAL_TIME',
+      '00:00',
     ),
     // Secondary copy target. Empty disables replication. Today this can only be another
     // local directory, which is a simulation and NOT real off-site protection.
