@@ -1,4 +1,4 @@
-// Creates, verifies and restores local snapshots of SQLite, Markdown and uploads.
+// Creates, verifies and restores local snapshots of SQLite, Markdown, uploads and lab projects.
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
@@ -64,8 +64,10 @@ async function copyBackupDirectory(source, destination, archiveRoot, options = {
   for (const file of files) {
     const archivePath = path.posix.join(archiveRoot, file.relativePath);
     if (options.exclude?.(file.relativePath)) {
-      const stat = await fs.stat(file.absolutePath);
-      excluded.push({ path: archivePath, size: stat.size, sha256: await sha256(file.absolutePath) });
+      if (options.recordExcluded !== false) {
+        const stat = await fs.stat(file.absolutePath);
+        excluded.push({ path: archivePath, size: stat.size, sha256: await sha256(file.absolutePath) });
+      }
       continue;
     }
     const destinationPath = path.join(destination, ...file.relativePath.split('/'));
@@ -208,6 +210,21 @@ async function createBackup(config, options = {}) {
       },
     );
     archivePaths.push(...uploads.files);
+    const labStorage = await copyBackupDirectory(
+      config.labStorageDir,
+      path.join(stagingRoot, 'lab-storage'),
+      'lab-storage',
+      {
+        exclude: (relativePath) => {
+          const rootDirectory = relativePath.split('/')[0];
+          return rootDirectory.startsWith('.pending-') || rootDirectory.startsWith('.deleted-');
+        },
+        // These are incomplete transactional directories, not recoverable source files.
+        // Keep manifest.excluded reserved for intentionally omitted uploads ZIP files.
+        recordExcluded: false,
+      },
+    );
+    archivePaths.push(...labStorage.files);
 
     const files = [];
     for (const relativePath of [...new Set(archivePaths)].sort()) {
@@ -228,7 +245,7 @@ async function createBackup(config, options = {}) {
       file: temporaryArchive,
       gzip: true,
       portable: true,
-    }, ['manifest.json', 'data', 'content', 'uploads']);
+    }, ['manifest.json', 'data', 'content', 'uploads', 'lab-storage']);
 
     if (password) {
       const encryptedTemporary = `${temporaryArchive}.enc`;
@@ -430,6 +447,14 @@ async function restoreBackup(config, archivePath, options = {}) {
     await replaceDirectory(path.join(unpackedRoot, 'content', 'works'), path.join(config.contentDir, 'works'));
     await replaceDirectory(path.join(unpackedRoot, 'content', 'notes'), path.join(config.contentDir, 'notes'));
     await replaceDirectory(path.join(unpackedRoot, 'uploads'), config.uploadsDir);
+    const archivedLabStorage = path.join(unpackedRoot, 'lab-storage');
+    const hasArchivedLabStorage = await fs.stat(archivedLabStorage)
+      .then((stat) => stat.isDirectory())
+      .catch(() => false);
+    // Archives created before lab-storage joined the backup set remain readable. They
+    // cannot reconstruct lab projects, so preserve the pre-existing directory instead
+    // of silently replacing it with an empty one.
+    if (hasArchivedLabStorage) await replaceDirectory(archivedLabStorage, config.labStorageDir);
     return {
       manifest,
       preRestoreSnapshot,

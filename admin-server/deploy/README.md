@@ -267,7 +267,7 @@ cp -r assets css js <站点根>/
 1. 在服务器检出已确认版本，安装受支持的Docker Engine与Compose插件。
 2. 从两个 `.env.example` 分别创建根目录 `.env` 和 `admin-server/.env`，填写现场值，并确认两者均未被Git跟踪。
 3. 创建六个持久目录和TLS文件，设置最小必要权限。
-4. 从已验证备份恢复SQLite、Markdown和上传文件，或初始化全新数据；备份默认包含ZIP，若现场设置了 `BACKUP_EXCLUDE_ZIP=true` 且恢复命令列出 `manifest.excluded` 条目，必须从用户本地按清单路径补回ZIP，并核对大小与SHA-256；单独处理当前备份未覆盖的 `lab-storage/`。
+4. 从已验证备份恢复SQLite、Markdown、上传文件和 `lab-storage/` 小作坊项目，或初始化全新数据；备份默认包含ZIP，若现场设置了 `BACKUP_EXCLUDE_ZIP=true` 且恢复命令列出 `manifest.excluded` 条目，必须从用户本地按清单路径补回ZIP，并核对大小与SHA-256。注意本能力启用前生成的旧归档不含 `lab-storage/`，不能据此恢复当时的小作坊文件。
 5. 初始化独立公开站点目录，确保其中不含Git仓库、后台源码或现场配置。
 6. 运行 `docker compose config --quiet`。
 7. 运行 `docker compose build --no-cache admin-server`。
@@ -276,6 +276,8 @@ cp -r assets css js <站点根>/
 10. 重建容器后再次确认SQLite、Markdown、上传、备份、小作坊文件和已发布前台均未丢失。
 
 **备份默认包含ZIP；如需排除，设置 `BACKUP_EXCLUDE_ZIP=true`，此时恢复后需由用户从本地补齐，清单见 `manifest.excluded`。一份“静默地少了东西”的备份比没有备份更危险。**启用排除后的灾难重建验收不能只看恢复命令退出码，还要把清单列出的ZIP补齐并校验后，再检查作品下载链接。
+
+`lab-storage/` 保存的是小作坊唯一可恢复的解压产物，现与SQLite、Markdown和上传池一并入包；`.pending-*`、`.deleted-*` 中间态会被排除。默认每个项目最多500个文件、解压后100MiB，常规归档保留3份，因此单个达到上限且难以压缩的项目最多可让备份总占用增长约300MiB。部署后必须把 `BACKUP_DIR`、镜像目的地的容量监控纳入运维。
 
 真实IP、域名、证书路径、宿主目录和凭据始终通过服务器现场 `.env` 提供，不修改仓库内Compose或Nginx文件来硬编码。
 
@@ -296,6 +298,5 @@ cp -r assets css js <站点根>/
 - 小作坊真实子域名的Cookie隔离完整验收；
 - 真正的异地对象存储备份；
 - 备份失败外部告警和服务器级恢复演练；
-- `lab-storage/` 纳入备份；
 - 多后台实例或水平扩容；
 - 由CI自动执行后台测试、容器和生产回归。

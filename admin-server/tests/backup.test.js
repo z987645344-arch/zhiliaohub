@@ -7,7 +7,9 @@ const path = require('node:path');
 const test = require('node:test');
 const Database = require('better-sqlite3');
 const tar = require('tar');
+const bcrypt = require('bcrypt');
 
+const { createApp } = require('../src/app');
 const { initializeDatabase } = require('../src/db');
 const { loadBackupConfig } = require('../src/backup-config');
 const { ContentService } = require('../src/services/content-service');
@@ -26,12 +28,66 @@ function createConfig(runtimeRoot) {
     databasePath: path.join(dataDir, 'admin.sqlite3'),
     contentDir: path.join(runtimeRoot, 'content'),
     uploadsDir: path.join(runtimeRoot, 'uploads'),
+    labStorageDir: path.join(runtimeRoot, 'lab-storage'),
+    labBaseUrl: 'http://localhost/lab',
     backupDir: path.join(runtimeRoot, 'backups'),
     backupRetentionCount: 3,
     backupExcludeZip: false,
     backupEncryptionPassword: '',
     contentMaxBytes: 64 * 1024,
   };
+}
+
+async function seedLabProject(config) {
+  const database = initializeDatabase(config);
+  const slug = 'backup-round-trip-lab';
+  const indexBody = '<!doctype html><meta charset="utf-8"><h1>LAB_BACKUP_ROUND_TRIP</h1>';
+  const projectDirectory = path.join(config.labStorageDir, slug);
+  await fs.mkdir(projectDirectory, { recursive: true });
+  await fs.writeFile(path.join(projectDirectory, 'index.html'), indexBody, 'utf8');
+  database.prepare(`
+    INSERT INTO lab_projects (
+      slug, title, description, original_filename, is_visible, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 1, ?, ?)
+  `).run(
+    slug,
+    '备份往返小作坊',
+    '验证小作坊唯一解压产物能够完整恢复。',
+    'backup-round-trip.zip',
+    '2026-08-26T00:00:00.000Z',
+    '2026-08-26T00:00:00.000Z',
+  );
+  database.close();
+  return { slug, indexBody, projectDirectory };
+}
+
+async function openLabPage(config, slug) {
+  const context = createApp({
+    nodeEnv: 'test',
+    host: '127.0.0.1',
+    port: 3001,
+    sessionSecret: crypto.randomBytes(48).toString('base64url'),
+    adminPasswordHash: await bcrypt.hash('backup-round-trip-password', 4),
+    totpEncryptionKey: crypto.randomBytes(32),
+    dataDir: config.dataDir,
+    databasePath: config.databasePath,
+    contentDir: config.contentDir,
+    uploadsDir: config.uploadsDir,
+    labStorageDir: config.labStorageDir,
+    labBaseUrl: config.labBaseUrl,
+    siteRoot: path.join(path.dirname(config.dataDir), 'site'),
+  });
+  const server = await new Promise((resolve) => {
+    const instance = context.app.listen(0, '127.0.0.1', () => resolve(instance));
+  });
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/lab/${slug}/`);
+    return { status: response.status, body: await response.text() };
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    context.sessionStore.close();
+    context.database.close();
+  }
 }
 
 async function seedStorage(config) {
@@ -157,6 +213,82 @@ test('默认备份包含ZIP，开启排除后保留清单元数据并在恢复�
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
     await fs.rm(freshRoot, { recursive: true, force: true });
+  }
+});
+
+test('小作坊解压产物真实备份恢复且瞬时目录不进入归档', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-lab-backup-round-trip-'));
+  const config = createConfig(runtimeRoot);
+  try {
+    const seeded = await seedStorage(config);
+    const labProject = await seedLabProject(config);
+    const pendingDirectory = path.join(config.labStorageDir, '.pending-x');
+    const deletedDirectory = path.join(config.labStorageDir, '.deleted-y');
+    await fs.mkdir(pendingDirectory, { recursive: true });
+    await fs.mkdir(deletedDirectory, { recursive: true });
+    await fs.writeFile(path.join(pendingDirectory, 'partial.html'), 'PENDING_MUST_NOT_BACK_UP', 'utf8');
+    await fs.writeFile(path.join(deletedDirectory, 'removed.html'), 'DELETED_MUST_NOT_BACK_UP', 'utf8');
+
+    const backup = await createBackup(config, { now: new Date('2026-08-26T00:00:00.000Z') });
+    assert.ok(backup.manifest.files.some(
+      (file) => file.path === `lab-storage/${labProject.slug}/index.html`,
+    ));
+    assert.ok(backup.manifest.files.every(
+      (file) => !file.path.startsWith('lab-storage/.pending-')
+        && !file.path.startsWith('lab-storage/.deleted-'),
+    ));
+    assert.deepEqual(backup.manifest.excluded, [], '瞬时目录不得成为manifest.excluded条目。');
+
+    const unpacked = path.join(runtimeRoot, 'unpacked-lab-backup');
+    await fs.mkdir(unpacked);
+    await tar.x({ cwd: unpacked, file: backup.archivePath, strict: true });
+    assert.equal(
+      await fs.readFile(path.join(unpacked, 'lab-storage', labProject.slug, 'index.html'), 'utf8'),
+      labProject.indexBody,
+    );
+    assert.equal(
+      await fs.stat(path.join(unpacked, 'lab-storage', '.pending-x')).then(() => true).catch(() => false),
+      false,
+    );
+    assert.equal(
+      await fs.stat(path.join(unpacked, 'lab-storage', '.deleted-y')).then(() => true).catch(() => false),
+      false,
+    );
+
+    const damaged = new Database(config.databasePath);
+    damaged.exec('DELETE FROM works; DELETE FROM notes; DELETE FROM lab_projects;');
+    damaged.close();
+    await fs.rm(path.join(config.contentDir, 'works'), { recursive: true, force: true });
+    await fs.rm(path.join(config.contentDir, 'notes'), { recursive: true, force: true });
+    await fs.rm(config.uploadsDir, { recursive: true, force: true });
+    await fs.rm(labProject.projectDirectory, { recursive: true, force: true });
+
+    await restoreBackup(config, backup.archivePath, { force: true });
+
+    const recovered = new Database(config.databasePath, { readonly: true });
+    try {
+      assert.equal(recovered.prepare('SELECT title FROM works').get().title, '待恢复作品');
+      assert.equal(recovered.prepare('SELECT title FROM notes').get().title, '待恢复日记');
+      assert.equal(recovered.prepare('SELECT slug FROM lab_projects').get().slug, labProject.slug);
+    } finally {
+      recovered.close();
+    }
+    assert.match(
+      await fs.readFile(path.join(config.contentDir, ...seeded.work.markdown_path.split('/')), 'utf8'),
+      /作品正文必须完整恢复/,
+    );
+    assert.match(
+      await fs.readFile(path.join(config.contentDir, ...seeded.note.markdown_path.split('/')), 'utf8'),
+      /日记正文必须完整恢复/,
+    );
+    assert.equal(await fs.readFile(path.join(config.uploadsDir, 'proof.txt'), 'utf8'), 'uploaded-file-proof\n');
+    assert.equal(await fs.readFile(path.join(labProject.projectDirectory, 'index.html'), 'utf8'), labProject.indexBody);
+
+    const labPage = await openLabPage(config, labProject.slug);
+    assert.equal(labPage.status, 200);
+    assert.equal(labPage.body, labProject.indexBody);
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
   }
 });
 

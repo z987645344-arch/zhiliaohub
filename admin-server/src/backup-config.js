@@ -36,6 +36,7 @@ function loadBackupConfig(overrides = {}) {
     databasePath: overrides.databasePath || path.join(dataDir, 'admin.sqlite3'),
     contentDir: overrides.contentDir || resolveLocalPath(process.env.CONTENT_DIR, 'content'),
     uploadsDir: overrides.uploadsDir || resolveLocalPath(process.env.UPLOAD_DIR, 'uploads'),
+    labStorageDir: overrides.labStorageDir || resolveLocalPath(process.env.LAB_STORAGE_DIR, 'lab-storage'),
     backupDir: overrides.backupDir || resolveLocalPath(process.env.BACKUP_DIR, 'backups'),
     backupRetentionCount: positiveInteger(
       overrides.backupRetentionCount ?? process.env.BACKUP_RETENTION_COUNT,

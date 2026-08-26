@@ -341,9 +341,10 @@ npm run restore -- --archive backups/pre-restore-20260812T010203456Z.tar.gz --fo
 
 ### 技术细节与已知边界
 
-- 一份备份默认包含：SQLite 一致性快照、`content/works/`、`content/notes/`、`uploads/` 全部文件。设置 `BACKUP_EXCLUDE_ZIP=true` 后，格式2的 `manifest.json` 在 `files` 中记录入包文件，在 `excluded` 中记录未入包ZIP；两类都包含相对路径、字节数与SHA-256。恢复器兼容格式1旧归档；对格式2会校验排除项只能位于 `uploads/` 且扩展名为ZIP，归档里实际夹带排除项或出现其他未声明文件都会拒绝恢复。
+- 一份备份默认包含：SQLite 一致性快照、`content/works/`、`content/notes/`、`uploads/` 全部文件和 `lab-storage/` 中已完成的小作坊项目。`.pending-*`、`.deleted-*` 瞬时目录不会入包，也不会混入只供上传ZIP排除使用的 `manifest.excluded`。设置 `BACKUP_EXCLUDE_ZIP=true` 后，格式2的 `manifest.json` 在 `files` 中记录入包文件，在 `excluded` 中记录未入包ZIP；两类都包含相对路径、字节数与SHA-256。恢复器兼容格式1旧归档；对格式2会校验排除项只能位于 `uploads/` 且扩展名为ZIP，归档里实际夹带排除项或出现其他未声明文件都会拒绝恢复。
 - `BACKUP_RETENTION_COUNT` 默认 3；`BACKUP_DIR` 可指向服务器上的独立持久目录。`PRE_RESTORE_RETENTION_COUNT` 默认仍为3，与常规备份独立计数。
-- **`lab-storage/`（小作坊解压出来的项目文件）目前不在备份范围内**，需要另行决定策略。
+- 小作坊单项目默认最多500个ZIP条目、解压后100MiB；常规备份保留3份，因此一个达到上限且难以压缩的项目最多可使常规备份总占用增长约300MiB。应随小作坊使用量监控 `BACKUP_DIR` 和副本目的地容量。
+- 本能力上线前生成的旧归档没有 `lab-storage/`，无法凭空恢复当时的小作坊文件；恢复器仍可读取这些归档，并保留目标机现有的 `lab-storage/`。只有本能力启用后新生成并验证过的归档才构成小作坊恢复来源。
 - SQLite 快照里也包含备份时尚未过期的登录会话记录。灾难恢复后如果想强制注销所有旧登录，换一个新的高强度 `SESSION_SECRET` 再启动服务即可，旧 Cookie 会全部失效。
 - 目前没有备份成功/失败的外部告警，也没有做过服务器级别的灾难恢复演练。
 
@@ -372,6 +373,7 @@ npm run restore -- --archive backups/pre-restore-20260812T010203456Z.tar.gz --fo
 - 作品全部新字段新增/编辑后可从上传目录发布到四个前台媒体目录，替换或删除引用后会清理失效的前台副本；前台模板按作品数据条件引用封面、主媒体、辅图与下载文件。
 - 加密备份在原始SQLite、Markdown和上传数据被破坏后完整恢复，错误密码拒绝解密。
 - 同一上传池含ZIP和非ZIP时，默认配置确认ZIP实际入包且 `manifest.excluded` 为空；启用 `BACKUP_EXCLUDE_ZIP` 后确认ZIP内容不入包但路径、大小、SHA-256进入 `manifest.excluded`，恢复返回明确补齐提示，并验证格式2恢复器继续兼容格式1旧清单。
+- 小作坊项目的 `index.html` 在备份后被真实删除，再经恢复重新出现在磁盘并可从 `/lab/<slug>/` 取得相同内容；`.pending-*`、`.deleted-*` 瞬时目录不进入归档，SQLite、作品/日记Markdown和普通上传文件在同一往返中继续正常恢复。
 - 默认备份保留策略连续生成4份后只留下最近3份归档。
 - 恢复前自动创建快照；误选旧归档后可用该快照退回，作品标题/摘要、Markdown正文与上传文件内容逐项核对一致。
 - 恢复前快照创建失败时中止恢复，SQLite、Markdown与上传文件全部保持原样。
@@ -402,6 +404,6 @@ npm run restore -- --archive backups/pre-restore-20260812T010203456Z.tar.gz --fo
 - 上传ZIP默认进入常规备份和恢复前快照；只有设置 `BACKUP_EXCLUDE_ZIP=true` 时才由用户在本地另行保存，届时新manifest会留存补齐所需的原路径、大小和SHA-256，恢复后必须按提示人工补齐。
 - 恢复前快照只防"选错归档版本"和"恢复中途失败"，它与常规备份写在同一个 `BACKUP_DIR`；整个目录或整块磁盘损坏时两者会一起丢失。
 - `BACKUP_MIRROR_DIR` 目前只能指向同一台机器上的另一个目录，是**模拟**而非真正的异地容灾；接入真实远程存储前，服务器整机损毁仍会同时失去主备份与副本。
-- `lab-storage/` 仍不在备份范围内。
+- `lab-storage/` 已随常规备份和恢复前快照归档并可直接还原，但仍缺少真正异地副本、容量告警和服务器级恢复演练。
 - 不包含知天代码，不共享知天账号、会话、数据库或部署配置。
 - 不包含安卓App代码；`zhiliaohub_app v0.3` 在独立仓库维护，本仓库只维护服务端协议与最低兼容说明。

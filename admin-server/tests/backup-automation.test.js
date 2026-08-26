@@ -31,6 +31,7 @@ function createConfig(runtimeRoot, overrides = {}) {
     databasePath: path.join(dataDir, 'admin.sqlite3'),
     contentDir: path.join(runtimeRoot, 'content'),
     uploadsDir: path.join(runtimeRoot, 'uploads'),
+    labStorageDir: path.join(runtimeRoot, 'lab-storage'),
     backupDir: path.join(runtimeRoot, 'backups'),
     backupRetentionCount: 3,
     backupExcludeZip: false,
