@@ -128,6 +128,13 @@ function createApp(overrides = {}) {
       },
     },
   }));
+  app.get('/health', (_request, response) => {
+    response.json({
+      status: 'ok',
+      storage: 'sqlite+markdown',
+      deployment: config.isProduction ? 'production' : 'local-only',
+    });
+  });
   app.use(express.urlencoded({ extended: false, limit: '1mb' }));
   app.use(express.json({ limit: '1mb' }));
   app.use(session({
@@ -294,14 +301,6 @@ function createApp(overrides = {}) {
     index: false,
     redirect: false,
   }));
-
-  app.get('/health', (_request, response) => {
-    response.json({
-      status: 'ok',
-      storage: 'sqlite+markdown',
-      deployment: config.isProduction ? 'production' : 'local-only',
-    });
-  });
 
   app.post('/api/feedback/comments', feedbackLimiter, (request, response, next) => {
     const accepted = {

@@ -40,6 +40,12 @@ async function sha256(filePath) {
   return hash.digest('hex');
 }
 
+function isAtomicContentTemporaryFile(relativePath) {
+  const filename = path.posix.basename(relativePath);
+  return /^[^/]+\.tmp-\d+-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(filename);
+}
+
 async function collectFiles(directory, relativeRoot = '') {
   const collected = [];
   for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
@@ -47,7 +53,7 @@ async function collectFiles(directory, relativeRoot = '') {
     const absolutePath = path.join(directory, entry.name);
     if (entry.isSymbolicLink()) throw new Error(`Backup refuses symbolic link: ${relativePath}`);
     if (entry.isDirectory()) collected.push(...await collectFiles(absolutePath, relativePath));
-    if (entry.isFile() && entry.name !== '.gitkeep' && !entry.name.includes('.tmp-')) {
+    if (entry.isFile() && entry.name !== '.gitkeep') {
       collected.push({ absolutePath, relativePath });
     }
   }
@@ -191,12 +197,20 @@ async function createBackup(config, options = {}) {
       path.join(config.contentDir, 'works'),
       path.join(stagingRoot, 'content', 'works'),
       'content/works',
+      {
+        exclude: isAtomicContentTemporaryFile,
+        recordExcluded: false,
+      },
     );
     archivePaths.push(...works.files);
     const notes = await copyBackupDirectory(
       path.join(config.contentDir, 'notes'),
       path.join(stagingRoot, 'content', 'notes'),
       'content/notes',
+      {
+        exclude: isAtomicContentTemporaryFile,
+        recordExcluded: false,
+      },
     );
     archivePaths.push(...notes.files);
     const uploads = await copyBackupDirectory(

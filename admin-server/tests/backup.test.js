@@ -292,6 +292,65 @@ test('小作坊解压产物真实备份恢复且瞬时目录不进入归档', as
   }
 });
 
+test('仅内容原子临时文件被排除，合法的tmp命名在小作坊与其他目录仍完整入档', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-tmp-scope-'));
+  const config = createConfig(runtimeRoot);
+  const atomicWorkName = 'draft.md.tmp-4321-11111111-2222-4333-8444-555555555555';
+  const atomicNoteName = 'note.md.tmp-9876-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const legitimateContentName = 'release.tmp-preview.md';
+  const legitimateLabName = 'bundle.tmp-release.js';
+  const legitimateUploadName = 'asset.tmp-release.bin';
+  try {
+    await seedStorage(config);
+    const labProject = await seedLabProject(config);
+    await fs.writeFile(path.join(config.contentDir, 'works', atomicWorkName), 'ATOMIC_WORK_TEMP', 'utf8');
+    await fs.writeFile(path.join(config.contentDir, 'notes', atomicNoteName), 'ATOMIC_NOTE_TEMP', 'utf8');
+    await fs.writeFile(
+      path.join(config.contentDir, 'works', legitimateContentName),
+      'LEGITIMATE_CONTENT_TMP_NAME',
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(labProject.projectDirectory, legitimateLabName),
+      'LEGITIMATE_LAB_TMP_NAME',
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(config.uploadsDir, legitimateUploadName),
+      'LEGITIMATE_UPLOAD_TMP_NAME',
+      'utf8',
+    );
+
+    const backup = await createBackup(config, { now: new Date('2026-08-27T00:00:00.000Z') });
+    const archivedPaths = new Set(backup.manifest.files.map((file) => file.path));
+    assert.equal(archivedPaths.has(`content/works/${atomicWorkName}`), false);
+    assert.equal(archivedPaths.has(`content/notes/${atomicNoteName}`), false);
+    assert.ok(archivedPaths.has(`content/works/${legitimateContentName}`));
+    assert.ok(archivedPaths.has(`lab-storage/${labProject.slug}/${legitimateLabName}`));
+    assert.ok(archivedPaths.has(`uploads/${legitimateUploadName}`));
+    assert.deepEqual(backup.manifest.excluded, [], '原子临时文件不是可恢复源文件，不写入排除清单。');
+
+    const unpacked = path.join(runtimeRoot, 'unpacked-tmp-scope');
+    await fs.mkdir(unpacked);
+    await tar.x({ cwd: unpacked, file: backup.archivePath, strict: true });
+    assert.equal(
+      await fs.readFile(
+        path.join(unpacked, 'lab-storage', labProject.slug, legitimateLabName),
+        'utf8',
+      ),
+      'LEGITIMATE_LAB_TMP_NAME',
+    );
+    assert.equal(
+      await fs.stat(path.join(unpacked, 'content', 'works', atomicWorkName))
+        .then(() => true)
+        .catch(() => false),
+      false,
+    );
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
 test('格式2恢复器继续接受没有excluded字段的旧格式1清单', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-v1-manifest-'));
   try {

@@ -219,6 +219,20 @@ test('/health根据运行环境准确区分本地与生产部署', async (t) => 
   });
 });
 
+test('/health无Cookie请求不创建会话也不下发Cookie', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const sessionsBefore = runtime.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count;
+
+  const response = await fetch(`${runtime.baseUrl}/health`);
+  assert.equal(response.status, 200);
+  await response.json();
+
+  const sessionsAfter = runtime.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count;
+  assert.equal(response.headers.get('set-cookie'), null);
+  assert.equal(sessionsAfter, sessionsBefore);
+});
+
 test('密码错误会被明确拒绝，正确密码会进入首次 TOTP 绑定', async (t) => {
   const runtime = await createRuntime();
   t.after(() => runtime.close());
