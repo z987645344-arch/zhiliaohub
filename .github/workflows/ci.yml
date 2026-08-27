@@ -22,6 +22,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: admin-server/package-lock.json
+
+      - name: Install admin-server dependencies
+        working-directory: admin-server
+        run: npm ci
+
+      - name: Run admin-server tests
+        working-directory: admin-server
+        run: npm test
 
       - name: Check JavaScript syntax
         shell: bash
