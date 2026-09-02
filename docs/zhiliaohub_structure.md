@@ -1,6 +1,8 @@
 # 知了hub（zhiliaohub）技术架构
 > 记录当前已经存在的技术结构、文件职责和明确边界；未来方案只放在“预留演进”章节，不视为已实现。
-> **最后更新：2026-08-25**（校准最新Git标签 v2.5、已确认生产基线 v2.3 与配套 App v0.3；补充ZIP默认入备份、可选排除时的manifest留痕与恢复补齐机制，以及每日UTC+8固定时钟调度）
+> **最后更新：2026-09-02**（最新Git标签 v2.8；生产运行版本只有统筹师看得到，本文不作断言；配套 App v0.3.1。本轮改写 5.5 与 9.7：CI 自 v2.8 起真跑 `npm test`；生产拓扑由 Cloudflare 代理改为单公网 IP + `zhiliao-gateway` 唯一前端，知了hub 的 Nginx 降级为只绑回环的纯 HTTP 后端）
+>
+> ⚠️ **9.7 描述的 gateway 拓扑目前是「仓库已完成」，不是「生产已生效」。** 新机部署与线上验证由统筹师执行，本文不得据仓库状态宣称已上线。
 
 ---
 
@@ -24,7 +26,7 @@ zhiliaohub/
 ├── docker-compose.yml          # 正式双服务部署拓扑（后台 + Nginx）
 ├── .env.example               # Compose层非密钥变量模板；真实根目录.env不入库
 ├── deploy/
-│   └── nginx.conf             # HTTPS静态站点、后台反代与小作坊独立主机模板
+│   └── nginx.conf             # 回环HTTP后端模板：静态站点、后台反代与小作坊主机；TLS由gateway终止
 ├── index.html                  # 首页、都市雨巷插画与 Canvas 雨雾开屏
 ├── works.html                  # 后台生成的三分类一级索引（当前8条）
 ├── works-category-program.html # “程序”分类全部作品二级页
@@ -184,7 +186,11 @@ zhiliaohub/
 - 对仓库内全部已提交的 `.js` 文件逐个运行 `node --check`，因此会覆盖 `admin-server/` 源码和测试文件的语法。
 - 扫描全部 HTML 的 `href` 与 `src`，忽略片段和外部协议，确认本地相对引用目标存在。
 
-工作流只在面向 `main` 的 push 和 pull request 上触发，不启动浏览器，也不会安装后台依赖或执行端到端测试、视觉回归、性能测试和部署。后台完整测试当前在 `admin-server/` 中通过 `npm test` 本地执行；具体覆盖清单维护在 `admin-server/README.md`，是否纳入CI需要后续单独决定。
+自 `v2.8`（2026-08-27）起，CI 还会按 `admin-server/package-lock.json` 执行 `npm ci`，随后运行**未经裁剪的完整 `npm test`**；测试失败不会被跳过或降级为警告。此前 CI 长期只做上述两类静态检查、`npm test` 命中 0 次，属于「假绿」。
+
+工作流只在面向 `main` 的 push 和 pull request 上触发，不启动浏览器，也不做容器、Nginx、端到端、视觉回归、性能测试和部署。具体覆盖清单维护在 `admin-server/README.md`。
+
+⚠️ **绿灯不是唯一的失败模式，「无灯」也是**：`v2.7`（`cbf8de4`）的运行自 2026-08-26 起恒为 `queued`、从未开始，该标签因此没有任何 CI 结果（其内容由后继 `v2.8` 的绿灯间接覆盖）。目前没有任何机制会提示「某次运行永远没跑完」。
 
 ---
 
@@ -267,7 +273,7 @@ index.html 额外 defer 加载 js/particles.js
 | 当前连接 | 知天详情页只有未开放按钮，不包含正式地址 | 尚未通过本仓库配置对外地址 |
 | 访问层关系 | 知了hub主站、后台和API已通过自身生产域名组织 | 知天继续使用自身独立部署；尚未由本仓库提供正式入口 |
 
-知了hub 的Compose/Nginx反向代理拓扑已作为正式配置进入仓库并用于真实域名和HTTPS部署。该事实不改变知天的独立边界：本仓库仍不代理、托管或共享知天的代码、账号和数据。两个项目的协作上下文必须分别依据对应仓库的项目记忆恢复；Claude Code 指挥师需要先明确目标仓库，再按任务性质选择执行 agent，不能把一个项目的状态或授权带入另一个项目。
+知了hub 的Compose/Nginx反向代理拓扑是仓库中的正式配置。**其中「Cloudflare代理 + 本项目Nginx自行终止HTTPS」那一版曾真实部署于旧服务器；仓库当前的 gateway 版本尚未生产生效**，两者不可混为一谈。该事实不改变知天的独立边界：本仓库仍不代理、托管或共享知天的代码、账号和数据。两个项目的协作上下文必须分别依据对应仓库的项目记忆恢复；指挥师每项目一名、只管本项目，不能把一个项目的状态或授权带入另一个项目（权威分工见仓库外的《团队角色条例》）。
 
 ---
 
@@ -375,23 +381,28 @@ SQLite当前包含：
 
 **备份默认包含ZIP；如需排除，设置 `BACKUP_EXCLUDE_ZIP=true`，此时恢复后需由用户从本地补齐，清单见 `manifest.excluded`。一份“静默地少了东西”的备份比没有备份更危险。**这项配置只影响 `uploads/` 下的ZIP；不改变上传池、前台下载、发布副本，也不影响 `lab-storage/` 的入包与恢复。
 
-小作坊单项目默认最多500个文件、解压后100MiB，常规归档保留3份；因此一个达到上限且难以压缩的项目最多可使常规备份总占用增长约300MiB。旧归档没有 `lab-storage/`，不能恢复当时的小作坊内容；恢复器读取这类旧包时保留目标机现有目录。容量监控和新归档恢复抽查是启用小作坊后的必要运维动作。
+小作坊单项目默认最多500个文件、解压后100MiB，常规归档保留3份；因此一个达到上限且难以压缩的项目最多可使常规备份总占用增长约300MiB。⚠️ **这 300MiB 是假设上限，不是实测值**——统筹师 2026-09-02 现场核数：现有三份归档合计 **88KB**、`lab-storage` 为 4.0K、`lab_projects` **0 行**，两者相差三个数量级。上限只在 `lab_projects` 真的有人上传后才开始有意义，引用时必须分清「实测」与「上限」。旧归档没有 `lab-storage/`，不能恢复当时的小作坊内容；恢复器读取这类旧包时保留目标机现有目录。容量监控和新归档恢复抽查是启用小作坊后的必要运维动作。
 
 跨SQLite、Markdown、上传目录和`lab-storage`不存在统一事务。SQLite在线快照本身一致，但要获得这些数据的单一恢复点，人工灾难备份应先暂停写入，最好停止服务；恢复必须在服务停止时进行。当前已实现手动备份/恢复、完整性校验、可选加密、保留策略、恢复前快照和进程内定时调度；调度器用固定UTC+8解释 `BACKUP_SCHEDULE_LOCAL_TIME`，默认每日00:00，以当天目标时刻之后是否已有常规归档去重，空目录则启动即备份。`BACKUP_MIRROR_DIR` 只会复制到同机目录，尚未实现真实异地副本、外部失败告警或服务器灾难恢复演练。
 
 ### 9.7 生产容器与反向代理
 
-仓库提供 `admin-server/Dockerfile`、`.dockerignore`、根目录 `docker-compose.yml`、根目录 `.env.example`、`deploy/nginx.conf` 和 `admin-server/deploy/README.md`。这套基线已用于真实服务器、域名和HTTPS环境；`admin-server/deploy/README.md` 现在同时记录现有生产拓扑、日常代码更新以及首次部署/迁移/灾难重建流程。
+仓库提供 `admin-server/Dockerfile`、`.dockerignore`、根目录 `docker-compose.yml`、根目录 `.env.example`、`deploy/nginx.conf` 和 `admin-server/deploy/README.md`。**这套基线的上一版（本项目Nginx自行终止HTTPS、置于Cloudflare代理之后）已在旧服务器真实运行；本节描述的 gateway 版本只是「仓库已完成」，尚未部署，不得据此宣称线上已生效。** `admin-server/deploy/README.md` 记录部署拓扑、日常代码更新以及首次部署/迁移/灾难重建流程。
 
 1. Compose包含独立的 `admin-server` 与官方Nginx服务；后台只在内部网络暴露3001端口。
 2. 后台使用 `admin-server/.env` 读取业务配置与密钥；根目录 `.env` 只保存Compose拓扑变量。两者均由服务器现场创建且不入库。
 3. SQLite数据、Markdown正文、上传文件、本地备份、小作坊站点和独立公开站点目录均通过宿主机路径持久挂载。
-4. Nginx从只读公开站点目录伺服前台，代理 `/admin`、`/api`、`/health` 与后台上传预览，并设置真实IP/协议转发头；后台固定使用 `TRUST_PROXY_HOPS=1`。
-5. **代理信任链实际是 访客 → Cloudflare → Nginx → Express，不是Nginx单层。** Cloudflare向源站发 `CF-Connecting-IP: <访客IP>`，而Nginx自身看到的 `$remote_addr` 是Cloudflare边缘IP。`deploy/nginx.conf` 在http级（第一个 `server` 块之前）用Cloudflare官方网段的 `set_real_ip_from` 加 `real_ip_header CF-Connecting-IP` 把 `$remote_addr` 还原为真实访客IP，转发出去的 `X-Forwarded-For` 末位随之也是访客IP，因此后台取最右一跳仍然正确，`TRUST_PROXY_HOPS` 保持1不变——改成2是盲信XFF，直连源站伪造该头即可绕过限流。网段必须限定而不能写 `0.0.0.0/0`：源站可被直连，无条件信任该头等于允许任意伪造。该列表需人工维护，来源见 `admin-server/deploy/README.md`。**该配置本轮新增，仅完成静态审阅，尚未执行 `nginx -t` 或线上验证。**
-6. 小作坊设计为独立HTTPS主机名和只读静态目录，不反向代理到Node；其真实DNS、证书范围及Cookie边界仍须单独完成验收。
+4. Nginx从只读公开站点目录伺服前台，代理 `/admin`、`/api`、`/health` 与后台上传预览，并设置真实IP/协议转发头；后台固定使用 `TRUST_PROXY_HOPS=1`。**本项目的 Nginx 不再终止 TLS**，TLS 只在 `zhiliao-gateway` 终止一次。
+5. **代理信任链是 访客 → zhiliao-gateway → 知了hub Nginx → Express，共两跳。** 新服务器只有一个公网 IP，四个主机名共用 443，因此由独立仓库 `zhiliao-gateway` 作唯一前端，按 `server_name` 分流。gateway 发 `X-Forwarded-For $proxy_add_x_forwarded_for`；知了hub 的 Nginx 用 `real_ip_header X-Forwarded-For` 加**单条 env 驱动**的 `set_real_ip_from ${TRUSTED_PROXY_CIDR}` 还原真实访客IP，`real_ip_recursive` 保持默认 off（取XFF末位）。还原成功后转发出去的 XFF 末位仍是访客IP，故 `TRUST_PROXY_HOPS` 保持1不变。
+   - ⚠️ **可信来源不是 `127.0.0.1`。** gateway 经宿主回环连入，报文过 docker-proxy 后本项目 Nginx 看到的是自身 Compose 网络的**桥网关地址**。`app-network` 只声明 `driver: bridge`、未固定子网，该地址会随网络重建而变，所以必须由 `.env` 注入、不得写死。
+   - ⚠️ **仍不得写 `0.0.0.0/0`**：无条件信任 XFF 等于允许任意伪造来源IP，限流可被绕过。这条道理不因换掉 Cloudflare 而改变。
+   - ⚠️ **配错不会报错。** real_ip 若未生效，Express 取到的是桥网关地址，密码/TOTP/设备认证/反馈四个限流器会合并成同一个桶而毫无提示。**验证方法是观察日志里实际记录的客户端地址，不是读配置、也不是 `nginx -t` 通过。**
+   - 原有的22条Cloudflare网段与 `real_ip_header CF-Connecting-IP` 已随本轮移除；去CF代理的依据是实测时延（中国流量一律出海，直连显著更快），CF 仅保留 DNS 托管。
+6. 小作坊仍是独立主机名和只读静态目录、不反向代理到Node；**其 HTTPS 由 gateway 提供**，本项目 Nginx 只在回环上供明文。真实DNS、证书范围及Cookie边界仍须单独完成验收。
+   - ⚠️ **四条安全承重假设，全部依赖「本项目 Nginx 只绑回环」，必须成组理解**：① 后端不再终止TLS；② 后端不再做 HTTP→HTTPS 跳转；③ `SERVER_PUBLIC_IP` 默认且必须为 `127.0.0.1`；④ `X-Forwarded-Proto` 写死为 `https`。任何一条被单独改动——尤其把绑定改回 `0.0.0.0`——都会让 `/admin` 以明文 HTTP 暴露在公网，**且站点看起来完全正常、不报任何错**。
 7. SQLite方案默认只支持单后台实例；如果未来需要多实例，必须重新讨论数据库、会话和文件存储，不能直接水平扩容。
 
-服务器公开IP、域名、宿主端口、持久目录与TLS文件位置统一通过根目录 `.env` 注入；管理员密码哈希、session/TOTP/备份密钥等只进入 `admin-server/.env`。仓库文件中不得写入真实凭据、真实IP或真实域名。路径前缀部署仍未实现，因为当前绝对路由、重定向、Cookie路径和表单地址需要先统一支持 `BASE_PATH`。
+服务器绑定地址、域名、宿主端口、持久目录与可信代理网段统一通过根目录 `.env` 注入；管理员密码哈希、session/TOTP/备份密钥等只进入 `admin-server/.env`。**本项目不再注入TLS文件位置**——证书只由 `zhiliao-gateway` 持有，`TLS_CERT_PATH` / `TLS_KEY_PATH` 与对应挂载已随 gateway 拓扑移除。仓库文件中不得写入真实凭据、真实IP或真实域名。路径前缀部署仍未实现，因为当前绝对路由、重定向、Cookie路径和表单地址需要先统一支持 `BASE_PATH`。
 
 **剩余备份缺口：当前只有服务器本地归档和同机目录副本。** SQLite、Markdown、上传池与 `lab-storage` 已进入同一恢复链路；真实异地副本、备份失败外部告警、加密密码托管、容量监控和服务器恢复演练仍须补齐。在这些能力完成前，不能把本地归档视为完整灾难恢复方案。
 
@@ -446,7 +457,7 @@ SQLite当前包含：
 
 ### 11.5 生产域名与反向代理
 
-**正式仓库配置与真实主站部署均已实现。** 根目录 `docker-compose.yml` 与 `deploy/nginx.conf` 描述后台、主站静态文件和小作坊静态主机拓扑；`admin-server/deploy/README.md` 说明两层 `.env`、目录权限、日常更新及重新部署步骤。主站已通过 `https://zhiliaohub.com` 提供服务，真实服务器路径、端口、密钥和证书位置仍只存在于服务器现场文件。知了hub 与知天继续使用独立服务、账号和数据边界。
+**正式仓库配置已实现；主站也确实在线，但两者当前不是同一套配置。** 根目录 `docker-compose.yml` 与 `deploy/nginx.conf` 描述后台、主站静态文件和小作坊主机拓扑，现已改为 gateway 之后的回环HTTP后端；`admin-server/deploy/README.md` 说明两层 `.env`、目录权限、日常更新及重新部署步骤。⚠️ **主站经 `https://zhiliaohub.com` 提供服务，靠的是旧服务器上那一版配置；仓库里的 gateway 版本尚未部署，不得把「仓库已完成」读成「线上已生效」。** 生产实际运行的版本只有统筹师看得到。真实服务器路径、端口、密钥和证书位置仍只存在于服务器现场文件。知了hub 与知天继续使用独立服务、账号和数据边界。
 
 ### 11.6 自动化验证扩展
 
@@ -468,7 +479,7 @@ SQLite当前包含：
 
 ## 十二、架构变更规则
 
-以下事项属于架构变化，必须先由用户与 Claude Code 指挥师讨论，再由指挥师按任务性质选择执行 agent：
+以下事项属于架构变化，必须先由用户、统筹师与本项目指挥师确认，再由指挥师写成执行指令交程序员实施：
 
 - 引入或替换前端框架、构建工具、包管理器。
 - 新增后端、数据库、第三方表单或分析服务。
@@ -484,7 +495,7 @@ SQLite当前包含：
 
 | 文档 | 只回答什么 |
 |------|------------|
-| `docs/claude_skill.md` | Claude Code 指挥师如何工作、如何选择执行 agent、如何写指令与验收 |
+| `docs/claude_skill.md` | **执行 agent** 的工作手册：工作边界、跨仓库协作、编码与内容规范、验证标准、存档要求。指挥师侧的工作方法自 `v2.1.2` 起已移出本仓库 |
 | `docs/claude_memory.md` | 项目现在是什么状态、当前主线和下一步是什么 |
 | `docs/zhiliaohub_structure.md` | 当前技术结构、边界以及未来演进的决策位置 |
 | `CHANGELOG.md` | 过去每轮真正发生了什么、为什么这样决定 |

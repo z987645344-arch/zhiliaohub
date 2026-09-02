@@ -3,6 +3,22 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-02**
 
+## 2026-09-02 为唯一前置 gateway 收紧知了hub源站拓扑（实施方现场记录）
+
+- `deploy/nginx.conf` **+17/-73**：移除源站 TLS、443监听、HTTP→HTTPS 跳转和22条Cloudflare网段，改为两个纯HTTP server、单条 `TRUSTED_PROXY_CIDR` 与 XFF 最右项还原；两个Node反代位置固定发送 `X-Forwarded-Proto=https`，防止生产 Secure session Cookie 被静默抑制。
+- `docker-compose.yml` **+3/-11**：删除宿主443映射与两个TLS文件挂载，将HTTP绑定默认收紧到 `127.0.0.1`，并把 `TRUSTED_PROXY_CIDR` 同步加入Nginx环境与 `NGINX_ENVSUBST_FILTER` 白名单。
+- `.env.example` **+7/-5**：确立回环绑定为安全承重项，新增现场确定的信任网段占位，标明TLS证书路径与HTTPS宿主端口已转交gateway。
+- `.env.local.example` **+5/-10**：为了使本轮要求的本机Compose验证仍能使用生产同源配置，移除本地TLS/8443变量，改为回环HTTP 8080和仅供本地语法/路由验证的最小信任占位。
+- `admin-server/.env.example` **+5/-5**：将恢复探针示例改为直连hub Nginx回环HTTP `/health`，明确禁止指向gateway或公开域名。
+- `admin-server/README.md` **+1/-1**：同步恢复章节的HTTP回环探针地址与gateway禁用语义。
+- `admin-server/deploy/README.md` **+32/-34**：重写目标gateway链路、现场信任网段推导与真实分桶验证，集中列出“无TLS/无跳转/只绑回环/固定HTTPS协议头”四条不可拆分的安全假设，并把真实密码+TOTP完整登录列为上线必验项。
+- `admin-server/deploy/lab-subdomain.md` **+7/-11**：移除与新拓扑冲突的hub侧TLS终止与证书配置示例，改为gateway提供公网HTTPS、hub Nginx只在回环提供明文静态内容；保留真实子域名Cookie/CSP/MIME/缓存/下载行为仍待浏览器验收的边界。
+- `docs/claude_memory.md` **+14/-3**：由指挥师按常驻授权维护，本轮实施方未改动其内容，仅按指令随本轮一并存档。
+- `docs/zhiliaohub_structure.md` **+24/-13**：由指挥师按常驻授权维护，本轮实施方未改动其内容；其gateway拓扑、CI现状与备份体积实测/假设上限说明随本轮一并存档。
+- `CHANGELOG.md` **+16/-0**：新增本条实施现场记录，不写版本号、不声称生产已生效。
+- **本场验证**：基线与改动后完整 `npm test` 均为 **91/91通过、0失败**；`npm run check`、`git diff --check`、`docker compose --env-file .env.local.example config --quiet` 通过。官方 `nginx:stable-alpine` 在一次性隔离网络中渲染后 `nginx -t` 成功；实际渲染结果是1条 `set_real_ip_from 127.0.0.1/32`、2个 `listen 80`、2条固定 `X-Forwarded-Proto https`，无TLS指令或未替换的信任网段变量。
+- **未验证边界**：本轮不连接服务器、不部署；真实gateway、生产桥网关网段、真实客户端IP还原、真实限流分桶、真实密码+TOTP会话与线上行为均未验证。仓库配置准备完成不等于生产已生效。
+
 ## 2026-09-02 恢复操作补齐停服三重证据与无回退点双重确认（交接实施记录）
 
 - **本轮从他人未完成的工作现场接手**：接手时 `HEAD=69a4965`、`origin/main..main` 为空，工作区已有 7 个未提交文件。接手后的独立基线为完整 `npm test` **86/86 通过**。前一执行者留下的 `--confirm-service-stopped`、停服探测框架和“旧归档缺少 `lab-storage` 且数据库仍有小作坊记录”警告均由本轮重新查阅代码与测试核对；其中原 TCP 探测在生产 Compose 拓扑下无法区分“服务已停”和“探错地址”，本轮没有沿用该不安全结论。
