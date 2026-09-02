@@ -2,6 +2,7 @@
 // "no database yet" and "a database is there but cannot be read".
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -42,6 +43,27 @@ function createConfig(runtimeRoot, overrides = {}) {
     contentMaxBytes: 64 * 1024,
     ...overrides,
   };
+}
+
+async function restoreWithStoppedService(config, archivePath) {
+  const server = http.createServer((request, response) => {
+    response.setHeader('Server', 'nginx');
+    response.writeHead(request.url === '/health' ? 503 : 404);
+    response.end();
+  });
+  const port = await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve(server.address().port));
+  });
+  try {
+    return await restoreBackup(
+      { ...config, restoreProbeUrl: `http://127.0.0.1:${port}/health` },
+      archivePath,
+      { force: true, confirmServiceStopped: true },
+    );
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
 }
 
 async function seedStorage(config, title = '定时备份验证作品') {
@@ -107,7 +129,7 @@ test('数据库存在但无法读取时恢复中止，不会被当成全新机�
     const before = await fs.readdir(targetConfig.databasePath);
 
     await assert.rejects(
-      restoreBackup(targetConfig, archive.archivePath, { force: true }),
+      restoreWithStoppedService(targetConfig, archive.archivePath),
       /Restore aborted: .*is not a regular file/,
       '读不出来的当前数据库不得被静默当成空机器。',
     );
@@ -242,7 +264,7 @@ test('备份生成后被复制到模拟异地目录，且该副本可独立完�
     database.close();
     await fs.rm(path.join(config.contentDir, 'works'), { recursive: true, force: true });
 
-    const restored = await restoreBackup(config, mirrored, { force: true });
+    const restored = await restoreWithStoppedService(config, mirrored);
     assert.ok(restored.manifest.createdAt);
     const recovered = new Database(config.databasePath, { readonly: true });
     try {
@@ -283,7 +305,7 @@ test('副本同步失败不影响本地备份本身，也不会让备份整体�
     const database = new Database(config.databasePath);
     database.exec('DELETE FROM works;');
     database.close();
-    await restoreBackup(config, backup.archivePath, { force: true });
+    await restoreWithStoppedService(config, backup.archivePath);
     const recovered = new Database(config.databasePath, { readonly: true });
     try {
       assert.equal(recovered.prepare('SELECT title FROM works').get().title, '同步失败验证作品');

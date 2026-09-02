@@ -10,15 +10,48 @@ function option(name) {
 
 const archive = option('--archive');
 const force = process.argv.includes('--force');
+const confirmServiceStopped = process.argv.includes('--confirm-service-stopped');
 const skipPreRestoreSnapshot = process.argv.includes('--skip-pre-restore-snapshot');
+const confirmNoPreRestoreSnapshot = process.argv.includes('--confirm-no-pre-restore-snapshot');
+const snapshotConfirmationMismatch = skipPreRestoreSnapshot !== confirmNoPreRestoreSnapshot;
 
-if (!archive || !force) {
-  console.error('用法：node scripts/restore.js --archive <备份归档路径> --force [--skip-pre-restore-snapshot]');
+if (!archive || !force || !confirmServiceStopped || snapshotConfirmationMismatch) {
+  console.error(
+    '用法：node scripts/restore.js --archive <备份归档路径> --force '
+    + '--confirm-service-stopped [--skip-pre-restore-snapshot '
+    + '--confirm-no-pre-restore-snapshot]',
+  );
+  if (!confirmServiceStopped) {
+    console.error(
+      '恢复被拒绝：缺少 --confirm-service-stopped。请先停止后台服务，再用该参数声明已停服；'
+      + '恢复器仍会继续执行本机 Nginx 健康地址、SQLite -shm 与独占锁三道探测。',
+    );
+  }
+  if (skipPreRestoreSnapshot && !confirmNoPreRestoreSnapshot) {
+    console.error(
+      '恢复被拒绝：--skip-pre-restore-snapshot 必须与 '
+      + '--confirm-no-pre-restore-snapshot 同时给出。',
+    );
+  }
+  if (confirmNoPreRestoreSnapshot && !skipPreRestoreSnapshot) {
+    console.error(
+      '恢复被拒绝：--confirm-no-pre-restore-snapshot 只能与 '
+      + '--skip-pre-restore-snapshot 同时使用。',
+    );
+  }
   process.exitCode = 1;
 } else {
-  restoreBackup(loadBackupConfig(), path.resolve(archive), { force: true, skipPreRestoreSnapshot })
+  restoreBackup(loadBackupConfig(), path.resolve(archive), {
+    force: true,
+    confirmServiceStopped: true,
+    skipPreRestoreSnapshot,
+    confirmNoPreRestoreSnapshot,
+  })
     .then(({ manifest, preRestoreSnapshot, excludedFiles, warnings }) => {
-      if (preRestoreSnapshot.skipped) {
+      if (preRestoreSnapshot.explicitlySkipped) {
+        console.warn('⚠️ 严重警告：本次恢复已按独立双重确认跳过恢复前快照。');
+        console.warn('本次恢复没有回退点；如果恢复失败或选错归档，无法通过恢复前快照回滚。');
+      } else if (preRestoreSnapshot.skipped) {
         console.warn(`未创建恢复前快照（${preRestoreSnapshot.reason}）；本次恢复没有回退点。`);
       } else {
         console.log(`恢复前快照已创建：${preRestoreSnapshot.archivePath}`);

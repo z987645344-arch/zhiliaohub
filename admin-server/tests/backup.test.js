@@ -1,13 +1,19 @@
 // Proves backup integrity, encrypted restore, destructive recovery and retention cleanup.
 const assert = require('node:assert/strict');
+const { execFile } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { promisify } = require('node:util');
 const Database = require('better-sqlite3');
 const tar = require('tar');
 const bcrypt = require('bcrypt');
+
+const execFileAsync = promisify(execFile);
+const restoreScript = path.resolve(__dirname, '..', 'scripts', 'restore.js');
 
 const { createApp } = require('../src/app');
 const { initializeDatabase } = require('../src/db');
@@ -16,6 +22,8 @@ const { ContentService } = require('../src/services/content-service');
 const {
   PRE_RESTORE_PREFIX,
   createBackup,
+  probeDatabaseExclusiveLock,
+  probeServiceHealth,
   restoreBackup,
   verifyExtractedBackup,
 } = require('../src/services/backup-service');
@@ -36,6 +44,69 @@ function createConfig(runtimeRoot) {
     backupEncryptionPassword: '',
     contentMaxBytes: 64 * 1024,
   };
+}
+
+async function listen(server, port = 0) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve(server.address().port);
+    });
+  });
+}
+
+async function closeServer(server) {
+  await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+}
+
+async function unusedLoopbackPort() {
+  const server = http.createServer();
+  const port = await listen(server);
+  await closeServer(server);
+  return port;
+}
+
+async function startNginxProbe(statusCode = 503) {
+  const server = http.createServer((request, response) => {
+    response.setHeader('Server', 'nginx');
+    response.writeHead(request.url === '/health' ? statusCode : 404);
+    response.end();
+  });
+  const port = await listen(server);
+  return { server, url: `http://127.0.0.1:${port}/health` };
+}
+
+async function restoreWithStoppedService(config, archivePath, options = {}) {
+  const probe = await startNginxProbe(503);
+  try {
+    return await restoreBackup(
+      { ...config, restoreProbeUrl: probe.url },
+      archivePath,
+      { force: true, confirmServiceStopped: true, ...options },
+    );
+  } finally {
+    await closeServer(probe.server);
+  }
+}
+
+async function archiveWithoutLabStorage(sourceArchive, runtimeRoot, name) {
+  const unpacked = path.join(runtimeRoot, `${name}-unpacked`);
+  const archivePath = path.join(runtimeRoot, `${name}.tar.gz`);
+  await fs.mkdir(unpacked, { recursive: true });
+  await tar.x({ cwd: unpacked, file: sourceArchive, strict: true });
+  const manifestPath = path.join(unpacked, 'manifest.json');
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  manifest.files = manifest.files.filter((file) => !file.path.startsWith('lab-storage/'));
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  await fs.rm(path.join(unpacked, 'lab-storage'), { recursive: true, force: true });
+  await tar.c({
+    cwd: unpacked,
+    file: archivePath,
+    gzip: true,
+    portable: true,
+  }, ['manifest.json', 'data', 'content', 'uploads']);
+  return archivePath;
 }
 
 async function seedLabProject(config) {
@@ -116,14 +187,17 @@ test('备份配置默认包含ZIP并保留3份，环境开关可启用ZIP排除'
   const previousRetention = process.env.BACKUP_RETENTION_COUNT;
   const previousExcludeZip = process.env.BACKUP_EXCLUDE_ZIP;
   const previousScheduleLocalTime = process.env.BACKUP_SCHEDULE_LOCAL_TIME;
+  const previousRestoreProbeUrl = process.env.RESTORE_PROBE_URL;
   try {
     delete process.env.BACKUP_RETENTION_COUNT;
     delete process.env.BACKUP_EXCLUDE_ZIP;
     delete process.env.BACKUP_SCHEDULE_LOCAL_TIME;
+    process.env.RESTORE_PROBE_URL = 'https://127.0.0.1/health';
     const defaults = loadBackupConfig();
     assert.equal(defaults.backupRetentionCount, 3);
     assert.equal(defaults.backupExcludeZip, false);
     assert.equal(defaults.backupScheduleLocalTime, '00:00');
+    assert.equal(defaults.restoreProbeUrl, 'https://127.0.0.1/health');
 
     process.env.BACKUP_EXCLUDE_ZIP = 'true';
     assert.equal(loadBackupConfig().backupExcludeZip, true);
@@ -136,6 +210,411 @@ test('备份配置默认包含ZIP并保留3份，环境开关可启用ZIP排除'
     else process.env.BACKUP_EXCLUDE_ZIP = previousExcludeZip;
     if (previousScheduleLocalTime === undefined) delete process.env.BACKUP_SCHEDULE_LOCAL_TIME;
     else process.env.BACKUP_SCHEDULE_LOCAL_TIME = previousScheduleLocalTime;
+    if (previousRestoreProbeUrl === undefined) delete process.env.RESTORE_PROBE_URL;
+    else process.env.RESTORE_PROBE_URL = previousRestoreProbeUrl;
+  }
+});
+
+test('缺少停服确认参数时恢复在任何探测或写入前被拒绝', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-confirmation-'));
+  const config = createConfig(runtimeRoot);
+  try {
+    await seedStorage(config);
+    const backup = await createBackup(config, { now: new Date('2026-09-02T00:00:00.000Z') });
+    const database = new Database(config.databasePath);
+    database.prepare('UPDATE works SET title = ?').run('缺少确认时必须保留');
+    database.close();
+
+    await assert.rejects(
+      restoreBackup(config, backup.archivePath, { force: true }),
+      /requires --confirm-service-stopped/,
+    );
+    const untouched = new Database(config.databasePath, { readonly: true });
+    try {
+      assert.equal(untouched.prepare('SELECT title FROM works').get().title, '缺少确认时必须保留');
+    } finally {
+      untouched.close();
+    }
+    assert.equal(
+      (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('pre-restore-')).length,
+      0,
+    );
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('恢复探测地址必须显式指向本机Nginx且连接失败绝不作为停服证据', async () => {
+  await assert.rejects(
+    probeServiceHealth({ restoreProbeUrl: '' }),
+    /RESTORE_PROBE_URL is required.*Public domains are forbidden/s,
+  );
+  await assert.rejects(
+    probeServiceHealth({ restoreProbeUrl: 'https://zhiliaohub.com/health' }),
+    /Public domain names are forbidden.*old machine during migration/s,
+  );
+  const port = await unusedLoopbackPort();
+  await assert.rejects(
+    probeServiceHealth(
+      { restoreProbeUrl: `http://127.0.0.1:${port}/health` },
+      { restoreProbeTimeoutMs: 200 },
+    ),
+    /could not be reached.*connection failure does not prove the backend is stopped/s,
+  );
+});
+
+test('人工跳过恢复前快照要求两个参数成对出现且不替代停服确认', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-snapshot-confirmation-'));
+  const config = createConfig(runtimeRoot);
+  try {
+    await seedStorage(config);
+    const backup = await createBackup(config, { now: new Date('2026-09-02T00:00:30.000Z') });
+    const database = new Database(config.databasePath);
+    database.prepare('UPDATE works SET title = ?').run('双参数不齐时必须保留');
+    database.close();
+    const stoppedConfig = { ...config, restoreProbeUrl: '' };
+
+    await assert.rejects(
+      restoreBackup(stoppedConfig, backup.archivePath, {
+        force: true,
+        confirmServiceStopped: true,
+        skipPreRestoreSnapshot: true,
+      }),
+      /requires --confirm-no-pre-restore-snapshot together with --skip-pre-restore-snapshot/,
+    );
+    await assert.rejects(
+      restoreBackup(stoppedConfig, backup.archivePath, {
+        force: true,
+        confirmServiceStopped: true,
+        confirmNoPreRestoreSnapshot: true,
+      }),
+      /--confirm-no-pre-restore-snapshot is only valid together with --skip-pre-restore-snapshot/,
+    );
+    await assert.rejects(
+      restoreBackup(stoppedConfig, backup.archivePath, {
+        force: true,
+        skipPreRestoreSnapshot: true,
+        confirmNoPreRestoreSnapshot: true,
+      }),
+      /requires --confirm-service-stopped/,
+      '放弃恢复前快照不得隐含服务已经停止。',
+    );
+
+    const untouched = new Database(config.databasePath, { readonly: true });
+    try {
+      assert.equal(untouched.prepare('SELECT title FROM works').get().title, '双参数不齐时必须保留');
+    } finally {
+      untouched.close();
+    }
+    assert.equal(
+      (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('pre-restore-')).length,
+      0,
+    );
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('恢复CLI只接受成对跳过参数并显著声明本次恢复没有回退点', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-snapshot-cli-'));
+  const config = createConfig(runtimeRoot);
+  try {
+    await assert.rejects(
+      execFileAsync(process.execPath, [
+        restoreScript,
+        '--archive',
+        'unused.tar.gz',
+        '--force',
+        '--confirm-service-stopped',
+        '--skip-pre-restore-snapshot',
+      ], { cwd: config.serverRoot, windowsHide: true }),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, /必须与 --confirm-no-pre-restore-snapshot 同时给出/);
+        return true;
+      },
+    );
+    await assert.rejects(
+      execFileAsync(process.execPath, [
+        restoreScript,
+        '--archive',
+        'unused.tar.gz',
+        '--force',
+        '--confirm-service-stopped',
+        '--confirm-no-pre-restore-snapshot',
+      ], { cwd: config.serverRoot, windowsHide: true }),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, /只能与 --skip-pre-restore-snapshot 同时使用/);
+        return true;
+      },
+    );
+
+    await seedStorage(config);
+    const backup = await createBackup(config, { now: new Date('2026-09-02T00:00:45.000Z') });
+    const database = new Database(config.databasePath);
+    database.prepare('UPDATE works SET title = ?').run('即将无回退点恢复');
+    database.close();
+    const probe = await startNginxProbe(503);
+    try {
+      const { stdout, stderr } = await execFileAsync(process.execPath, [
+        restoreScript,
+        '--archive',
+        backup.archivePath,
+        '--force',
+        '--confirm-service-stopped',
+        '--skip-pre-restore-snapshot',
+        '--confirm-no-pre-restore-snapshot',
+      ], {
+        cwd: config.serverRoot,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          RESTORE_PROBE_URL: probe.url,
+          DATA_DIR: config.dataDir,
+          CONTENT_DIR: config.contentDir,
+          UPLOAD_DIR: config.uploadsDir,
+          LAB_STORAGE_DIR: config.labStorageDir,
+          BACKUP_DIR: config.backupDir,
+          BACKUP_ENCRYPTION_PASSWORD: '',
+        },
+      });
+      assert.match(stderr, /严重警告：本次恢复已按独立双重确认跳过恢复前快照/);
+      assert.match(stderr, /本次恢复没有回退点/);
+      assert.match(stderr, /恢复失败或选错归档，无法通过恢复前快照回滚/);
+      assert.match(stdout, /恢复完成/);
+      assert.equal(
+        (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('pre-restore-')).length,
+        0,
+      );
+      const restored = new Database(config.databasePath, { readonly: true });
+      try {
+        assert.equal(restored.prepare('SELECT title FROM works').get().title, '待恢复作品');
+      } finally {
+        restored.close();
+      }
+    } finally {
+      await closeServer(probe.server);
+    }
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('健康但可能属于旧机器的探测地址返回200时恢复被拒绝并给出迁移提示', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-healthy-probe-'));
+  const config = createConfig(runtimeRoot);
+  const probe = await startNginxProbe(200);
+  try {
+    await seedStorage(config);
+    const backup = await createBackup(config, { now: new Date('2026-09-02T00:01:00.000Z') });
+    const database = new Database(config.databasePath);
+    database.prepare('UPDATE works SET title = ?').run('健康地址命中时必须保留');
+    database.close();
+
+    await assert.rejects(
+      restoreBackup(
+        { ...config, restoreProbeUrl: probe.url },
+        backup.archivePath,
+        { force: true, confirmServiceStopped: true },
+      ),
+      /returned HTTP 200.*confirm this address resolves to this machine rather than the old machine/s,
+    );
+    const untouched = new Database(config.databasePath, { readonly: true });
+    try {
+      assert.equal(untouched.prepare('SELECT title FROM works').get().title, '健康地址命中时必须保留');
+    } finally {
+      untouched.close();
+    }
+    assert.equal(
+      (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('pre-restore-')).length,
+      0,
+    );
+  } finally {
+    if (probe.server.listening) await closeServer(probe.server);
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('SQLite 被占用时独占写锁探测拒绝恢复且不创建恢复前快照', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-lock-probe-'));
+  const config = createConfig(runtimeRoot);
+  let blocker = null;
+  try {
+    await seedStorage(config);
+    const backup = await createBackup(config, { now: new Date('2026-09-02T00:02:00.000Z') });
+    blocker = new Database(config.databasePath);
+    blocker.pragma('journal_mode = DELETE');
+    blocker.prepare('UPDATE works SET title = ?').run('写锁命中时必须保留');
+    blocker.exec('BEGIN IMMEDIATE');
+
+    await assert.rejects(
+      probeDatabaseExclusiveLock(config.databasePath),
+      /SQLite exclusive-lock probe.*Stop the backend service/s,
+    );
+    assert.equal(
+      (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('pre-restore-')).length,
+      0,
+    );
+    blocker.exec('ROLLBACK');
+    assert.equal(blocker.prepare('SELECT title FROM works').get().title, '写锁命中时必须保留');
+  } finally {
+    if (blocker?.inTransaction) blocker.exec('ROLLBACK');
+    blocker?.close();
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('空闲但存活的WAL连接即使允许BEGIN EXCLUSIVE也会被-shm证据拦住', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-idle-wal-'));
+  const config = createConfig(runtimeRoot);
+  let idle = null;
+  const probe = await startNginxProbe(503);
+  try {
+    await seedStorage(config);
+    const backup = await createBackup(config, { now: new Date('2026-09-02T00:02:30.000Z') });
+    idle = new Database(config.databasePath, { fileMustExist: true });
+    idle.pragma('journal_mode = WAL');
+    assert.equal(
+      await fs.stat(`${config.databasePath}-shm`).then(() => true).catch(() => false),
+      true,
+      '空闲WAL连接必须留下共享内存文件作为独立证据。',
+    );
+    await assert.doesNotReject(
+      probeDatabaseExclusiveLock(config.databasePath),
+      '旧探测的BEGIN EXCLUSIVE在空闲WAL连接存在时确实会误放行。',
+    );
+
+    await assert.rejects(
+      restoreBackup(
+        { ...config, restoreProbeUrl: probe.url },
+        backup.archivePath,
+        { force: true, confirmServiceStopped: true },
+      ),
+      /WAL shared-memory file.*idle connection may still be open/s,
+    );
+    assert.equal(
+      (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('pre-restore-')).length,
+      0,
+    );
+  } finally {
+    idle?.close();
+    if (probe.server.listening) await closeServer(probe.server);
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('崩溃后残留的-shm按安全侧误报拒绝恢复且不建议直接删除', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-stale-shm-'));
+  const config = createConfig(runtimeRoot);
+  const probe = await startNginxProbe(503);
+  try {
+    await seedStorage(config);
+    const backup = await createBackup(config, { now: new Date('2026-09-02T00:02:45.000Z') });
+    await fs.writeFile(`${config.databasePath}-shm`, 'STALE_SHM_PROBE', 'utf8');
+    await assert.rejects(
+      restoreBackup(
+        { ...config, restoreProbeUrl: probe.url },
+        backup.archivePath,
+        { force: true, confirmServiceStopped: true },
+      ),
+      /stale file after a crash is treated as unsafe.*Do not delete -shm\/-wal files/s,
+    );
+    assert.equal(
+      (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('pre-restore-')).length,
+      0,
+    );
+  } finally {
+    if (probe.server.listening) await closeServer(probe.server);
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('服务已停止且确认参数齐全时恢复正常完成', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-stopped-'));
+  const config = createConfig(runtimeRoot);
+  try {
+    await seedStorage(config);
+    const backup = await createBackup(config, { now: new Date('2026-09-02T00:03:00.000Z') });
+    const database = new Database(config.databasePath);
+    database.prepare('UPDATE works SET title = ?').run('恢复前变化');
+    database.close();
+
+    const restored = await restoreWithStoppedService(config, backup.archivePath);
+    assert.equal(restored.preRestoreSnapshot.skipped, undefined);
+    const recovered = new Database(config.databasePath, { readonly: true });
+    try {
+      assert.equal(recovered.prepare('SELECT title FROM works').get().title, '待恢复作品');
+    } finally {
+      recovered.close();
+    }
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('旧归档缺少lab-storage且恢复后数据库有小作坊记录时警告并保留目标目录', async () => {
+  const sourceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-legacy-lab-source-'));
+  const targetRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-legacy-lab-target-'));
+  const sourceConfig = createConfig(sourceRoot);
+  const targetConfig = createConfig(targetRoot);
+  const sentinel = path.join(targetConfig.labStorageDir, 'keep-existing.txt');
+  try {
+    await seedStorage(sourceConfig);
+    const labProject = await seedLabProject(sourceConfig);
+    const backup = await createBackup(sourceConfig, { now: new Date('2026-09-02T00:04:00.000Z') });
+    const legacyArchive = await archiveWithoutLabStorage(backup.archivePath, sourceRoot, 'legacy-with-record');
+    await fs.mkdir(targetConfig.labStorageDir, { recursive: true });
+    await fs.writeFile(sentinel, 'TARGET_DIRECTORY_MUST_SURVIVE', 'utf8');
+
+    const restored = await restoreWithStoppedService(targetConfig, legacyArchive);
+    assert.match(restored.warnings.join('\n'), /数据库中有 1 条小作坊记录/);
+    assert.match(restored.warnings.join('\n'), /本归档不含 lab-storage/);
+    assert.match(restored.warnings.join('\n'), /创建于 lab-storage 纳入备份之前/);
+    assert.equal(await fs.readFile(sentinel, 'utf8'), 'TARGET_DIRECTORY_MUST_SURVIVE');
+    assert.equal(
+      await fs.stat(path.join(targetConfig.labStorageDir, labProject.slug, 'index.html'))
+        .then(() => true)
+        .catch(() => false),
+      false,
+    );
+    const recovered = new Database(targetConfig.databasePath, { readonly: true });
+    try {
+      assert.equal(recovered.prepare('SELECT COUNT(*) AS count FROM lab_projects').get().count, 1);
+    } finally {
+      recovered.close();
+    }
+  } finally {
+    await fs.rm(sourceRoot, { recursive: true, force: true });
+    await fs.rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test('旧归档缺少lab-storage但恢复后数据库无小作坊记录时不制造警告', async () => {
+  const sourceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-legacy-empty-lab-source-'));
+  const targetRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-legacy-empty-lab-target-'));
+  const sourceConfig = createConfig(sourceRoot);
+  const targetConfig = createConfig(targetRoot);
+  const sentinel = path.join(targetConfig.labStorageDir, 'keep-existing.txt');
+  try {
+    await seedStorage(sourceConfig);
+    const backup = await createBackup(sourceConfig, { now: new Date('2026-09-02T00:05:00.000Z') });
+    const legacyArchive = await archiveWithoutLabStorage(backup.archivePath, sourceRoot, 'legacy-without-record');
+    await fs.mkdir(targetConfig.labStorageDir, { recursive: true });
+    await fs.writeFile(sentinel, 'TARGET_DIRECTORY_MUST_SURVIVE', 'utf8');
+
+    const restored = await restoreWithStoppedService(targetConfig, legacyArchive);
+    assert.doesNotMatch(restored.warnings.join('\n'), /lab-storage/);
+    assert.equal(await fs.readFile(sentinel, 'utf8'), 'TARGET_DIRECTORY_MUST_SURVIVE');
+    const recovered = new Database(targetConfig.databasePath, { readonly: true });
+    try {
+      assert.equal(recovered.prepare('SELECT COUNT(*) AS count FROM lab_projects').get().count, 0);
+    } finally {
+      recovered.close();
+    }
+  } finally {
+    await fs.rm(sourceRoot, { recursive: true, force: true });
+    await fs.rm(targetRoot, { recursive: true, force: true });
   }
 });
 
@@ -196,7 +675,7 @@ test('默认备份包含ZIP，开启排除后保留清单元数据并在恢复�
     const unpackedManifest = JSON.parse(await fs.readFile(path.join(unpacked, 'manifest.json'), 'utf8'));
     assert.deepEqual(unpackedManifest.excluded, excludedBackup.manifest.excluded);
 
-    const restored = await restoreBackup(freshConfig, excludedBackup.archivePath, { force: true });
+    const restored = await restoreWithStoppedService(freshConfig, excludedBackup.archivePath);
     assert.deepEqual(restored.excludedFiles, excludedBackup.manifest.excluded);
     assert.equal(restored.warnings.length, 2);
     assert.match(restored.warnings.join('\n'), /未包含 1 个 ZIP 文件/);
@@ -263,7 +742,7 @@ test('小作坊解压产物真实备份恢复且瞬时目录不进入归档', as
     await fs.rm(config.uploadsDir, { recursive: true, force: true });
     await fs.rm(labProject.projectDirectory, { recursive: true, force: true });
 
-    await restoreBackup(config, backup.archivePath, { force: true });
+    await restoreWithStoppedService(config, backup.archivePath);
 
     const recovered = new Database(config.databasePath, { readonly: true });
     try {
@@ -395,8 +874,7 @@ test('加密备份可在原始数据被破坏后完整恢复 SQLite、Markdown �
     assert.ok(backup.manifest.files.some((file) => file.path === 'uploads/proof.txt'));
 
     await assert.rejects(
-      restoreBackup(config, backup.archivePath, {
-        force: true,
+      restoreWithStoppedService(config, backup.archivePath, {
         encryptionPassword: 'incorrect-password',
       }),
       /authenticate data|bad decrypt|Unsupported state/i,
@@ -410,8 +888,7 @@ test('加密备份可在原始数据被破坏后完整恢复 SQLite、Markdown �
     await fs.rm(path.join(config.contentDir, 'notes'), { recursive: true, force: true });
     await fs.rm(config.uploadsDir, { recursive: true, force: true });
 
-    const restored = await restoreBackup(config, backup.archivePath, {
-      force: true,
+    const restored = await restoreWithStoppedService(config, backup.archivePath, {
       encryptionPassword: password,
     });
     assert.equal(restored.manifest.createdAt, '2026-08-04T01:02:03.456Z');
@@ -458,7 +935,7 @@ test('恢复前自动创建快照，误选旧归档后仍能退回恢复前的�
     database.close();
     await fs.writeFile(path.join(config.uploadsDir, 'proof.txt'), 'current-upload\n', 'utf8');
 
-    const wrongRestore = await restoreBackup(config, oldArchive.archivePath, { force: true });
+    const wrongRestore = await restoreWithStoppedService(config, oldArchive.archivePath);
     assert.equal(wrongRestore.preRestoreSnapshot.skipped, undefined, '恢复前必须自动创建快照。');
     const snapshotPath = wrongRestore.preRestoreSnapshot.archivePath;
     assert.match(path.basename(snapshotPath), new RegExp(`^${PRE_RESTORE_PREFIX}-\\d{8}T\\d{9}Z\\.tar\\.gz$`));
@@ -468,7 +945,7 @@ test('恢复前自动创建快照，误选旧归档后仍能退回恢复前的�
     );
 
     // The wrong restore really did roll the live data back.
-    const afterWrong = new Database(config.databasePath, { readonly: true });
+    const afterWrong = new Database(config.databasePath, { fileMustExist: true });
     try {
       assert.equal(afterWrong.prepare('SELECT title FROM works').get().title, '待恢复作品');
     } finally {
@@ -476,7 +953,7 @@ test('恢复前自动创建快照，误选旧归档后仍能退回恢复前的�
     }
 
     // The snapshot brings the pre-restore state back, content included.
-    await restoreBackup(config, snapshotPath, { force: true });
+    await restoreWithStoppedService(config, snapshotPath);
     const recovered = new Database(config.databasePath, { readonly: true });
     try {
       assert.equal(recovered.prepare('SELECT title FROM works').get().title, '恢复前的最新作品');
@@ -516,7 +993,7 @@ test('恢复前快照创建失败时中止恢复，且不修改任何现有数�
     await fs.writeFile(config.backupDir, 'not-a-directory', 'utf8');
 
     await assert.rejects(
-      restoreBackup(config, externalArchive, { force: true }),
+      restoreWithStoppedService(config, externalArchive),
       /Restore aborted: the pre-restore snapshot could not be created/,
       '快照失败时必须中止恢复。',
     );
@@ -590,8 +1067,9 @@ test('目标环境还没有数据库时跳过恢复前快照并继续恢复', as
     await seedStorage(sourceConfig);
     const archive = await createBackup(sourceConfig, { now: new Date('2026-08-05T01:00:00.000Z') });
 
-    const restored = await restoreBackup(freshConfig, archive.archivePath, { force: true });
+    const restored = await restoreWithStoppedService(freshConfig, archive.archivePath);
     assert.equal(restored.preRestoreSnapshot.skipped, true);
+    assert.equal(restored.preRestoreSnapshot.explicitlySkipped, undefined);
     assert.match(restored.preRestoreSnapshot.reason, /no existing database/);
 
     const database = new Database(freshConfig.databasePath, { readonly: true });

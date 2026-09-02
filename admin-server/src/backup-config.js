@@ -32,6 +32,9 @@ function loadBackupConfig(overrides = {}) {
   const dataDir = overrides.dataDir || resolveLocalPath(process.env.DATA_DIR, 'data');
   return {
     serverRoot,
+    restoreProbeUrl: String(
+      overrides.restoreProbeUrl ?? process.env.RESTORE_PROBE_URL ?? '',
+    ).trim(),
     dataDir,
     databasePath: overrides.databasePath || path.join(dataDir, 'admin.sqlite3'),
     contentDir: overrides.contentDir || resolveLocalPath(process.env.CONTENT_DIR, 'content'),

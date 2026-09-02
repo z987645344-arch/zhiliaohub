@@ -2,6 +2,9 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
+const http = require('node:http');
+const https = require('node:https');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { pipeline } = require('node:stream/promises');
@@ -345,6 +348,212 @@ function excludedRestoreWarnings(excluded) {
   ];
 }
 
+function normalizedIpAddress(address) {
+  const candidate = String(address || '').replace(/^\[|\]$/g, '').toLowerCase();
+  return candidate.startsWith('::ffff:') ? candidate.slice('::ffff:'.length) : candidate;
+}
+
+function isLoopbackAddress(address) {
+  const candidate = normalizedIpAddress(address);
+  return candidate === '::1' || /^127(?:\.\d{1,3}){3}$/.test(candidate);
+}
+
+function localInterfaceAddresses() {
+  const addresses = new Set(['127.0.0.1', '::1']);
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries || []) addresses.add(normalizedIpAddress(entry.address));
+  }
+  return addresses;
+}
+
+function restoreProbeUrl(config) {
+  const configured = String(config.restoreProbeUrl || '').trim();
+  if (!configured) {
+    throw new Error(
+      'Restore aborted: RESTORE_PROBE_URL is required and must point to this machine\'s own '
+      + 'Nginx /health endpoint. Public domains are forbidden. No data was modified.',
+    );
+  }
+  let target;
+  try {
+    target = new URL(configured);
+  } catch (error) {
+    throw new Error(
+      `Restore aborted: RESTORE_PROBE_URL is not a valid URL (${error.message}). `
+      + 'No data was modified.',
+      { cause: error },
+    );
+  }
+  if (!['http:', 'https:'].includes(target.protocol)
+      || target.username || target.password || target.search || target.hash
+      || target.pathname !== '/health') {
+    throw new Error(
+      'Restore aborted: RESTORE_PROBE_URL must be an http(s) URL with the exact /health '
+      + 'path and no credentials, query or fragment. No data was modified.',
+    );
+  }
+  const hostname = normalizedIpAddress(target.hostname);
+  if (hostname !== 'localhost' && net.isIP(hostname) === 0) {
+    throw new Error(
+      'Restore aborted: RESTORE_PROBE_URL must use localhost or a literal IP address assigned '
+      + 'to this machine. Public domain names are forbidden because they may still reach the '
+      + 'old machine during migration. No data was modified.',
+    );
+  }
+  if (hostname !== 'localhost' && !isLoopbackAddress(hostname)
+      && !localInterfaceAddresses().has(hostname)) {
+    throw new Error(
+      `Restore aborted: RESTORE_PROBE_URL address ${target.hostname} is not assigned to this `
+      + 'machine. Point it at this machine\'s own Nginx, never the public domain or another '
+      + 'server. No data was modified.',
+    );
+  }
+  return target;
+}
+
+async function requestProbeStatus(target, timeoutMs) {
+  const transport = target.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const request = transport.request(target, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-store',
+      },
+      // RESTORE_PROBE_URL is constrained above to a local interface literal. Production
+      // certificates normally name the public host, not that local IP, so certificate name
+      // verification cannot succeed for this deliberately local management probe.
+      rejectUnauthorized: target.protocol === 'https:' ? false : undefined,
+    }, (response) => {
+      response.resume();
+      resolve({
+        statusCode: response.statusCode,
+        server: String(response.headers.server || ''),
+      });
+    });
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`timed out after ${timeoutMs}ms`));
+    });
+    request.once('error', reject);
+    request.end();
+  });
+}
+
+async function probeServiceHealth(config, options = {}) {
+  const target = restoreProbeUrl(config);
+  const timeoutMs = options.restoreProbeTimeoutMs ?? 3000;
+  let result;
+  try {
+    result = await requestProbeStatus(target, timeoutMs);
+  } catch (error) {
+    throw new Error(
+      `Restore aborted: RESTORE_PROBE_URL ${target.href} could not be reached (${error.code || error.message}). `
+      + 'A connection failure does not prove the backend is stopped. Check this machine\'s '
+      + 'Nginx and the probe address, then retry. No data was modified.',
+      { cause: error },
+    );
+  }
+  if (!/nginx/i.test(result.server)) {
+    throw new Error(
+      `Restore aborted: RESTORE_PROBE_URL ${target.href} answered with HTTP `
+      + `${result.statusCode || 'unknown'} but did not identify itself as Nginx. The probe `
+      + 'cannot prove this machine\'s backend is stopped. No data was modified.',
+    );
+  }
+  if (result.statusCode === 200) {
+    throw new Error(
+      `Restore aborted: RESTORE_PROBE_URL ${target.href} returned HTTP 200, so its backend is `
+      + 'still healthy. If you are migrating, first confirm this address resolves to this '
+      + 'machine rather than the old machine. No data was modified.',
+    );
+  }
+  if (![502, 503, 504].includes(result.statusCode)) {
+    throw new Error(
+      `Restore aborted: RESTORE_PROBE_URL ${target.href} returned unexpected HTTP `
+      + `${result.statusCode || 'unknown'}; only an explicit Nginx 502/503/504 upstream failure `
+      + 'can satisfy the HTTP stop check. No data was modified.',
+    );
+  }
+  return { ok: true, statusCode: result.statusCode };
+}
+
+async function probeWalSharedMemoryAbsent(databasePath) {
+  const live = await inspectLiveDatabase(databasePath);
+  if (!live.exists) return { skipped: true, reason: 'no existing database to inspect for WAL connections' };
+  const sharedMemoryPath = `${databasePath}-shm`;
+  const exists = await fs.stat(sharedMemoryPath).then(() => true).catch((error) => {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  });
+  if (exists) {
+    throw new Error(
+      `Restore aborted: SQLite WAL shared-memory file ${sharedMemoryPath} still exists. `
+      + 'An idle connection may still be open; a stale file after a crash is treated as unsafe '
+      + 'rather than silently ignored. Stop every database user and inspect WAL recovery state '
+      + 'before retrying. Do not delete -shm/-wal files merely to bypass this guard. '
+      + 'No data was modified.',
+    );
+  }
+  return { ok: true };
+}
+
+async function probeDatabaseExclusiveLock(databasePath) {
+  const live = await inspectLiveDatabase(databasePath);
+  if (!live.exists) return { skipped: true, reason: 'no existing database to lock' };
+  let database = null;
+  try {
+    database = new Database(databasePath, { fileMustExist: true });
+    database.pragma('busy_timeout = 0');
+    database.exec('BEGIN EXCLUSIVE');
+    database.exec('ROLLBACK');
+    return { ok: true };
+  } catch (error) {
+    if (database?.inTransaction) database.exec('ROLLBACK');
+    throw new Error(
+      `Restore aborted: SQLite exclusive-lock probe could not obtain a write lock on `
+      + `${databasePath} (${error.code || error.message}). Another database connection may `
+      + 'still be active. Stop the backend service and release every connection to this '
+      + 'database before restoring, then retry. No data was modified.',
+      { cause: error },
+    );
+  } finally {
+    database?.close();
+  }
+}
+
+async function assertServiceStopped(config, options = {}) {
+  await probeServiceHealth(config, options);
+  await probeWalSharedMemoryAbsent(config.databasePath);
+  await probeDatabaseExclusiveLock(config.databasePath);
+}
+
+function restoredLabProjectCount(databasePath) {
+  // Use a normal short-lived connection rather than a readonly one. A readonly open of a
+  // freshly restored WAL database can leave its own -shm file behind after close, which
+  // would make the next intentional restore look like a live external connection.
+  const database = new Database(databasePath, { fileMustExist: true });
+  try {
+    const table = database.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lab_projects'",
+    ).get();
+    if (!table) return 0;
+    return database.prepare('SELECT COUNT(*) AS count FROM lab_projects').get().count;
+  } finally {
+    database.close();
+  }
+}
+
+function missingLabStorageRestoreWarnings(databasePath, hasArchivedLabStorage) {
+  if (hasArchivedLabStorage) return [];
+  const projectCount = restoredLabProjectCount(databasePath);
+  if (projectCount === 0) return [];
+  return [
+    `恢复后的数据库中有 ${projectCount} 条小作坊记录，但本归档不含 lab-storage；`
+    + '这些项目的文件不会被恢复。该归档创建于 lab-storage 纳入备份之前，'
+    + '请从其他来源补回对应项目文件。',
+  ];
+}
+
 async function replaceDirectory(source, target) {
   const parent = path.dirname(target);
   const token = crypto.randomUUID();
@@ -397,9 +606,32 @@ async function inspectLiveDatabase(databasePath) {
   return { exists: true };
 }
 
+function assertPreRestoreSnapshotConfirmation(options = {}) {
+  const skipSnapshot = options.skipPreRestoreSnapshot === true;
+  const confirmNoSnapshot = options.confirmNoPreRestoreSnapshot === true;
+  if (skipSnapshot && !confirmNoSnapshot) {
+    throw new Error(
+      'Restore requires --confirm-no-pre-restore-snapshot together with '
+      + '--skip-pre-restore-snapshot. No data was modified.',
+    );
+  }
+  if (confirmNoSnapshot && !skipSnapshot) {
+    throw new Error(
+      '--confirm-no-pre-restore-snapshot is only valid together with '
+      + '--skip-pre-restore-snapshot. No data was modified.',
+    );
+  }
+}
+
 async function createPreRestoreSnapshot(config, options = {}) {
+  assertPreRestoreSnapshotConfirmation(options);
   if (options.skipPreRestoreSnapshot) {
-    return { skipped: true, reason: 'explicitly skipped by --skip-pre-restore-snapshot' };
+    return {
+      skipped: true,
+      explicitlySkipped: true,
+      reason: 'explicitly skipped with --skip-pre-restore-snapshot and '
+        + '--confirm-no-pre-restore-snapshot',
+    };
   }
   // A restore onto a machine with no database yet has nothing to protect; that is the
   // only case allowed to proceed without a snapshot.
@@ -418,8 +650,10 @@ async function createPreRestoreSnapshot(config, options = {}) {
       `Restore aborted: the pre-restore snapshot could not be created (${error.message}). `
       + 'The backup destination may be full or unwritable, or the current database may itself '
       + 'be damaged and unreadable — that second case needs a human look before overwriting it. '
-      + 'No data was modified. Resolve the problem, or re-run with both --force and '
-      + '--skip-pre-restore-snapshot to restore without a safety net.',
+      + 'No data was modified. Resolve the problem, or re-run with both '
+      + '--skip-pre-restore-snapshot and --confirm-no-pre-restore-snapshot to restore '
+      + 'without a safety net; the separate --force and --confirm-service-stopped '
+      + 'requirements still apply.',
       { cause: error },
     );
   }
@@ -427,6 +661,14 @@ async function createPreRestoreSnapshot(config, options = {}) {
 
 async function restoreBackup(config, archivePath, options = {}) {
   if (!options.force) throw new Error('Restore requires explicit force confirmation.');
+  if (!options.confirmServiceStopped) {
+    throw new Error(
+      'Restore requires --confirm-service-stopped after the backend service has been stopped. '
+      + 'This declaration does not replace the local Nginx health, SQLite -shm, and '
+      + 'exclusive-lock probes.',
+    );
+  }
+  assertPreRestoreSnapshotConfirmation(options);
   const extractionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-'));
   const decryptedArchive = path.join(extractionRoot, 'archive.tar.gz');
   const encrypted = archivePath.endsWith('.enc');
@@ -450,8 +692,12 @@ async function restoreBackup(config, archivePath, options = {}) {
     });
     const manifest = await verifyExtractedBackup(unpackedRoot);
 
-    // Only snapshot once the incoming archive is known to be valid, and always before the
-    // first destructive write below. A failure here throws and leaves the live data intact.
+    // The operator declaration is not treated as proof. All three probes must pass after the
+    // archive is known to be valid, before the snapshot and every destructive write below.
+    await assertServiceStopped(config, options);
+
+    // Only snapshot once the incoming archive is known to be valid and the service-stop
+    // probes have passed. A failure here throws and leaves the live data intact.
     const preRestoreSnapshot = await createPreRestoreSnapshot(config, options);
 
     const databaseBytes = await fs.readFile(path.join(unpackedRoot, 'data', 'admin.sqlite3'));
@@ -469,11 +715,15 @@ async function restoreBackup(config, archivePath, options = {}) {
     // cannot reconstruct lab projects, so preserve the pre-existing directory instead
     // of silently replacing it with an empty one.
     if (hasArchivedLabStorage) await replaceDirectory(archivedLabStorage, config.labStorageDir);
+    const warnings = [
+      ...excludedRestoreWarnings(manifest.excluded),
+      ...missingLabStorageRestoreWarnings(config.databasePath, hasArchivedLabStorage),
+    ];
     return {
       manifest,
       preRestoreSnapshot,
       excludedFiles: manifest.excluded,
-      warnings: excludedRestoreWarnings(manifest.excluded),
+      warnings,
     };
   } finally {
     await fs.rm(extractionRoot, { recursive: true, force: true });
@@ -492,6 +742,12 @@ module.exports = {
   replicateArchive,
   encryptArchive,
   excludedRestoreWarnings,
+  assertServiceStopped,
+  assertPreRestoreSnapshotConfirmation,
+  missingLabStorageRestoreWarnings,
+  probeDatabaseExclusiveLock,
+  probeServiceHealth,
+  probeWalSharedMemoryAbsent,
   pruneBackups,
   restoreBackup,
   verifyExtractedBackup,

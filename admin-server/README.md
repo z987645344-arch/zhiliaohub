@@ -227,7 +227,7 @@ DEVICE_AUTH_RATE_LIMIT_MAX=30
 ls backups
 
 # 把下面这行的文件名换成你刚才看到的、最新的那个 backup-开头的文件
-npm run restore -- --archive backups/backup-20260811T215253573Z.tar.gz --force
+npm run restore -- --archive backups/backup-20260811T215253573Z.tar.gz --force --confirm-service-stopped
 ```
 
 看到类似这样的输出就是成功了：
@@ -278,6 +278,16 @@ npm run restore -- --archive backups/backup-20260811T215253573Z.tar.gz --force
 
 后台运行时会持续往数据库和文件里写东西。如果一边写一边恢复，可能出现"恢复了一半、又被新写入覆盖"的混乱状态，恢复结果不可信。所以恢复前必须停止服务。
 
+恢复命令要求显式写出 `--confirm-service-stopped`，表示操作者已经停服；**这个参数只是声明，不是证据**。恢复器仍会在创建恢复前快照和覆盖任何数据之前按 AND 关系完成三项实际探测：
+
+1. `RESTORE_PROBE_URL` 指向的**本机 Nginx** `/health` 返回明确的 502/503/504 上游不可用状态；
+2. 当前 SQLite 不存在 `-shm` WAL共享内存文件；
+3. 当前 SQLite 可以取得独占写锁。
+
+三项缺一不可，不是任一通过即可。连接失败、DNS/TLS错误或超时只说明探测本身失效，**绝不等于后台已停止**。`RESTORE_PROBE_URL` 必须在 `admin-server/.env` 里显式配置为这台机器自己的Nginx地址，例如本机Compose使用 `https://127.0.0.1:8443/health`；只允许 `localhost` 或本机网卡上的IP字面量，**禁止填写公开域名**。迁移期间公开域名可能仍指向旧机器，旧机返回200会让恢复被拒绝并把排查方向带错。HTTPS本地IP通常与生产证书主机名不匹配，恢复器只在确认地址属于本机后忽略这项名称不匹配；它不会因此允许远端地址。
+
+如果 `-shm` 是异常退出后残留的，守卫会选择安全侧误报并拒绝恢复。不要为了绕过守卫直接删除 `-shm` 或 `-wal`；先确认所有容器和数据库进程都已停止，并检查WAL恢复状态。
+
 （备份则不强制停服务：备份用的是 SQLite 官方的在线备份接口，能拿到一个自洽的数据库快照。但数据库、正文和上传文件三者无法保证是同一瞬间的，所以**要一个绝对严格一致的恢复点，最好也停服务再备份**。）
 
 ### 恢复失败了怎么办
@@ -286,6 +296,12 @@ npm run restore -- --archive backups/backup-20260811T215253573Z.tar.gz --force
 
 - **`Restore aborted: the pre-restore snapshot could not be created ...`**
   它没能先给当前数据做后悔药，所以拒绝继续。通常是磁盘满了或 `backups/` 目录不可写。先清理磁盘空间或修权限，再重试。
+- **`Restore aborted: RESTORE_PROBE_URL ...`**
+  未配置本机Nginx探测地址、误填公开域名/远端地址、健康路由仍返回200，或请求本身连接失败。若正在迁移，先确认该地址解析到的是本机而不是旧机器；只有本机Nginx明确返回502/503/504才满足第一道判据。
+- **`Restore aborted: SQLite WAL shared-memory file ... still exists`**
+  仍有空闲WAL连接，或异常退出留下了需要人工检查的`-shm`。停止所有数据库使用者并检查WAL状态，不要直接删文件绕过。
+- **`Restore aborted: SQLite exclusive-lock probe ...`**
+  当前数据库仍无法取得独占写锁，通常表示后台或其他程序还持有写事务。停止后台并关闭所有连接到该 SQLite 文件的进程，再重试。
 - **`Restore aborted: the current database at ... exists but could not be inspected ...`**
   当前那个数据库文件在，但读不出来——这本身就说明**现在的数据可能已经损坏了**，需要你亲自看一眼再决定，所以系统不会自作主张覆盖它。
 - **`Restore aborted: ... is not a regular file`**
@@ -296,10 +312,24 @@ npm run restore -- --archive backups/backup-20260811T215253573Z.tar.gz --force
 **万不得已的强制恢复**：如果当前数据库真的已经彻底损坏、连快照都做不出来，而你确认不再需要现在这份数据，可以跳过安全网：
 
 ```powershell
-npm run restore -- --archive backups/backup-20260811T215253573Z.tar.gz --force --skip-pre-restore-snapshot
+npm run restore -- --archive backups/backup-20260811T215253573Z.tar.gz --force --confirm-service-stopped --skip-pre-restore-snapshot --confirm-no-pre-restore-snapshot
 ```
 
-注意 `--force` 和 `--skip-pre-restore-snapshot` **两个都必须写全**，少任何一个都不会跳过保护。这条命令没有后悔药，想清楚再敲。
+`--skip-pre-restore-snapshot` 与 `--confirm-no-pre-restore-snapshot` **必须成对出现**，只给其中一个都会在探测或覆盖数据前被拒绝。它们与 `--confirm-service-stopped` 相互独立：确认停服不代表可以跳过快照，确认跳过快照也不代表服务已经停止；本机 Nginx 健康地址、SQLite `-shm` 与独占锁三道探测仍会照常执行。双参数生效时命令会显著警告：**本次恢复没有回退点，恢复失败或选错归档后无法通过恢复前快照回滚。**
+
+全新机器上数据库尚不存在时，恢复器会自动判定没有可保护的旧状态并跳过快照，不需要、也不应额外提供这两个跳过参数。这是正常迁移路径，不属于上面的人工放弃保护。
+
+### 新机器首次恢复的必需顺序
+
+生产Compose的Nginx使用静态上游名 `admin-server:3001`，并且首次启动依赖后台先通过健康检查。因此新机器不能在整套服务从未启动过时直接执行恢复，必须按以下顺序操作：
+
+1. 配好两层`.env`和持久目录，确认`RESTORE_PROBE_URL`指向**本机自己的Nginx**，不是公开域名。
+2. 构建并启动完整Compose栈，等`admin-server`与Nginx均健康；这一步让Nginx完成静态上游解析。
+3. 单独执行 `docker compose stop admin-server`，保持Nginx继续运行。
+4. 确认本机Nginx的`/health`返回502/503/504，再从宿主机执行上面的恢复命令。
+5. 恢复成功后执行 `docker compose start admin-server`，再完成健康、数据和静态页面检查。
+
+不得因为是新机器而跳过停服探测。若Nginx自身未运行、探测地址无法连接，恢复器会按失败关闭拒绝继续。
 
 ### 进阶：恢复到某个更早的版本 / 选错了想退回
 
@@ -308,7 +338,7 @@ npm run restore -- --archive backups/backup-20260811T215253573Z.tar.gz --force -
 如果恢复完发现**选错了版本**（比如误选了一个太旧的归档，把新数据覆盖了），不用慌：每次恢复前系统都自动存了一份"恢复前快照"。回到刚才那次恢复的输出里，找到 `恢复前快照已创建：` 后面的路径，用它再恢复一次，就能退回到你执行那次错误恢复之前的状态：
 
 ```powershell
-npm run restore -- --archive backups/pre-restore-20260812T010203456Z.tar.gz --force
+npm run restore -- --archive backups/pre-restore-20260812T010203456Z.tar.gz --force --confirm-service-stopped
 ```
 
 如果输出已经翻不到了，直接在 `backups/` 里找时间戳最新的 `pre-restore-` 文件，通常就是它。
@@ -344,7 +374,7 @@ npm run restore -- --archive backups/pre-restore-20260812T010203456Z.tar.gz --fo
 - 一份备份默认包含：SQLite 一致性快照、`content/works/`、`content/notes/`、`uploads/` 全部文件和 `lab-storage/` 中已完成的小作坊项目。`.pending-*`、`.deleted-*` 瞬时目录不会入包，也不会混入只供上传ZIP排除使用的 `manifest.excluded`。设置 `BACKUP_EXCLUDE_ZIP=true` 后，格式2的 `manifest.json` 在 `files` 中记录入包文件，在 `excluded` 中记录未入包ZIP；两类都包含相对路径、字节数与SHA-256。恢复器兼容格式1旧归档；对格式2会校验排除项只能位于 `uploads/` 且扩展名为ZIP，归档里实际夹带排除项或出现其他未声明文件都会拒绝恢复。
 - `BACKUP_RETENTION_COUNT` 默认 3；`BACKUP_DIR` 可指向服务器上的独立持久目录。`PRE_RESTORE_RETENTION_COUNT` 默认仍为3，与常规备份独立计数。
 - 小作坊单项目默认最多500个ZIP条目、解压后100MiB；常规备份保留3份，因此一个达到上限且难以压缩的项目最多可使常规备份总占用增长约300MiB。应随小作坊使用量监控 `BACKUP_DIR` 和副本目的地容量。
-- 本能力上线前生成的旧归档没有 `lab-storage/`，无法凭空恢复当时的小作坊文件；恢复器仍可读取这些归档，并保留目标机现有的 `lab-storage/`。只有本能力启用后新生成并验证过的归档才构成小作坊恢复来源。
+- 本能力上线前生成的旧归档没有 `lab-storage/`，无法凭空恢复当时的小作坊文件；恢复器仍可读取这些归档，并保留目标机现有的 `lab-storage/`。如果刚恢复的数据库里仍有小作坊记录，命令会按实际行数警告这些记录对应的文件没有被恢复。只有本能力启用后新生成并验证过的归档才构成小作坊恢复来源。
 - SQLite 快照里也包含备份时尚未过期的登录会话记录。灾难恢复后如果想强制注销所有旧登录，换一个新的高强度 `SESSION_SECRET` 再启动服务即可，旧 Cookie 会全部失效。
 - 目前没有备份成功/失败的外部告警，也没有做过服务器级别的灾难恢复演练。
 
@@ -379,6 +409,8 @@ npm run restore -- --archive backups/pre-restore-20260812T010203456Z.tar.gz --fo
 - 恢复前快照创建失败时中止恢复，SQLite、Markdown与上传文件全部保持原样。
 - 恢复前快照使用独立保留数量，不会被常规备份的“最近N份”清理，其自身超出数量时才淘汰最旧的一份。
 - 目标环境尚无数据库时跳过恢复前快照并正常完成恢复，且不产生多余快照。
+- 人工跳过恢复前快照时，`--skip-pre-restore-snapshot` 与 `--confirm-no-pre-restore-snapshot` 缺一即拒绝；两者齐全才执行并显著声明没有回退点，且不替代停服确认。
+- 停服探测要求本机Nginx明确返回上游失败、`-shm`不存在及SQLite独占锁成功三项同时成立；公开域名、远端健康服务、连接失败、空闲WAL连接和残留`-shm`均拒绝恢复。
 - "数据库文件不存在"与"文件存在但读不出来"被区分处理：前者跳过快照，后者中止恢复并明确报错。
 - 定时备份目录为空时立即创建；同一UTC+8调度日模拟重启3次仍只有一份；UTC+8次日00:00（UTC前一日16:00）创建第二份，并直接断言运行时计时器瞄准该UTC时刻而非容器本地零点。
 - 定时备份失败时记录明确日志并说明"现在没有产生新的备份"，且不抛出、不静默。

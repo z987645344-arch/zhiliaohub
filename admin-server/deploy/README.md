@@ -267,13 +267,15 @@ cp -r assets css js <站点根>/
 1. 在服务器检出已确认版本，安装受支持的Docker Engine与Compose插件。
 2. 从两个 `.env.example` 分别创建根目录 `.env` 和 `admin-server/.env`，填写现场值，并确认两者均未被Git跟踪。
 3. 创建六个持久目录和TLS文件，设置最小必要权限。
-4. 从已验证备份恢复SQLite、Markdown、上传文件和 `lab-storage/` 小作坊项目，或初始化全新数据；备份默认包含ZIP，若现场设置了 `BACKUP_EXCLUDE_ZIP=true` 且恢复命令列出 `manifest.excluded` 条目，必须从用户本地按清单路径补回ZIP，并核对大小与SHA-256。注意本能力启用前生成的旧归档不含 `lab-storage/`，不能据此恢复当时的小作坊文件。
+4. 在 `admin-server/.env` 配置 `RESTORE_PROBE_URL`，它必须是**本机Nginx的IP字面量或localhost加精确 `/health` 路径**，禁止填写公开域名；迁移期间公开DNS可能仍指向旧机器。
 5. 初始化独立公开站点目录，确保其中不含Git仓库、后台源码或现场配置。
-6. 运行 `docker compose config --quiet`。
-7. 运行 `docker compose build --no-cache admin-server`。
-8. 对Nginx模板执行真实 `nginx -t`（可通过官方容器完成），然后运行 `docker compose up -d`。
-9. 检查两个服务healthy和日志，验证HTTP→HTTPS、静态站、`/health`、密码+TOTP、App设备登录、来源IP、反馈提交/审核/发布、作品上传/发布、备份和小作坊主机名。
+6. 运行 `docker compose config --quiet`，构建后台镜像，并对Nginx模板执行真实 `nginx -t`。
+7. 先运行 `docker compose up -d` 并等待两个服务healthy。Nginx配置使用静态上游名且Compose依赖后台健康，整栈从未启动过时不能直接恢复。
+8. 单独运行 `docker compose stop admin-server`，保持Nginx运行；确认本机Nginx `/health` 返回502/503/504后，再从已验证备份恢复SQLite、Markdown、上传文件和 `lab-storage/`。恢复器还会要求`-shm`不存在且SQLite独占锁成功，三项按AND关系缺一不可。若现场设置了 `BACKUP_EXCLUDE_ZIP=true` 且恢复命令列出 `manifest.excluded` 条目，必须从用户本地按清单路径补回ZIP并核对大小与SHA-256。旧归档不含 `lab-storage/` 时不能据此恢复当时的小作坊文件。
+9. 恢复成功后运行 `docker compose start admin-server`，检查两个服务healthy和日志，验证HTTP→HTTPS、静态站、`/health`、密码+TOTP、App设备登录、来源IP、反馈提交/审核/发布、作品上传/发布、备份和小作坊主机名。
 10. 重建容器后再次确认SQLite、Markdown、上传、备份、小作坊文件和已发布前台均未丢失。
+
+`RESTORE_PROBE_URL`请求连接失败、DNS/TLS失败或超时都不能证明服务已停，恢复会拒绝继续。若地址返回200，错误信息会提醒迁移操作者核对它是否误指向旧机器。异常退出后残留`-shm`也会按安全侧误报拒绝；不要直接删除`-shm/-wal`绕过检查，应先确认所有数据库使用者都已停止并检查WAL状态。新机同样不得增加跳过探测的旁路，只走“起整栈→单停后台→恢复→重启后台”的固定序列。
 
 **备份默认包含ZIP；如需排除，设置 `BACKUP_EXCLUDE_ZIP=true`，此时恢复后需由用户从本地补齐，清单见 `manifest.excluded`。一份“静默地少了东西”的备份比没有备份更危险。**启用排除后的灾难重建验收不能只看恢复命令退出码，还要把清单列出的ZIP补齐并校验后，再检查作品下载链接。
 
