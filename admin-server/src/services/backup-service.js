@@ -15,10 +15,11 @@ const { createBackupDestination } = require('./backup-destination');
 
 const FORMAT_VERSION = 2;
 const SUPPORTED_FORMAT_VERSIONS = new Set([1, FORMAT_VERSION]);
-// Regular backups and automatic pre-restore snapshots share one directory but use
-// different filename prefixes, so each prunes against its own retention count and a
-// fresh pre-restore snapshot can never be evicted by the regular "latest N" policy.
+// Manual backups, scheduled backups and automatic pre-restore snapshots share one
+// directory but use mutually exclusive filename prefixes. Each lineage prunes only
+// itself, so an operator check cannot evict or suppress the scheduled recovery point.
 const BACKUP_PREFIX = 'backup';
+const SCHEDULED_BACKUP_PREFIX = 'scheduled-backup';
 const PRE_RESTORE_PREFIX = 'pre-restore';
 const DEFAULT_PRE_RESTORE_RETENTION = 3;
 const ENCRYPTION_MAGIC = Buffer.from('ZHBACKUP1');
@@ -734,6 +735,7 @@ module.exports = {
   BACKUP_PREFIX,
   DEFAULT_PRE_RESTORE_RETENTION,
   PRE_RESTORE_PREFIX,
+  SCHEDULED_BACKUP_PREFIX,
   archiveTimestamp,
   createBackup,
   createPreRestoreSnapshot,

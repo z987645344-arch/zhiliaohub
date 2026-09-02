@@ -5,13 +5,15 @@
 // explicit fixed UTC+8 offset instead of the process timezone, because production containers
 // may run in UTC and China Standard Time has no daylight-saving transitions.
 //
-// "When did we last back up?" is answered by reading the newest backup-<timestamp> archive
-// already sitting in the backup directory, rather than by keeping a separate state file.
+// "When did the scheduler last back up?" is answered by reading the newest
+// scheduled-backup-<timestamp> archive already sitting in the backup directory, rather
+// than by keeping a separate state file. Manual and pre-restore archives deliberately do
+// not satisfy the scheduled boundary.
 // That makes restarts safe for free: the answer survives process death, a restart shortly
 // after a backup will not trigger a duplicate, and a restart after a long outage notices the
 // scheduled boundary has passed and takes one immediately.
 const fs = require('node:fs/promises');
-const { BACKUP_PREFIX, createBackup } = require('./backup-service');
+const { SCHEDULED_BACKUP_PREFIX, createBackup } = require('./backup-service');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
@@ -19,7 +21,7 @@ const UTC_PLUS_8_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_LOCAL_TIME = '00:00';
 
 // Matches the archiveTimestamp() format: YYYYMMDD 'T' HHMMSSmmm 'Z'.
-const ARCHIVE_PATTERN = new RegExp(`^${BACKUP_PREFIX}-(\\d{8})T(\\d{9})Z\\.tar\\.gz(?:\\.enc)?$`);
+const ARCHIVE_PATTERN = new RegExp(`^${SCHEDULED_BACKUP_PREFIX}-(\\d{8})T(\\d{9})Z\\.tar\\.gz(?:\\.enc)?$`);
 
 function parseLocalTime(value = DEFAULT_LOCAL_TIME) {
   const match = /^(?:([01]\d|2[0-3])):([0-5]\d)$/.exec(String(value));
@@ -97,7 +99,10 @@ class BackupScheduler {
           scheduledBoundaryAt,
         };
       }
-      const result = await this.createBackup(this.config, { now });
+      const result = await this.createBackup(this.config, {
+        now,
+        namePrefix: SCHEDULED_BACKUP_PREFIX,
+      });
       this.createdCount += 1;
       this.logger.log(`[backup] 定时备份已创建：${result.archivePath}`);
       if (result.replication?.ok) {

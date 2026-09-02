@@ -3,6 +3,18 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-02**
 
+## 2026-09-02 手工、调度与恢复前备份改为三条独立谱系（实施方现场记录）
+
+- `admin-server/src/services/backup-service.js` **+5/-3**：新增并导出 `scheduled-backup` 前缀；手工 `backup`、调度 `scheduled-backup`、恢复前 `pre-restore` 三池继续共用现有目录，但分别按自身前缀清理，未新增保留数配置，也未改恢复逻辑。
+- `admin-server/src/services/backup-scheduler.js` **+10/-5**：调度器只识别和创建 `scheduled-backup-*`；当天手工归档不再满足调度边界，恢复前快照仍不参与调度判定。该行为刻意改为宁可多一份冗余归档，也不因现场手工验证而缺少当天调度恢复点。
+- `admin-server/tests/backup-automation.test.js` **+146/-14**：真实断言三个前缀互斥、手工与恢复前归档不顶掉当天调度、当天已有调度归档才去重，以及本地与模拟异地目录中三个池各自 N+1 轮转且互不减少。
+- `admin-server/README.md` **+12/-10**：写明三种文件名前缀、两个常规池共用一个保留数但独立轮转，以及手工备份不再满足当天调度边界的理由。
+- `docs/claude_memory.md` **+5/-3**：由指挥师按常驻授权维护，本轮实施方未改内容；其三谱系当前状态、真实事故形状及稳态/最坏容量边界随本轮一并存档。
+- `docs/zhiliaohub_structure.md` **+5/-5**：由指挥师按常驻授权维护，本轮实施方未改内容；其三池架构、去重判据与容量模型随本轮一并存档。
+- `CHANGELOG.md` **+12/-0**：新增本条实施现场记录，不写版本号、不暗示已经打标或部署。
+- **本场验证**：改动前完整 `npm test` **91/91通过、0失败**；改动后备份自动化专项 **12/12通过**，完整 `npm test` **94/94通过、0失败**。`npm run check`、涉及文件的 `node --check` 与 `git diff --check` 均通过。
+- **未验证边界**：本轮不连接服务器、不部署；未观察真实长期轮转或真实容量增长。自动化使用隔离的真实归档目录和本地镜像目录验证文件存留与清理，不能替代多日生产运行证据。
+
 ## 2026-09-02 为唯一前置 gateway 收紧知了hub源站拓扑（实施方现场记录）
 
 - `deploy/nginx.conf` **+17/-73**：移除源站 TLS、443监听、HTTP→HTTPS 跳转和22条Cloudflare网段，改为两个纯HTTP server、单条 `TRUSTED_PROXY_CIDR` 与 XFF 最右项还原；两个Node反代位置固定发送 `X-Forwarded-Proto=https`，防止生产 Secure session Cookie 被静默抑制。

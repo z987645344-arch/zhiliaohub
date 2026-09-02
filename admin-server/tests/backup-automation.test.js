@@ -11,8 +11,12 @@ const Database = require('better-sqlite3');
 const { initializeDatabase } = require('../src/db');
 const { ContentService } = require('../src/services/content-service');
 const {
+  BACKUP_PREFIX,
+  PRE_RESTORE_PREFIX,
+  SCHEDULED_BACKUP_PREFIX,
   createBackup,
   inspectLiveDatabase,
+  pruneBackups,
   restoreBackup,
 } = require('../src/services/backup-service');
 const { LocalMirrorDestination } = require('../src/services/backup-destination');
@@ -173,16 +177,93 @@ test('定时备份按UTC+8零点分日：空目录立即备份、同日重启不
     assert.equal(due.created, true, 'UTC+8次日零点应创建第二份备份。');
     assert.equal(due.scheduledBoundaryAt.toISOString(), '2026-08-11T16:00:00.000Z');
 
-    const archives = (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('backup-')).sort();
+    const archives = (await fs.readdir(config.backupDir))
+      .filter((name) => name.startsWith(`${SCHEDULED_BACKUP_PREFIX}-`))
+      .sort();
     assert.deepEqual(archives, [
-      'backup-20260811T000000000Z.tar.gz',
-      'backup-20260811T160000000Z.tar.gz',
+      'scheduled-backup-20260811T000000000Z.tar.gz',
+      'scheduled-backup-20260811T160000000Z.tar.gz',
     ]);
 
-    // The recorded "last backup" really is derived from the newest archive on disk.
+    // The recorded "last backup" really is derived only from the newest scheduled archive.
     assert.equal((await lastBackupAt(config.backupDir)).toISOString(), '2026-08-11T16:00:00.000Z');
-    assert.equal(parseArchiveTimestamp('backup-20260811T000000000Z.tar.gz').toISOString(), '2026-08-11T00:00:00.000Z');
+    assert.equal(
+      parseArchiveTimestamp('scheduled-backup-20260811T000000000Z.tar.gz').toISOString(),
+      '2026-08-11T00:00:00.000Z',
+    );
+    assert.equal(parseArchiveTimestamp('backup-20260811T000000000Z.tar.gz'), null, '手工归档不参与定时判断。');
     assert.equal(parseArchiveTimestamp('pre-restore-20260811T000000000Z.tar.gz'), null, '恢复前快照不参与定时判断。');
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('手工、调度与恢复前三个归档前缀严格互斥', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-prefix-isolation-'));
+  const names = {
+    manual: 'backup-20260811T000000000Z.tar.gz',
+    scheduled: 'scheduled-backup-20260811T000000000Z.tar.gz',
+    preRestore: 'pre-restore-20260811T000000000Z.tar.gz',
+  };
+  try {
+    await Promise.all(Object.values(names).map((name) => fs.writeFile(path.join(runtimeRoot, name), name)));
+
+    assert.deepEqual(
+      await pruneBackups(runtimeRoot, 0, BACKUP_PREFIX),
+      [names.manual],
+      'backup池只能匹配手工归档。',
+    );
+    assert.deepEqual((await fs.readdir(runtimeRoot)).sort(), [names.preRestore, names.scheduled].sort());
+
+    assert.deepEqual(
+      await pruneBackups(runtimeRoot, 0, SCHEDULED_BACKUP_PREFIX),
+      [names.scheduled],
+      'scheduled池只能匹配调度归档。',
+    );
+    assert.deepEqual(await fs.readdir(runtimeRoot), [names.preRestore], '恢复前快照不应被两个常规池匹配。');
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('当天已有手工归档时仍创建调度归档，已有调度归档时才跳过', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-manual-vs-scheduled-'));
+  const config = createConfig(runtimeRoot);
+  try {
+    await seedStorage(config);
+    await createBackup(config, { now: new Date('2026-08-11T00:00:00.000Z') });
+
+    let clock = new Date('2026-08-11T00:05:00.000Z');
+    const scheduler = new BackupScheduler(config, { now: () => clock, logger: silentLogger });
+    const created = await scheduler.tick();
+    assert.equal(created.created, true, '手工归档不得满足当天的调度边界。');
+    assert.match(path.basename(created.result.archivePath), /^scheduled-backup-/);
+
+    clock = new Date('2026-08-11T00:06:00.000Z');
+    const skipped = await scheduler.tick();
+    assert.equal(skipped.skipped, true, '当天已有调度归档时必须去重。');
+    assert.equal(skipped.reason, 'already backed up since scheduled boundary');
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('恢复前快照不影响当天的调度判定', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-pre-restore-vs-scheduled-'));
+  const config = createConfig(runtimeRoot);
+  try {
+    await seedStorage(config);
+    await createBackup(config, {
+      namePrefix: PRE_RESTORE_PREFIX,
+      now: new Date('2026-08-11T00:00:00.000Z'),
+      retentionCount: config.preRestoreRetentionCount,
+    });
+    const created = await new BackupScheduler(config, {
+      now: () => new Date('2026-08-11T00:05:00.000Z'),
+      logger: silentLogger,
+    }).tick();
+    assert.equal(created.created, true, '恢复前快照不得满足当天的调度边界。');
+    assert.match(path.basename(created.result.archivePath), /^scheduled-backup-/);
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
   }
@@ -318,25 +399,76 @@ test('副本同步失败不影响本地备份本身，也不会让备份整体�
   }
 });
 
-test('模拟异地目录按同一保留策略清理，不会无限增长', async () => {
+test('本地与模拟异地目录的手工、调度、恢复前三个池各自独立轮转', async () => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-mirror-prune-'));
   const mirrorDir = path.join(runtimeRoot, 'offsite-simulation');
   const config = createConfig(runtimeRoot, { backupMirrorDir: mirrorDir });
+  const namesFor = async (directory, prefix) => (await fs.readdir(directory))
+    .filter((name) => name.startsWith(`${prefix}-`))
+    .sort();
   try {
     await seedStorage(config);
+
+    // Seed the scheduled pool, then run N+1 manual backups. Manual pruning must not
+    // reduce the scheduled pool in either the primary or mirror destination.
+    await createBackup(config, {
+      namePrefix: SCHEDULED_BACKUP_PREFIX,
+      now: new Date('2026-08-11T04:00:00.000Z'),
+    });
     for (const millisecond of [1, 2, 3, 4]) {
       await createBackup(config, {
         now: new Date(`2026-08-11T04:00:00.00${millisecond}Z`),
-        retentionCount: 2,
       });
     }
-    const mirrored = (await fs.readdir(mirrorDir)).sort();
-    assert.deepEqual(mirrored, [
-      'backup-20260811T040000003Z.tar.gz',
-      'backup-20260811T040000004Z.tar.gz',
-    ]);
-    const local = (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('backup-')).sort();
-    assert.deepEqual(local, mirrored, '副本目录应与本地保持一致。');
+    for (const directory of [config.backupDir, mirrorDir]) {
+      assert.equal((await namesFor(directory, SCHEDULED_BACKUP_PREFIX)).length, 1);
+      assert.deepEqual(await namesFor(directory, BACKUP_PREFIX), [
+        'backup-20260811T040000002Z.tar.gz',
+        'backup-20260811T040000003Z.tar.gz',
+        'backup-20260811T040000004Z.tar.gz',
+      ]);
+    }
+
+    // Now run N+1 scheduled backups. The three retained manual archives must survive.
+    for (const millisecond of [1, 2, 3, 4]) {
+      await createBackup(config, {
+        namePrefix: SCHEDULED_BACKUP_PREFIX,
+        now: new Date(`2026-08-11T05:00:00.00${millisecond}Z`),
+      });
+    }
+    for (const directory of [config.backupDir, mirrorDir]) {
+      assert.equal((await namesFor(directory, BACKUP_PREFIX)).length, 3);
+      assert.deepEqual(await namesFor(directory, SCHEDULED_BACKUP_PREFIX), [
+        'scheduled-backup-20260811T050000002Z.tar.gz',
+        'scheduled-backup-20260811T050000003Z.tar.gz',
+        'scheduled-backup-20260811T050000004Z.tar.gz',
+      ]);
+    }
+
+    // The pre-restore lineage keeps its own configured count and cannot evict either
+    // regular lineage, locally or in the mirrored destination.
+    for (const millisecond of [1, 2, 3, 4]) {
+      await createBackup(config, {
+        namePrefix: PRE_RESTORE_PREFIX,
+        now: new Date(`2026-08-11T06:00:00.00${millisecond}Z`),
+        retentionCount: config.preRestoreRetentionCount,
+      });
+    }
+    for (const directory of [config.backupDir, mirrorDir]) {
+      assert.equal((await namesFor(directory, BACKUP_PREFIX)).length, 3);
+      assert.equal((await namesFor(directory, SCHEDULED_BACKUP_PREFIX)).length, 3);
+      assert.deepEqual(await namesFor(directory, PRE_RESTORE_PREFIX), [
+        'pre-restore-20260811T060000002Z.tar.gz',
+        'pre-restore-20260811T060000003Z.tar.gz',
+        'pre-restore-20260811T060000004Z.tar.gz',
+      ]);
+    }
+
+    assert.deepEqual(
+      (await fs.readdir(config.backupDir)).sort(),
+      (await fs.readdir(mirrorDir)).sort(),
+      '本地与镜像目录的三个归档池应保持一致。',
+    );
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
   }

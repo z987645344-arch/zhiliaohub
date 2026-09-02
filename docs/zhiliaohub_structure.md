@@ -291,7 +291,7 @@ index.html 额外 defer 加载 js/particles.js
 | 正文 | `content/works/` 与 `content/notes/` 下的Markdown文件 |
 | 静态发布 | marked渲染Markdown，服务端模板全量生成列表/详情HTML，并记录最近发布时间 |
 | 上传 | multer写入 `uploads/`，限制单文件大小并校验白名单、MIME与文件签名 |
-| 备份 | better-sqlite3在线快照 + tar/gzip归档；SQLite、Markdown、全部上传和`lab-storage`已完成项目默认入包，可配置排除上传ZIP并写入manifest的 `excluded` 路径/大小/SHA-256，可选scrypt + AES-256-GCM加密，常规备份默认保留3份 |
+| 备份 | better-sqlite3在线快照 + tar/gzip归档；SQLite、Markdown、全部上传和`lab-storage`已完成项目默认入包，可配置排除上传ZIP并写入manifest的 `excluded` 路径/大小/SHA-256，可选scrypt + AES-256-GCM加密；归档分手工/调度/恢复前三条互斥谱系，各自独立轮转，两个常规池默认各留3份 |
 | 安全补充 | Helmet响应头、会话CSRF令牌、按请求IP统计失败次数的限流 |
 
 `admin-server/` 是知了hub自己的后台服务，与静态前台物理隔离，也与知天的管理后台、账号、数据库和会话完全独立。当前没有跨仓库共享代码。
@@ -375,15 +375,15 @@ SQLite当前包含：
 
 ### 9.6 本地备份与恢复
 
-`scripts/backup.js` 对SQLite使用better-sqlite3在线备份API生成有效快照，同时复制作品/日记Markdown与 `uploads/` 全部文件。ZIP默认复制进归档；只有设置 `BACKUP_EXCLUDE_ZIP=true` 时才排除ZIP内容，格式2的 `manifest.json` 继续用 `files` 记录入包文件，用独立的 `excluded` 数组记录每个未入包ZIP的相对路径、字节数和SHA-256。可通过 `BACKUP_ENCRYPTION_PASSWORD` 使用scrypt派生密钥并以AES-256-GCM加密，通过 `BACKUP_RETENTION_COUNT` 保留最近N份（默认3份）。真实归档写入 `.gitignore` 排除的 `backups/`。
+`scripts/backup.js` 对SQLite使用better-sqlite3在线备份API生成有效快照，同时复制作品/日记Markdown与 `uploads/` 全部文件。ZIP默认复制进归档；只有设置 `BACKUP_EXCLUDE_ZIP=true` 时才排除ZIP内容，格式2的 `manifest.json` 继续用 `files` 记录入包文件，用独立的 `excluded` 数组记录每个未入包ZIP的相对路径、字节数和SHA-256。可通过 `BACKUP_ENCRYPTION_PASSWORD` 使用scrypt派生密钥并以AES-256-GCM加密，归档按前缀分成三条**严格互斥**的谱系——手工 `backup-*`、调度 `scheduled-backup-*`、恢复前 `pre-restore-*`——每条独立轮转、互不挤占；两个常规池共用 `BACKUP_RETENTION_COUNT`（默认各留最近3份），恢复前池用 `preRestoreRetentionCount`。**共用一个保留数是刻意的**：本项目已三次栽在「配置项设错且不报错」上，少一个旋钮就少一处坑；知天同样是常规池共用一个值、恢复前池单独一个。真实归档写入 `.gitignore` 排除的 `backups/`。
 
 `scripts/restore.js` 要求显式指定归档和 `--force`，先安全解包、核对manifest、校验全部入包文件并拒绝未声明内容，再原子替换SQLite文件和作品Markdown、日记Markdown、上传池、`lab-storage` 四个数据目录。新恢复器继续接受格式1旧清单；读到格式2的 `excluded` 时会逐条打印待补路径、大小与SHA-256，明确要求用户从本地补回ZIP，而不是把数据库中指向缺失下载文件的记录当作归档损坏或静默跳过。自动化测试已真实执行“创建小作坊项目 → 备份 → 删除唯一解压目录 → 恢复 → `/lab/<slug>/` 重新可访问且内容一致”，并同时破坏和验证SQLite、作品/日记Markdown与普通上传文件；`.pending-*`、`.deleted-*` 瞬时目录不会入包。
 
 **备份默认包含ZIP；如需排除，设置 `BACKUP_EXCLUDE_ZIP=true`，此时恢复后需由用户从本地补齐，清单见 `manifest.excluded`。一份“静默地少了东西”的备份比没有备份更危险。**这项配置只影响 `uploads/` 下的ZIP；不改变上传池、前台下载、发布副本，也不影响 `lab-storage/` 的入包与恢复。
 
-小作坊单项目默认最多500个文件、解压后100MiB，常规归档保留3份；因此一个达到上限且难以压缩的项目最多可使常规备份总占用增长约300MiB。⚠️ **这 300MiB 是假设上限，不是实测值**——统筹师 2026-09-02 现场核数：现有三份归档合计 **88KB**、`lab-storage` 为 4.0K、`lab_projects` **0 行**，两者相差三个数量级。上限只在 `lab_projects` 真的有人上传后才开始有意义，引用时必须分清「实测」与「上限」。旧归档没有 `lab-storage/`，不能恢复当时的小作坊内容；恢复器读取这类旧包时保留目标机现有目录。容量监控和新归档恢复抽查是启用小作坊后的必要运维动作。
+小作坊单项目默认最多500个文件、解压后100MiB。归档分三池、每池默认3份，因此一个达到上限且难以压缩的项目：**每个池约 +300MiB，三池满额共9份约 +900MiB**（恢复前池只在真正执行过恢复后才有内容，稳态通常只有手工+调度两池共6份、约600MiB）。⚠️ **这些都是假设上限，不是实测值**——统筹师 2026-09-02 现场核数：现有三份归档合计 **88KB**、`lab-storage` 为 4.0K、`lab_projects` **0 行**，两者相差三个数量级。上限只在 `lab_projects` 真的有人上传后才开始有意义，引用时必须分清「实测」与「上限」。旧归档没有 `lab-storage/`，不能恢复当时的小作坊内容；恢复器读取这类旧包时保留目标机现有目录。容量监控和新归档恢复抽查是启用小作坊后的必要运维动作。
 
-跨SQLite、Markdown、上传目录和`lab-storage`不存在统一事务。SQLite在线快照本身一致，但要获得这些数据的单一恢复点，人工灾难备份应先暂停写入，最好停止服务；恢复必须在服务停止时进行。当前已实现手动备份/恢复、完整性校验、可选加密、保留策略、恢复前快照和进程内定时调度；调度器用固定UTC+8解释 `BACKUP_SCHEDULE_LOCAL_TIME`，默认每日00:00，以当天目标时刻之后是否已有常规归档去重，空目录则启动即备份。`BACKUP_MIRROR_DIR` 只会复制到同机目录，尚未实现真实异地副本、外部失败告警或服务器灾难恢复演练。
+跨SQLite、Markdown、上传目录和`lab-storage`不存在统一事务。SQLite在线快照本身一致，但要获得这些数据的单一恢复点，人工灾难备份应先暂停写入，最好停止服务；恢复必须在服务停止时进行。当前已实现手动备份/恢复、完整性校验、可选加密、保留策略、恢复前快照和进程内定时调度；调度器用固定UTC+8解释 `BACKUP_SCHEDULE_LOCAL_TIME`，默认每日00:00；**去重与「空目录启动即备份」的判据只认 `scheduled-backup-*`**，手工归档与恢复前快照都不再满足当天的调度边界。此前判据锚在共用前缀上，现场手工验一次归档格式就会顶掉当天的调度备份，且无任何提示。`BACKUP_MIRROR_DIR` 只会复制到同机目录，尚未实现真实异地副本、外部失败告警或服务器灾难恢复演练。
 
 ### 9.7 生产容器与反向代理
 
@@ -465,7 +465,7 @@ SQLite当前包含：
 
 ### 11.7 备份运维演进
 
-**本地机制和生产进程内定时触发已实现，异地容灾仍未实现。** 当前脚本已覆盖SQLite、Markdown、上传池和`lab-storage`的完整性清单、可选ZIP排除留痕、SHA-256、可选加密、最近N份保留、恢复前快照和真实恢复验证；调度器随后台进程运行，按固定UTC+8时钟每日触发，不依赖容器时区。上传ZIP默认入包；如现场为节省空间启用排除，则原件由用户在本地另行保存。后续仍要接入真实异地目标、外部告警、密钥托管、容量监控与定期服务器恢复演练。
+**本地机制和生产进程内定时触发已实现，异地容灾仍未实现。** 当前脚本已覆盖SQLite、Markdown、上传池和`lab-storage`的完整性清单、可选ZIP排除留痕、SHA-256、可选加密、恢复前快照和真实恢复验证；保留策略按手工/调度/恢复前**三条互斥谱系各自独立轮转最近N份**，任一谱系的归档都不会挤掉另一谱系；调度器随后台进程运行，按固定UTC+8时钟每日触发，不依赖容器时区。上传ZIP默认入包；如现场为节省空间启用排除，则原件由用户在本地另行保存。后续仍要接入真实异地目标、外部告警、密钥托管、容量监控与定期服务器恢复演练。
 
 ### 11.8 独立安卓App对接
 
