@@ -22,7 +22,9 @@ const BACKUP_PREFIX = 'backup';
 const SCHEDULED_BACKUP_PREFIX = 'scheduled-backup';
 const PRE_RESTORE_PREFIX = 'pre-restore';
 const DEFAULT_PRE_RESTORE_RETENTION = 3;
-const DEFAULT_RESTORE_PROBE_TIMEOUT_MS = 15000;
+const DEFAULT_RESTORE_PROBE_TIMEOUT_MS = 60000;
+const RESTORE_PROBE_ATTEMPT_TIMEOUT_MS = 1000;
+const RESTORE_PROBE_RETRY_DELAY_MS = 250;
 const ENCRYPTION_MAGIC = Buffer.from('ZHBACKUP1');
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
@@ -417,6 +419,14 @@ function restoreProbeUrl(config) {
 async function requestProbeStatus(target, timeoutMs) {
   const transport = target.protocol === 'https:' ? https : http;
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let deadline;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      callback(value);
+    };
     const request = transport.request(target, {
       method: 'GET',
       headers: {
@@ -429,55 +439,109 @@ async function requestProbeStatus(target, timeoutMs) {
       rejectUnauthorized: target.protocol === 'https:' ? false : undefined,
     }, (response) => {
       response.resume();
-      resolve({
+      finish(resolve, {
         statusCode: response.statusCode,
         server: String(response.headers.server || ''),
       });
     });
-    request.setTimeout(timeoutMs, () => {
+    deadline = setTimeout(() => {
       request.destroy(new Error(`timed out after ${timeoutMs}ms`));
-    });
-    request.once('error', reject);
+    }, timeoutMs);
+    request.once('error', (error) => finish(reject, error));
     request.end();
   });
 }
 
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function probeResultDescription(result) {
+  if (result.error) return `${result.error.code || result.error.message}`;
+  const server = result.server || 'missing Server header';
+  return `HTTP ${result.statusCode || 'unknown'} from ${server}`;
+}
+
 async function probeServiceHealth(config, options = {}) {
   const target = restoreProbeUrl(config);
-  const timeoutMs = options.restoreProbeTimeoutMs ?? DEFAULT_RESTORE_PROBE_TIMEOUT_MS;
-  let result;
-  try {
-    result = await requestProbeStatus(target, timeoutMs);
-  } catch (error) {
-    throw new Error(
-      `Restore aborted: RESTORE_PROBE_URL ${target.href} could not be reached (${error.code || error.message}). `
-      + 'A connection failure does not prove the backend is stopped. Check this machine\'s '
-      + 'Nginx and the probe address, then retry. No data was modified.',
-      { cause: error },
-    );
+  const budgetMs = options.restoreProbeTimeoutMs ?? DEFAULT_RESTORE_PROBE_TIMEOUT_MS;
+  const startedAt = Date.now();
+  let attempts = 0;
+  let lastResult = { error: new Error('no probe attempt completed') };
+
+  while (Date.now() - startedAt < budgetMs) {
+    const remainingMs = budgetMs - (Date.now() - startedAt);
+    attempts += 1;
+    try {
+      lastResult = await requestProbeStatus(
+        target,
+        Math.min(RESTORE_PROBE_ATTEMPT_TIMEOUT_MS, remainingMs),
+      );
+    } catch (error) {
+      lastResult = { error };
+    }
+
+    if (!lastResult.error && lastResult.statusCode === 200) {
+      throw new Error(
+        `Restore aborted: RESTORE_PROBE_URL ${target.href} returned HTTP 200 on attempt `
+        + `${attempts}, so its backend is still healthy. If you are migrating, first confirm `
+        + 'this address resolves to this machine rather than the old machine. No retry was '
+        + 'performed after this decisive result. No data was modified.',
+      );
+    }
+    if (!lastResult.error
+        && /nginx/i.test(lastResult.server)
+        && [502, 503, 504].includes(lastResult.statusCode)) {
+      return {
+        ok: true,
+        statusCode: lastResult.statusCode,
+        attempts,
+        elapsedMs: Date.now() - startedAt,
+      };
+    }
+
+    const remainingAfterAttemptMs = budgetMs - (Date.now() - startedAt);
+    if (remainingAfterAttemptMs <= 0) break;
+    await wait(Math.min(RESTORE_PROBE_RETRY_DELAY_MS, remainingAfterAttemptMs));
   }
-  if (!/nginx/i.test(result.server)) {
-    throw new Error(
-      `Restore aborted: RESTORE_PROBE_URL ${target.href} answered with HTTP `
-      + `${result.statusCode || 'unknown'} but did not identify itself as Nginx. The probe `
-      + 'cannot prove this machine\'s backend is stopped. No data was modified.',
-    );
+
+  const elapsedMs = Date.now() - startedAt;
+  throw new Error(
+    `Restore aborted: RESTORE_PROBE_URL ${target.href} remained inconclusive after `
+    + `${attempts} attempt(s) over ${elapsedMs}ms (total budget ${budgetMs}ms). `
+    + `Last result: ${probeResultDescription(lastResult)}. Only an explicit Nginx `
+    + '502/503/504 upstream failure proves the backend is stopped; connection, DNS or TLS '
+    + 'failures and other HTTP responses do not. Check this machine\'s Nginx and probe address, '
+    + 'then retry. No data was modified.',
+    { cause: lastResult.error },
+  );
+}
+
+async function assertRestoreTargetParentsWritable(config) {
+  const parents = [...new Set([
+    path.dirname(config.databasePath),
+    config.contentDir,
+    path.dirname(config.uploadsDir),
+    path.dirname(config.labStorageDir),
+  ].map((directory) => path.resolve(directory)))];
+
+  for (const parent of parents) {
+    const probePath = path.join(parent, `.restore-write-check-${crypto.randomUUID()}`);
+    try {
+      await fs.mkdir(parent, { recursive: true });
+      await fs.writeFile(probePath, 'restore-write-check', { flag: 'wx' });
+      await fs.unlink(probePath);
+    } catch (error) {
+      await fs.unlink(probePath).catch(() => {});
+      throw new Error(
+        `Restore aborted: target parent directory ${parent} is not writable by the runtime `
+        + `user (${error.code || error.message}). Ensure RUNTIME_ROOT_PATH/public and `
+        + 'RUNTIME_ROOT_PATH/private, including their descendants, are owned by UID/GID '
+        + '1000:1000 before restoring. No data was modified.',
+        { cause: error },
+      );
+    }
   }
-  if (result.statusCode === 200) {
-    throw new Error(
-      `Restore aborted: RESTORE_PROBE_URL ${target.href} returned HTTP 200, so its backend is `
-      + 'still healthy. If you are migrating, first confirm this address resolves to this '
-      + 'machine rather than the old machine. No data was modified.',
-    );
-  }
-  if (![502, 503, 504].includes(result.statusCode)) {
-    throw new Error(
-      `Restore aborted: RESTORE_PROBE_URL ${target.href} returned unexpected HTTP `
-      + `${result.statusCode || 'unknown'}; only an explicit Nginx 502/503/504 upstream failure `
-      + 'can satisfy the HTTP stop check. No data was modified.',
-    );
-  }
-  return { ok: true, statusCode: result.statusCode };
 }
 
 async function probeWalSharedMemoryAbsent(databasePath) {
@@ -698,6 +762,7 @@ async function restoreBackup(config, archivePath, options = {}) {
     // The operator declaration is not treated as proof. All three probes must pass after the
     // archive is known to be valid, before the snapshot and every destructive write below.
     await assertServiceStopped(config, options);
+    await assertRestoreTargetParentsWritable(config);
 
     // Only snapshot once the incoming archive is known to be valid and the service-stop
     // probes have passed. A failure here throws and leaves the live data intact.
@@ -748,6 +813,7 @@ module.exports = {
   encryptArchive,
   excludedRestoreWarnings,
   assertServiceStopped,
+  assertRestoreTargetParentsWritable,
   assertPreRestoreSnapshotConfirmation,
   missingLabStorageRestoreWarnings,
   probeDatabaseExclusiveLock,

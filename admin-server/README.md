@@ -285,7 +285,11 @@ npm run restore -- --archive backups/backup-20260811T215253573Z.tar.gz --force -
 2. 当前 SQLite 不存在 `-shm` WAL共享内存文件；
 3. 当前 SQLite 可以取得独占写锁。
 
-三项缺一不可，不是任一通过即可。连接失败、DNS/TLS错误或超时只说明探测本身失效，**绝不等于后台已停止**。`RESTORE_PROBE_URL` 必须在 `admin-server/.env` 里显式配置为本机 hub Nginx 的回环 HTTP 地址，例如 `http://127.0.0.1:<后端端口>/health`；它**不得指向 gateway**，因为 gateway 是哑代理，其自身故障返回非 200 不能证明 admin-server 已停止。只允许 `localhost` 或本机网卡上的IP字面量，**禁止填写公开域名**。迁移期间公开域名可能仍指向旧机器，旧机返回200会让恢复被拒绝并把排查方向带错。
+三项缺一不可，不是任一通过即可。连接失败、DNS/TLS错误、超时、非Nginx响应或其他HTTP状态只说明探测结论不明，**绝不等于后台已停止**。恢复器会在总预算内重试这些不明结果；默认总预算为60000毫秒，包含所有请求尝试和固定退避。只有Nginx明确返回502/503/504才满足第一道判据；HTTP 200代表后台仍健康，会立即拒绝且不重试。`RESTORE_PROBE_URL` 必须在 `admin-server/.env` 里显式配置为本机 hub Nginx 的回环 HTTP 地址，例如 `http://127.0.0.1:<后端端口>/health`；它**不得指向 gateway**，因为 gateway 是哑代理，其自身故障返回非 200 不能证明 admin-server 已停止。只允许 `localhost` 或本机网卡上的IP字面量，**禁止填写公开域名**。迁移期间公开域名可能仍指向旧机器，旧机返回200会让恢复被拒绝并把排查方向带错。
+
+可选参数 `--probe-timeout-ms <总预算毫秒，正整数>` 只调整整轮健康探测的总预算，
+不是单次请求超时；单次尝试和退避由代码固定，不提供额外配置项。预算耗尽后的拒绝信息
+会列出尝试次数、总耗时和最后一次结果，不能用增加预算把“不明”解释成“已停服”。
 
 如果 `-shm` 是异常退出后残留的，守卫会选择安全侧误报并拒绝恢复。不要为了绕过守卫直接删除 `-shm` 或 `-wal`；先确认所有容器和数据库进程都已停止，并检查WAL恢复状态。
 
@@ -303,6 +307,8 @@ npm run restore -- --archive backups/backup-20260811T215253573Z.tar.gz --force -
   仍有空闲WAL连接，或异常退出留下了需要人工检查的`-shm`。停止所有数据库使用者并检查WAL状态，不要直接删文件绕过。
 - **`Restore aborted: SQLite exclusive-lock probe ...`**
   当前数据库仍无法取得独占写锁，通常表示后台或其他程序还持有写事务。停止后台并关闭所有连接到该 SQLite 文件的进程，再重试。
+- **`Restore aborted: target parent directory ... is not writable ...`**
+  运行时父目录属主不正确。确认 `RUNTIME_ROOT_PATH/public`、`private` 及其子目录属于运行用户 UID/GID `1000:1000`，不要用全员可写绕过。
 - **`Restore aborted: the current database at ... exists but could not be inspected ...`**
   当前那个数据库文件在，但读不出来——这本身就说明**现在的数据可能已经损坏了**，需要你亲自看一眼再决定，所以系统不会自作主张覆盖它。
 - **`Restore aborted: ... is not a regular file`**

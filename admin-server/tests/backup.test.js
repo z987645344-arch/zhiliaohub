@@ -29,8 +29,8 @@ const {
   verifyExtractedBackup,
 } = require('../src/services/backup-service');
 
-test('恢复健康探测默认等待15秒', () => {
-  assert.equal(DEFAULT_RESTORE_PROBE_TIMEOUT_MS, 15000);
+test('恢复健康探测默认总预算为60秒', () => {
+  assert.equal(DEFAULT_RESTORE_PROBE_TIMEOUT_MS, 60000);
 });
 
 function createConfig(runtimeRoot) {
@@ -73,13 +73,19 @@ async function unusedLoopbackPort() {
 }
 
 async function startNginxProbe(statusCode = 503) {
+  let requestCount = 0;
   const server = http.createServer((request, response) => {
+    requestCount += 1;
     response.setHeader('Server', 'nginx');
     response.writeHead(request.url === '/health' ? statusCode : 404);
     response.end();
   });
   const port = await listen(server);
-  return { server, url: `http://127.0.0.1:${port}/health` };
+  return {
+    server,
+    url: `http://127.0.0.1:${port}/health`,
+    requestCount: () => requestCount,
+  };
 }
 
 async function restoreWithStoppedService(config, archivePath, options = {}) {
@@ -264,8 +270,75 @@ test('恢复探测地址必须显式指向本机Nginx且连接失败绝不作为
       { restoreProbeUrl: `http://127.0.0.1:${port}/health` },
       { restoreProbeTimeoutMs: 200 },
     ),
-    /could not be reached.*connection failure does not prove the backend is stopped/s,
+    /remained inconclusive after \d+ attempt\(s\).*total budget 200ms.*Last result:.*Only an explicit Nginx 502\/503\/504/s,
   );
+});
+
+test('健康探测首次返回200时立即拒绝且不重试', async () => {
+  const probe = await startNginxProbe(200);
+  const startedAt = Date.now();
+  try {
+    await assert.rejects(
+      probeServiceHealth(
+        { restoreProbeUrl: probe.url },
+        { restoreProbeTimeoutMs: 3000 },
+      ),
+      /returned HTTP 200 on attempt 1.*No retry was performed/s,
+    );
+    assert.equal(probe.requestCount(), 1);
+    assert.ok(Date.now() - startedAt < 1000, '明确的HTTP 200不得等待总预算或发起第二次请求。');
+  } finally {
+    await closeServer(probe.server);
+  }
+});
+
+test('健康探测连续超时会用尽总预算后拒绝且不会无限等待', async () => {
+  let requestCount = 0;
+  const server = http.createServer(() => {
+    requestCount += 1;
+  });
+  const port = await listen(server);
+  const budgetMs = 1400;
+  const startedAt = Date.now();
+  try {
+    await assert.rejects(
+      probeServiceHealth(
+        { restoreProbeUrl: `http://127.0.0.1:${port}/health` },
+        { restoreProbeTimeoutMs: budgetMs },
+      ),
+      /remained inconclusive after 2 attempt\(s\).*total budget 1400ms.*Last result: timed out/s,
+    );
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(requestCount, 2);
+    assert.ok(elapsedMs >= budgetMs, `实际耗时 ${elapsedMs}ms 不得短于总预算 ${budgetMs}ms。`);
+    assert.ok(elapsedMs < budgetMs + 1000, `实际耗时 ${elapsedMs}ms 不得无限超出预算。`);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('健康探测前两次超时后收到Nginx 503即可通过', async () => {
+  let requestCount = 0;
+  const server = http.createServer((request, response) => {
+    requestCount += 1;
+    if (requestCount <= 2) return;
+    response.setHeader('Server', 'nginx');
+    response.writeHead(request.url === '/health' ? 503 : 404);
+    response.end();
+  });
+  const port = await listen(server);
+  try {
+    const result = await probeServiceHealth(
+      { restoreProbeUrl: `http://127.0.0.1:${port}/health` },
+      { restoreProbeTimeoutMs: 4000 },
+    );
+    assert.equal(requestCount, 3);
+    assert.equal(result.statusCode, 503);
+    assert.equal(result.attempts, 3);
+    assert.ok(result.elapsedMs >= 2000 && result.elapsedMs < 4000);
+  } finally {
+    await closeServer(server);
+  }
 });
 
 test('人工跳过恢复前快照要求两个参数成对出现且不替代停服确认', async () => {

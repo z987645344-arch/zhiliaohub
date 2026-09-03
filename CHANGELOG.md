@@ -1,7 +1,28 @@
 # 知了hub 改动记录
 > 每轮完成改动后在此追加记录（新条目追加在**最前**，本文件为新在前的倒序）。
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
-> **最后追加：2026-09-03**
+> **最后追加：2026-09-04**
+
+## 2026-09-04 运行时目录按可见性分层并增强恢复探测（实施方现场记录）
+
+- **现场动因**：本轮三项均来自统筹师在新机生产部署现场的实测，而不是本地测试推测：对外Nginx不应能读取SQLite与含密钥归档；停服后首次健康探测曾耗时14～39秒；恢复容器必须共享宿主网络才能探测本机回环Nginx。
+- `.env.example` **+5/-4**：运行时布局改为 `public/{site,lab-storage}` 与 `private/{data,content,uploads,backups}`，明确两个父层的属主及恢复原子替换前提。
+- `.env.local.example` **+3/-2**：本机Compose说明同步public/private布局，继续与开发数据隔离。
+- `docker-compose.yml` **+8/-8**：后台六项环境路径切到public/private层；后台仍读写挂载完整runtime，Nginx只读挂public父层，不再看见private中的SQLite、上传源与备份。
+- `deploy/nginx.conf` **+2/-2**：严格只改两处静态根为 `/app/runtime/public/site` 与 `/app/runtime/public/lab-storage`，gateway信任链和代理行为未动。
+- `admin-server/src/services/backup-service.js` **+103/-37**：健康探测从15秒单次等待改为默认60000毫秒总预算；HTTP 200立即拒绝，Nginx 502/503/504通过，连接/DNS/TLS/超时/其他响应重试至预算耗尽后仍拒绝，并报告次数、总耗时与末次结果；新增恢复目标父目录写权限预检，属主错误在覆盖数据前明确指向UID/GID 1000:1000。`replaceDirectory`切换算法未改。
+- `admin-server/scripts/restore.js` **+1/-1**：CLI帮助明确 `--probe-timeout-ms` 表示含尝试与退避的总预算，不是单次请求超时。
+- `admin-server/tests/backup.test.js` **+77/-4**：新增200只尝试一次、连续超时按预算拒绝、前两次超时后503通过及耗时有界的真实HTTP测试；测试总数由96增至99。
+- `admin-server/README.md` **+7/-1**：写明总预算语义、失败关闭规则与父目录属主诊断。
+- `admin-server/deploy/README.md` **+99/-35**：补齐平铺生产目录约30秒停机的原地迁移顺序、public/private属主、恢复后的前台重建边界，以及必须使用 `docker run --network host` 的完整恢复方式；`docker compose run`容器内回环不是宿主回环，不能用于本探测。
+- `docs/claude_memory.md` **+7/-2**、`docs/zhiliaohub_structure.md` **+1/-1**：由指挥师维护，实施方未改其内容；两份文档同步public/private可见性边界、父目录挂载性质、属主要求、site派生物边界及99项测试锚点，随本轮一并存档。
+- `CHANGELOG.md` **+22/-1**：新增本条普通工作记录，不写版本号、不暗示已经打标或部署。
+- **不是“新增”Nginx即时跟随能力**：整根挂载时，恢复重命名后Nginx本来就会解析到新目录；本轮让Nginx挂 `public/` 父目录，是**保住**该性质并补上private隔离。绝不能再“优化”为 `site/`、`lab-storage/` 两个叶子窄挂载，否则会静默伺服恢复前inode而健康检查仍绿。
+- **真实恢复往返证据**：归档manifest含 `lab-storage/restore-live-mount-proof/mount-proof.txt`（50字节，SHA-256 `0a6c1d8bf6d43952535f8223acc8ad7dcc480ed0e2d67382c911412045582428`）；删除后HTTP为404，恢复后完全未重启/exec/reload Nginx，`GET /restore-live-mount-proof/mount-proof.txt` 返回200及原串 `LAB_RESTORE_VISIBLE_WITHOUT_NGINX_RESTART_20260904`，`RESTART_COUNT=0`。小作坊vhost以lab-storage为站点根，故生产式路径是 `/<slug>/<文件>`。
+- **挂载与属主反例证据**：同一脚本在真实Docker bind mount得到 `OLD_LAYOUT_RESULT=EBUSY`、`NEW_LAYOUT_RESULT=REPLACE_SUCCESS`；admin-server仅有 `/app/runtime` 一个挂载点，Nginx仅有 `/app/runtime/public` 一个挂载点，六个目标的父目录对恢复容器均为挂载内部普通目录。临时卷将public/private设为 `root:root 0755` 后，恢复在写入前以EACCES拒绝，并明确提示UID/GID 1000:1000。
+- **本场验证**：改动前完整 `npm test` **96/96通过、0失败**；改动后 **99/99通过、0失败**。`npm run check`、涉及文件 `node --check`、`git diff --check`、`docker compose --env-file .env.local.example config --quiet` 均通过；官方 `nginx:stable-alpine` 渲染后 `nginx -t` 成功，两处root均为public路径。
+- ⚠️ **site恢复边界**：`site/` 仍是可由仓库基础文件与全量发布重建的派生物，既不入备份也不由恢复器还原。灾难恢复后必须部署基础静态文件并执行一次全量发布；只验恢复命令退出码不能证明前台已恢复。
+- ⚠️ **未验证，不得当作已通过**：未连接或修改真实服务器，未验证真实生产恢复往返、真实停服耗时分布或现场约30秒停机。Docker Hub鉴权网络中断导致当前源码的无缓存镜像重建未完成；容器行为验证复用已有本机镜像依赖，并只读挂载当前源码执行，未把它写成新镜像构建成功。
 
 ## Git标签 v3.0 - 2026-09-03
 

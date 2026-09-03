@@ -20,12 +20,12 @@ services:
       PORT: 3001
       TRUST_PROXY_HOPS: 1
       SCHEMA_PATH: /app/schema/schema.sql
-      DATA_DIR: /app/runtime/data
-      CONTENT_DIR: /app/runtime/content
-      UPLOAD_DIR: /app/runtime/uploads
-      BACKUP_DIR: /app/runtime/backups
-      LAB_STORAGE_DIR: /app/runtime/lab-storage
-      SITE_ROOT: /app/runtime/site
+      DATA_DIR: /app/runtime/private/data
+      CONTENT_DIR: /app/runtime/private/content
+      UPLOAD_DIR: /app/runtime/private/uploads
+      BACKUP_DIR: /app/runtime/private/backups
+      LAB_STORAGE_DIR: /app/runtime/public/lab-storage
+      SITE_ROOT: /app/runtime/public/site
     expose:
       - "3001"
     volumes:
@@ -59,8 +59,8 @@ services:
       - "${SERVER_PUBLIC_IP:-127.0.0.1}:${SERVER_HTTP_PORT:-80}:80"
     volumes:
       - type: bind
-        source: ${RUNTIME_ROOT_PATH}
-        target: /app/runtime
+        source: ${RUNTIME_ROOT_PATH}/public
+        target: /app/runtime/public
         read_only: true
       - type: bind
         source: ./deploy/nginx.conf

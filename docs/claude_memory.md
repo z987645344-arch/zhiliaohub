@@ -16,7 +16,7 @@
 | 定位 | 个人多作品展示、学习心得、反馈交流与静态小作坊入口 |
 | 前台 | 原生 HTML / CSS / JavaScript，零构建；作品、日记和反馈内容由后台发布为静态 HTML |
 | 后台 | Node.js 22+ / Express 5 / better-sqlite3 / Markdown + marked |
-| 部署 | Docker Compose 双服务：`admin-server` + Nginx。**本项目的 Nginx 不再终止 HTTPS**——TLS 只在独立仓库 `zhiliao-gateway` 终止一次，本项目降级为只绑回环的纯 HTTP 后端，伺服静态站并反代后台路径。两个容器共用同一个父级 bind mount（见下文恢复前提） |
+| 部署 | Docker Compose 双服务：`admin-server` + Nginx。**本项目的 Nginx 不再终止 HTTPS**——TLS 只在独立仓库 `zhiliao-gateway` 终止一次，本项目降级为只绑回环的纯 HTTP 后端，伺服静态站并反代后台路径。运行时目录**按可见性分两层**：`admin-server` 挂 `RUNTIME_ROOT_PATH` 整体，Nginx 只读挂其中的 `public/` 子树（见下文恢复前提） |
 | 配套 App | 独立仓库 `zhiliaohub_app`，**独立标签线**，当前 `v0.3.1`（纯文档与 `.gitignore` 整理，无代码改动；功能基线仍是 `v0.3`）；prod/qa 可并装，已完成设备认证和网络容错真机验证 |
 | CI | 主仓库 Actions 自 `v2.8`（2026-08-27）起按 `package-lock.json` 执行 `npm ci` 并运行完整后台 `npm test`，原有全仓 JavaScript 语法与 HTML 本地引用检查保留；仍不做容器、Nginx 与浏览器验证 |
 | 与知天关系 | **仓库、账号、数据和部署仍完全独立，本仓库不包含其业务代码**；但两者共用同一台服务器（各占一个公网 IP）与**同一个顶层域名**。2026-08-16 确定：知天挂在本域名的子域名 `agent.zhiliaohub.com` 下，解析到知天专属 IP；本站为首页，后续在 `tools.html` 增加跳转入口，并规划分层融合（详见「与知天的域名与融合边界」）。域名分流属跨项目协调，不构成任一方的运行依赖 |
@@ -59,6 +59,10 @@ v2.0 完成两项本地代码与文档工作：
 - SQLite 保存内容元数据、发布状态、TOTP、session、设备认证、反馈审核队列和小作坊项目元数据。
 - Markdown、普通上传、备份归档、小作坊解压内容和公开站点目录分别持久化。
 - ⚠️ **六个数据目录必须位于同一个 `RUNTIME_ROOT_PATH` 之下，这是恢复能工作的前提，不是布局偏好。** 恢复靠 `replaceDirectory` 的原子重命名切换目录；若某个数据目录**自身就是 bind mount 挂载点**，`rename` 必然 `EBUSY`，且暂存目录会建到容器 `/app`（`root:root`）而 `EACCES`。原先六个叶子目录各自挂载，因此**每一次恢复、每一个目录都必然失败**——由统筹师在新机首次真实恢复时撞到，本地 94 项测试全绿却漏检，因为测试用的是 `mkdtemp` 临时目录、生产用的是挂载点。现改为只挂父目录、六者为其下普通子目录，`replaceDirectory` 算法一行未改。
+- **运行时目录再分 `public` / `private` 两层**：`public/` 放 `site`、`lab-storage`，`private/` 放 `data`、`content`、`uploads`、`backups`。`admin-server` 挂 `RUNTIME_ROOT_PATH` 整体，**Nginx 只读挂 `public/` 子树**——它是对外网暴露的容器，没有理由能读到含密码哈希与 TOTP 密钥的归档和 SQLite。
+  - ⚠️ **Nginx 必须挂 `public/` 这个父目录，不能改成两个叶子窄挂载。** 挂父目录时 `lab-storage` 被 `replaceDirectory` 重命名替换后，Nginx 立刻看到新目录（挂载内部的子目录，路径实时解析）；挂叶子目录则会握住旧 inode、**静默伺服恢复前的内容而健康检查全绿**。这个性质在整根挂载时本来就有，分层是**保住**它、顺带补上隔离，不是新增。已证伪式验证：恢复后不重启 Nginx 直接请求标记文件即取到新内容，`RESTART_COUNT=0`。
+  - ⚠️ `public/` 与 `private/` 两个父目录必须是 **`1000:1000`**：`replaceDirectory` 把暂存目录建在**目标的父目录**里，父目录属主错了就是 `EACCES` 换个地方复发。部署时对 `RUNTIME_ROOT_PATH` 整体递归 `chown`。
+  - ⚠️ **`site/` 不入备份、也不还原**（派生物，由发布服务重建）。因此灾难恢复后前台是空的，**必须跑一次全量发布**；演练时只验"恢复成功"而不验"前台还在"，会误以为丢了数据。
 - 备份默认覆盖 SQLite 一致性快照、作品/日记 Markdown、上传池全部文件和 `lab-storage/` 已完成项目，包含 manifest、SHA-256、可选 AES-256-GCM 加密和保留策略。**归档分三条互斥谱系，各自独立轮转、互不挤占**：手工 `backup-*`、调度 `scheduled-backup-*`、恢复前 `pre-restore-*`。两个常规池共用 `BACKUP_RETENTION_COUNT`（默认各留3份），恢复前池用自己的保留数（默认3份）。**此前手工与调度共用同一前缀，跑一次手工就会挤掉调度的份数——已真实发生过一次「保留策略清理：5 份」。**设置 `BACKUP_EXCLUDE_ZIP=true` 后上传ZIP不入归档，只在 `manifest.excluded` 留存路径、大小和SHA-256，恢复后由用户从本地按原名补齐并校验。**一份“静默地少了东西”的备份比没有备份更危险。**
 - 恢复前会自动创建可用作回退点的快照；恢复必须停服并显式使用 `--force`。
 - 进程内定时备份以固定UTC+8解释 `BACKUP_SCHEDULE_LOCAL_TIME`，默认每日00:00；不依赖容器 `TZ`。**去重与「空目录启动即备份」的判据只看 `scheduled-backup-*`**：手工归档与恢复前快照都不再满足当天的调度边界。此前手工归档会顶掉当天的调度备份——现场手工验一次归档格式，那天就没有调度归档，且无任何提示。`BACKUP_MIRROR_DIR` 仍只是同机目录副本模拟，不是真正异地容灾。
@@ -118,7 +122,8 @@ v2.0 完成两项本地代码与文档工作：
   |---|---|
   | `v2.8` | 80 |
   | `v2.9` | 94（指挥师独立复跑确认 94/94、0 失败） |
-  | `v2.9` 之后的挂载布局重构轮 | 96 |
+  | `v3.0` | 96 |
+  | `v3.0` 之后的 public/private 分层轮 | 99 |
 
   **引用时以 CI 的实际输出为准**，本表只说明"某个锚点上曾是多少"。数字下降就是有测试被删，属于必须追问的信号。
 - 主仓库 CI 自 `v2.8` 起真实执行这套测试，此前只覆盖 JavaScript 语法和 HTML 本地引用（长期「假绿」）。

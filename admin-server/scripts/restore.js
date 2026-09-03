@@ -29,7 +29,7 @@ if (!archive || !force || !confirmServiceStopped || snapshotConfirmationMismatch
   console.error(
     '用法：node scripts/restore.js --archive <备份归档路径> --force '
     + '--confirm-service-stopped [--skip-pre-restore-snapshot '
-    + '--confirm-no-pre-restore-snapshot] [--probe-timeout-ms <正整数毫秒>]',
+    + '--confirm-no-pre-restore-snapshot] [--probe-timeout-ms <总预算毫秒，正整数>]',
   );
   if (!confirmServiceStopped) {
     console.error(
