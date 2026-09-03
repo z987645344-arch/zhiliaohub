@@ -30,7 +30,7 @@
 - `SERVER_PUBLIC_IP`（gateway 拓扑下必须为 `127.0.0.1`）与 HTTP 宿主端口；
 - 主站/后台共用的 `SERVER_NAME` 与小作坊的 `LAB_SERVER_NAME`；
 - `TRUSTED_PROXY_CIDR`（现场实测的后端 Compose 桥网关网段）；
-- 五个后台持久目录和独立静态站点目录的宿主机路径；
+- 单一运行时父目录的宿主机路径（其下固定包含五个后台持久目录和公开站点目录）；
 - Nginx上传上限与镜像标签。
 
 这里**不要**填写管理员密码哈希、session密钥、TOTP密钥或备份加密密码。
@@ -54,18 +54,36 @@ Compose中的 `environment` 会覆盖该文件里的运行拓扑值，避免现�
 
 ## 持久目录与权限
 
-根目录 `.env` 中的以下路径必须指向宿主机持久目录：
+根目录 `.env` 只配置一个 `RUNTIME_ROOT_PATH`。该宿主目录以可写方式挂到后台的
+`/app/runtime`，并以只读方式挂到Nginx的同一路径；六个恢复目标必须全部是它下面的
+普通子目录：
 
-- `ADMIN_DATA_PATH` → 容器 `/app/data`
-- `ADMIN_CONTENT_PATH` → 容器 `/app/content`
-- `ADMIN_UPLOADS_PATH` → 容器 `/app/uploads`
-- `ADMIN_BACKUPS_PATH` → 容器 `/app/backups`
-- `ADMIN_LAB_STORAGE_PATH` → 容器 `/app/lab-storage`
-- `SITE_ROOT_PATH` → 后台读写 `/app/site`，Nginx只读 `/usr/share/nginx/html`
+| 宿主子目录 | 后台容器路径 | Nginx用途 |
+|---|---|---|
+| `data/` | `/app/runtime/data` | — |
+| `content/` | `/app/runtime/content` | — |
+| `uploads/` | `/app/runtime/uploads` | — |
+| `backups/` | `/app/runtime/backups` | — |
+| `lab-storage/` | `/app/runtime/lab-storage` | 从同一路径只读伺服 |
+| `site/` | `/app/runtime/site` | 从同一路径只读伺服 |
 
-后台镜像以非root `node` 用户运行。服务器部署或迁移时应从实际镜像核对UID/GID，并赋予上述目录最小必要权限；不能使用全员可写来回避属主问题。
+**共用一个父目录是恢复正确性的前提，不是布局偏好。** 恢复器通过同文件系统内的
+原子 `rename` 交换上述子目录；如果每个子目录本身都是独立bind mount，Linux会以
+`EBUSY`拒绝重命名。Nginx也必须挂父目录，否则恢复交换 `lab-storage/` 后仍会握着
+旧mount/inode，容器healthy但继续伺服旧内容。
 
-`SITE_ROOT_PATH` 必须是**只包含公开前台文件的独立目录**，绝不能指向整个Git仓库，否则源码、文档或现场配置可能被Nginx当作静态文件暴露。它应包含：
+Docker会把不存在的bind源自动创建为`root:root`。后台镜像固定以Node官方镜像的
+UID/GID `1000:1000`运行，因此首次启动前要创建父目录及六个子目录，并一次性设置属主：
+
+```bash
+mkdir -p <runtime-root>/{data,content,uploads,backups,lab-storage,site}
+chown -R 1000:1000 <runtime-root>
+```
+
+不要用全员可写规避权限问题。已有部署升级到本布局时，应先停栈，把原六个目录移动到
+同一个持久父目录下，再把 `RUNTIME_ROOT_PATH` 指向该父目录；不能保留六个叶子挂载。
+
+`RUNTIME_ROOT_PATH/site` 必须是**只包含公开前台文件的独立目录**，绝不能指向整个Git仓库，否则源码、文档或现场配置可能被Nginx当作静态文件暴露。它应包含：
 
 - `index.html`、`works*.html`、`notes*.html`、`feedback.html`、`tools.html`；
 - `assets/`、`css/`、`js/`。
@@ -74,7 +92,7 @@ Compose中的 `environment` 会覆盖该文件里的运行拓扑值，避免现�
 资源）后，都必须把它们单独复制到该目录，具体见「现有服务器的日常代码更新」下
 的「前台静态资源必须单独同步到站点根」。
 
-`ADMIN_CONTENT_PATH` 是运行时Markdown目录。新服务器如果不是从备份恢复，应先复制仓库中的初始 `admin-server/content/`；空bind mount会遮住镜像内随附内容。
+`RUNTIME_ROOT_PATH/content` 是运行时Markdown目录。新服务器如果不是从备份恢复，应先复制仓库中的初始 `admin-server/content/`；父级bind mount会遮住镜像内随附内容。
 
 ## Nginx路由与代理信任
 
@@ -108,7 +126,7 @@ gateway 拓扑下，下列四项是同一组安全边界，任何一项都不得
 
 若将第 3 项改回公网接口，前两项会使站点以明文 HTTP 直接暴露，第 4 项还会让 Express 把明文直连误当成 HTTPS。这些故障都可能在站点“看起来正常”时静默存在。
 
-小作坊主机名使用独立Nginx `server` 块，直接只读访问 `ADMIN_LAB_STORAGE_PATH`，不代理到Node，并附加受限CSP等响应头。证书必须覆盖主站和小作坊两个主机名。真实小作坊子域名的Cookie隔离仍需按 `lab-subdomain.md` 单独验收。
+小作坊主机名使用独立Nginx `server` 块，直接只读访问 `RUNTIME_ROOT_PATH/lab-storage`，不代理到Node，并附加受限CSP等响应头。证书必须覆盖主站和小作坊两个主机名。真实小作坊子域名的Cookie隔离仍需按 `lab-subdomain.md` 单独验收。
 
 ## 本机 Compose 验证
 
@@ -133,9 +151,8 @@ docker version --format 'Server: {{.Server.Version}}'
 
 ```bash
 cp .env.local.example .env.local
-mkdir -p runtime/admin-data runtime/admin-content runtime/admin-uploads \
-         runtime/admin-backups runtime/lab-storage runtime/site
-cp -r admin-server/content/. runtime/admin-content/
+mkdir -p runtime/{data,content,uploads,backups,lab-storage,site}
+cp -r admin-server/content/. runtime/content/
 cp index.html tools.html runtime/site/ && cp -r assets css js runtime/site/
 docker compose --env-file .env.local config --quiet
 docker compose --env-file .env.local up -d --build
@@ -147,7 +164,7 @@ docker compose --env-file .env.local up -d --build
   忽略规则后请按 7.7 的方法复验，不要靠读 `.gitignore` 推断。
 - 本机将 hub Nginx 的纯 HTTP 端口绑到 `127.0.0.1:8080`；生产同样必须只绑回环，由 gateway 占用公网 80/443。
 - `runtime/` 下的数据目录与 `admin-server/data/` 是**分开的**，跑 Compose 不会动本地开发库。
-- `SITE_ROOT_PATH` 指向 `runtime/site`，只放公开前台文件；**绝不能指向整个 Git 检出**，
+- `RUNTIME_ROOT_PATH` 指向 `runtime`；其中的 `site/` 只放公开前台文件，**绝不能指向整个 Git 检出**，
   否则源码与现场配置会被 nginx 当静态文件暴露。这条约束本机与生产一致。
 - `admin-server/.env` 本机也需要存在，且 `SESSION_SECRET`、`ADMIN_PASSWORD_HASH`、
   `TOTP_ENCRYPTION_KEY` 必须是合法值，否则后台启动即退出。**本机值必须是当场生成的
@@ -232,8 +249,8 @@ curl --fail --silent https://zhiliaohub.com/health
 
 ### ⚠️ 前台静态资源必须单独同步到站点根
 
-上面的命令只更新**后台容器**。前台是 Nginx 直接伺服 `SITE_ROOT_PATH`
-指向的独立站点目录的静态文件，**`git pull` 不会把它们送过去**——站点根是一份
+上面的命令只更新**后台容器**。前台是 Nginx 直接伺服 `RUNTIME_ROOT_PATH/site`
+中的静态文件，**`git pull` 不会把它们送过去**——站点根是一份
 独立于 Git 检出的目录（见「持久目录与权限」，它绝不能指向仓库本体）。
 
 **只要本轮改动了任何前台文件——HTML、`css/`、`js/`，以及新增的图片、字体等
@@ -262,8 +279,8 @@ cp -r assets css js <站点根>/
 
 1. 在服务器检出已确认版本，安装受支持的Docker Engine与Compose插件。
 2. 从两个 `.env.example` 分别创建根目录 `.env` 和 `admin-server/.env`，填写现场值，并确认两者均未被Git跟踪。
-3. 创建六个持久目录并设置最小必要权限。TLS 证书只由独立 gateway 管理，hub Compose 不挂载证书。
-4. 在 `admin-server/.env` 配置 `RESTORE_PROBE_URL`，它必须是**本机 hub Nginx 的回环 HTTP 地址加精确 `/health` 路径**，例如 `http://127.0.0.1:<后端端口>/health`。不得指向 gateway 或公开域名；gateway 失效不能证明后台已停，迁移期间公开 DNS 也可能仍指向旧机器。
+3. 创建单一 `RUNTIME_ROOT_PATH` 父目录及其六个固定子目录，执行 `chown -R 1000:1000 <runtime-root>`。既有部署必须先把六个数据目录归并到同一父目录；TLS证书只由独立gateway管理，hub Compose不挂载证书。
+4. 在**应用层的 `admin-server/.env`**配置 `RESTORE_PROBE_URL`，不要放进根目录Compose `.env`。它必须是**本机 hub Nginx 的回环 HTTP 地址加精确 `/health` 路径**，例如 `http://127.0.0.1:<后端端口>/health`。不得指向 gateway 或公开域名；gateway 失效不能证明后台已停，迁移期间公开 DNS 也可能仍指向旧机器。
 5. 初始化独立公开站点目录，确保其中不含Git仓库、后台源码或现场配置。
 6. 运行 `docker compose config --quiet`，构建后台镜像，并对Nginx模板执行真实 `nginx -t`。
 7. 先运行 `docker compose up -d` 并等待两个服务healthy。Nginx配置使用静态上游名且Compose依赖后台健康，整栈从未启动过时不能直接恢复。
@@ -272,6 +289,10 @@ cp -r assets css js <站点根>/
 10. 重建容器后再次确认SQLite、Markdown、上传、备份、小作坊文件和已发布前台均未丢失。
 
 `RESTORE_PROBE_URL`请求连接失败、DNS/TLS失败或超时都不能证明服务已停，恢复会拒绝继续。若地址返回200，错误信息会提醒迁移操作者核对它是否误指向旧机器。异常退出后残留`-shm`也会按安全侧误报拒绝；不要直接删除`-shm/-wal`绕过检查，应先确认所有数据库使用者都已停止并检查WAL状态。新机同样不得增加跳过探测的旁路，只走“起整栈→单停后台→恢复→重启后台”的固定序列。
+
+恢复健康探测默认等待15秒，以覆盖Nginx连接已消失上游时约3秒以上的TCP重试。
+如现场确需更长时间，只在当次可见的命令行追加 `--probe-timeout-ms <正整数毫秒>`；
+非法值会拒绝执行，不会静默退回默认值。本项刻意不提供环境变量，避免旧配置长期残留。
 
 **备份默认包含ZIP；如需排除，设置 `BACKUP_EXCLUDE_ZIP=true`，此时恢复后需由用户从本地补齐，清单见 `manifest.excluded`。一份“静默地少了东西”的备份比没有备份更危险。**启用排除后的灾难重建验收不能只看恢复命令退出码，还要把清单列出的ZIP补齐并校验后，再检查作品下载链接。
 

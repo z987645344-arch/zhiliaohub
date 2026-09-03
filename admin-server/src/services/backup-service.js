@@ -22,6 +22,7 @@ const BACKUP_PREFIX = 'backup';
 const SCHEDULED_BACKUP_PREFIX = 'scheduled-backup';
 const PRE_RESTORE_PREFIX = 'pre-restore';
 const DEFAULT_PRE_RESTORE_RETENTION = 3;
+const DEFAULT_RESTORE_PROBE_TIMEOUT_MS = 15000;
 const ENCRYPTION_MAGIC = Buffer.from('ZHBACKUP1');
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
@@ -372,7 +373,8 @@ function restoreProbeUrl(config) {
   if (!configured) {
     throw new Error(
       'Restore aborted: RESTORE_PROBE_URL is required and must point to this machine\'s own '
-      + 'Nginx /health endpoint. Public domains are forbidden. No data was modified.',
+      + 'Nginx /health endpoint. Set it in admin-server/.env (the application environment file), '
+      + 'not the root Compose .env. Public domains are forbidden. No data was modified.',
     );
   }
   let target;
@@ -442,7 +444,7 @@ async function requestProbeStatus(target, timeoutMs) {
 
 async function probeServiceHealth(config, options = {}) {
   const target = restoreProbeUrl(config);
-  const timeoutMs = options.restoreProbeTimeoutMs ?? 3000;
+  const timeoutMs = options.restoreProbeTimeoutMs ?? DEFAULT_RESTORE_PROBE_TIMEOUT_MS;
   let result;
   try {
     result = await requestProbeStatus(target, timeoutMs);
@@ -734,6 +736,7 @@ async function restoreBackup(config, archivePath, options = {}) {
 module.exports = {
   BACKUP_PREFIX,
   DEFAULT_PRE_RESTORE_RETENTION,
+  DEFAULT_RESTORE_PROBE_TIMEOUT_MS,
   PRE_RESTORE_PREFIX,
   SCHEDULED_BACKUP_PREFIX,
   archiveTimestamp,
@@ -751,6 +754,7 @@ module.exports = {
   probeServiceHealth,
   probeWalSharedMemoryAbsent,
   pruneBackups,
+  replaceDirectory,
   restoreBackup,
   verifyExtractedBackup,
 };

@@ -391,7 +391,7 @@ SQLite当前包含：
 
 1. Compose包含独立的 `admin-server` 与官方Nginx服务；后台只在内部网络暴露3001端口。
 2. 后台使用 `admin-server/.env` 读取业务配置与密钥；根目录 `.env` 只保存Compose拓扑变量。两者均由服务器现场创建且不入库。
-3. SQLite数据、Markdown正文、上传文件、本地备份、小作坊站点和独立公开站点目录均通过宿主机路径持久挂载。
+3. SQLite数据、Markdown正文、上传文件、本地备份、小作坊站点和独立公开站点目录均持久化到宿主机。⚠️ **它们通过「一个父级 bind mount + 六个普通子目录」挂载，而不是六个各自独立的叶子挂载**：`admin-server` 只挂 `RUNTIME_ROOT_PATH` 到 `/app/runtime`，六者是其下的 `/app/runtime/data` 等；Nginx 以只读方式挂同一父目录，两处静态根指向 `/app/runtime/site` 与 `/app/runtime/lab-storage`。**这是恢复能工作的前提**——恢复用 `replaceDirectory` 的原子重命名切换目录，而挂载点自身无法被 `rename`（`EBUSY`），暂存目录也无法建在容器 `/app`（`root:root`，`EACCES`）。旧的六叶子挂载布局下**每一次恢复、每一个目录都必然失败**，且 `nginx` 直接挂叶子目录时恢复后仍握旧 inode、会继续伺服恢复前的小作坊内容而健康检查全绿。改为父级挂载后 `replaceDirectory` 算法一行未改，Nginx 也自然跟随重命名。
 4. Nginx从只读公开站点目录伺服前台，代理 `/admin`、`/api`、`/health` 与后台上传预览，并设置真实IP/协议转发头；后台固定使用 `TRUST_PROXY_HOPS=1`。**本项目的 Nginx 不再终止 TLS**，TLS 只在 `zhiliao-gateway` 终止一次。
 5. **代理信任链是 访客 → zhiliao-gateway → 知了hub Nginx → Express，共两跳。** 新服务器只有一个公网 IP，四个主机名共用 443，因此由独立仓库 `zhiliao-gateway` 作唯一前端，按 `server_name` 分流。gateway 发 `X-Forwarded-For $proxy_add_x_forwarded_for`；知了hub 的 Nginx 用 `real_ip_header X-Forwarded-For` 加**单条 env 驱动**的 `set_real_ip_from ${TRUSTED_PROXY_CIDR}` 还原真实访客IP，`real_ip_recursive` 保持默认 off（取XFF末位）。还原成功后转发出去的 XFF 末位仍是访客IP，故 `TRUST_PROXY_HOPS` 保持1不变。
    - ⚠️ **可信来源不是 `127.0.0.1`。** gateway 经宿主回环连入，报文过 docker-proxy 后本项目 Nginx 看到的是自身 Compose 网络的**桥网关地址**。`app-network` 只声明 `driver: bridge`、未固定子网，该地址会随网络重建而变，所以必须由 `.env` 注入、不得写死。

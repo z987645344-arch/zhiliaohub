@@ -1,7 +1,26 @@
 # 知了hub 改动记录
 > 每轮完成改动后在此追加记录（新条目追加在**最前**，本文件为新在前的倒序）。
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
-> **最后追加：2026-09-02**
+> **最后追加：2026-09-03**
+
+## 2026-09-03 修正恢复必然失败的叶子挂载布局（实施方现场记录）
+
+- `.env.example` **+6/-8**：六个宿主叶子路径合并为一个 `RUNTIME_ROOT_PATH`，明确同父目录是恢复正确性前提而非布局偏好。
+- `.env.local.example` **+5/-8**：本机Compose模板同步单一运行时父目录，保留与本机开发数据隔离的说明。
+- `docker-compose.yml` **+10/-29**：后台只写挂载 `/app/runtime`，六类数据改为其普通子目录；Nginx只读挂同一父目录，从而在恢复重命名后自然跟随新inode。
+- `deploy/nginx.conf` **+2/-2**：仅将主站与小作坊静态根改为 `/app/runtime/site`、`/app/runtime/lab-storage`，其余gateway安全承重配置未动。
+- `admin-server/.env.example` **+3/-1**：明确 `RESTORE_PROBE_URL` 属于 `admin-server/.env` 应用层，不属于根目录Compose `.env`。
+- `admin-server/deploy/README.md` **+41/-20**：写明单父挂载机制、六个固定子目录、首次 `chown 1000:1000`、既有部署归并要求、15秒默认探测及当次CLI覆盖方式；保留既有“起整栈→单停后台→恢复→重启”序列。
+- `admin-server/scripts/restore.js` **+16/-2**：新增 `--probe-timeout-ms <毫秒>`；缺值、非正整数、小数和超出安全整数范围均拒绝执行，不静默回退。
+- `admin-server/scripts/verify-restore-bind-layout.js` **+48/-0**：新增Docker真实bind mount验证入口，直接调用未改算法的 `replaceDirectory`。
+- `admin-server/src/services/backup-service.js` **+6/-2**：健康探测默认超时由3秒提高到15秒，缺配置错误指向正确 `.env` 层；仅导出原有 `replaceDirectory` 供真实挂载验证，算法一行未改。
+- `admin-server/tests/backup.test.js` **+29/-0**：锁定15秒默认值、合法CLI覆盖值和六类非法超时输入。
+- `docs/claude_memory.md` **+10/-1**：由指挥师维护，实施方未改其内容；记录单父挂载恢复前提、生产漏检机制及按标签锚定的测试项数。
+- `docs/zhiliaohub_structure.md` **+1/-1**：由指挥师维护，实施方未改其内容；同步父级挂载、Nginx静态根与旧inode风险。
+- `CHANGELOG.md` **+20/-1**：新增本条普通工作记录，不写版本号、不暗示已打标或部署。
+- **缺陷来源与对照证据**：本轮缺陷由统筹师在新机首次真实恢复时发现，不是本地测试发现；原测试用 `mkdtemp` 普通目录，生产使用真实挂载点，导致94项全绿仍漏过。Docker中直接运行同一 `replaceDirectory` 得到 `OLD_LAYOUT_RESULT=EBUSY` 与 `NEW_LAYOUT_RESULT=REPLACE_SUCCESS`，同时证明旧布局确实损坏、新布局可完成原子替换。
+- **本场验证**：改动前完整 `npm test` **94/94通过、0失败**；改动后 **96/96通过、0失败**。`npm run check`、涉及文件的 `node --check`、`git diff --check`、`docker compose --env-file .env.local.example config --quiet` 均通过；官方 `nginx:stable-alpine` 实际渲染后 `nginx -t` 成功，两处root命中各1次。
+- **未验证边界**：本轮不连接服务器、不部署；未执行真实服务器恢复往返，也未验证Linux生产宿主的真实UID/GID属主场景。仓库修正完成不等于生产恢复已经可用。
 
 ## Git标签 v2.9 - 2026-09-02
 

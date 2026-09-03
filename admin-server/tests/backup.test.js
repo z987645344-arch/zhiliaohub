@@ -20,6 +20,7 @@ const { initializeDatabase } = require('../src/db');
 const { loadBackupConfig } = require('../src/backup-config');
 const { ContentService } = require('../src/services/content-service');
 const {
+  DEFAULT_RESTORE_PROBE_TIMEOUT_MS,
   PRE_RESTORE_PREFIX,
   createBackup,
   probeDatabaseExclusiveLock,
@@ -27,6 +28,10 @@ const {
   restoreBackup,
   verifyExtractedBackup,
 } = require('../src/services/backup-service');
+
+test('恢复健康探测默认等待15秒', () => {
+  assert.equal(DEFAULT_RESTORE_PROBE_TIMEOUT_MS, 15000);
+});
 
 function createConfig(runtimeRoot) {
   const dataDir = path.join(runtimeRoot, 'data');
@@ -365,6 +370,8 @@ test('恢复CLI只接受成对跳过参数并显著声明本次恢复没有回�
         '--confirm-service-stopped',
         '--skip-pre-restore-snapshot',
         '--confirm-no-pre-restore-snapshot',
+        '--probe-timeout-ms',
+        '1000',
       ], {
         cwd: config.serverRoot,
         windowsHide: true,
@@ -398,6 +405,28 @@ test('恢复CLI只接受成对跳过参数并显著声明本次恢复没有回�
     }
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('恢复CLI只接受严格正整数探测超时且缺值不会静默回退', async () => {
+  for (const invalid of ['', '0', '-1', '1.5', 'abc', '9007199254740992']) {
+    const args = [
+      restoreScript,
+      '--archive',
+      'unused.tar.gz',
+      '--force',
+      '--confirm-service-stopped',
+      '--probe-timeout-ms',
+    ];
+    if (invalid) args.push(invalid);
+    await assert.rejects(
+      execFileAsync(process.execPath, args, { windowsHide: true }),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, /--probe-timeout-ms 必须提供一个严格大于 0 的安全整数毫秒值/);
+        return true;
+      },
+    );
   }
 });
 

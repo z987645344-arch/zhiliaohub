@@ -8,18 +8,28 @@ function option(name) {
   return index >= 0 ? process.argv[index + 1] : '';
 }
 
+function positiveIntegerOption(name) {
+  if (!process.argv.includes(name)) return undefined;
+  const raw = option(name);
+  if (!/^\d+$/.test(raw)) return null;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 const archive = option('--archive');
 const force = process.argv.includes('--force');
 const confirmServiceStopped = process.argv.includes('--confirm-service-stopped');
 const skipPreRestoreSnapshot = process.argv.includes('--skip-pre-restore-snapshot');
 const confirmNoPreRestoreSnapshot = process.argv.includes('--confirm-no-pre-restore-snapshot');
 const snapshotConfirmationMismatch = skipPreRestoreSnapshot !== confirmNoPreRestoreSnapshot;
+const restoreProbeTimeoutMs = positiveIntegerOption('--probe-timeout-ms');
+const invalidProbeTimeout = restoreProbeTimeoutMs === null;
 
-if (!archive || !force || !confirmServiceStopped || snapshotConfirmationMismatch) {
+if (!archive || !force || !confirmServiceStopped || snapshotConfirmationMismatch || invalidProbeTimeout) {
   console.error(
     '用法：node scripts/restore.js --archive <备份归档路径> --force '
     + '--confirm-service-stopped [--skip-pre-restore-snapshot '
-    + '--confirm-no-pre-restore-snapshot]',
+    + '--confirm-no-pre-restore-snapshot] [--probe-timeout-ms <正整数毫秒>]',
   );
   if (!confirmServiceStopped) {
     console.error(
@@ -39,6 +49,9 @@ if (!archive || !force || !confirmServiceStopped || snapshotConfirmationMismatch
       + '--skip-pre-restore-snapshot 同时使用。',
     );
   }
+  if (invalidProbeTimeout) {
+    console.error('恢复被拒绝：--probe-timeout-ms 必须提供一个严格大于 0 的安全整数毫秒值。');
+  }
   process.exitCode = 1;
 } else {
   restoreBackup(loadBackupConfig(), path.resolve(archive), {
@@ -46,6 +59,7 @@ if (!archive || !force || !confirmServiceStopped || snapshotConfirmationMismatch
     confirmServiceStopped: true,
     skipPreRestoreSnapshot,
     confirmNoPreRestoreSnapshot,
+    restoreProbeTimeoutMs,
   })
     .then(({ manifest, preRestoreSnapshot, excludedFiles, warnings }) => {
       if (preRestoreSnapshot.explicitlySkipped) {

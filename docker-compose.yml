@@ -20,33 +20,18 @@ services:
       PORT: 3001
       TRUST_PROXY_HOPS: 1
       SCHEMA_PATH: /app/schema/schema.sql
-      DATA_DIR: /app/data
-      CONTENT_DIR: /app/content
-      UPLOAD_DIR: /app/uploads
-      BACKUP_DIR: /app/backups
-      LAB_STORAGE_DIR: /app/lab-storage
-      SITE_ROOT: /app/site
+      DATA_DIR: /app/runtime/data
+      CONTENT_DIR: /app/runtime/content
+      UPLOAD_DIR: /app/runtime/uploads
+      BACKUP_DIR: /app/runtime/backups
+      LAB_STORAGE_DIR: /app/runtime/lab-storage
+      SITE_ROOT: /app/runtime/site
     expose:
       - "3001"
     volumes:
       - type: bind
-        source: ${ADMIN_DATA_PATH}
-        target: /app/data
-      - type: bind
-        source: ${ADMIN_CONTENT_PATH}
-        target: /app/content
-      - type: bind
-        source: ${ADMIN_UPLOADS_PATH}
-        target: /app/uploads
-      - type: bind
-        source: ${ADMIN_BACKUPS_PATH}
-        target: /app/backups
-      - type: bind
-        source: ${ADMIN_LAB_STORAGE_PATH}
-        target: /app/lab-storage
-      - type: bind
-        source: ${SITE_ROOT_PATH}
-        target: /app/site
+        source: ${RUNTIME_ROOT_PATH}
+        target: /app/runtime
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then((response)=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))"]
@@ -74,12 +59,8 @@ services:
       - "${SERVER_PUBLIC_IP:-127.0.0.1}:${SERVER_HTTP_PORT:-80}:80"
     volumes:
       - type: bind
-        source: ${SITE_ROOT_PATH}
-        target: /usr/share/nginx/html
-        read_only: true
-      - type: bind
-        source: ${ADMIN_LAB_STORAGE_PATH}
-        target: /srv/zhiliaohub-lab
+        source: ${RUNTIME_ROOT_PATH}
+        target: /app/runtime
         read_only: true
       - type: bind
         source: ./deploy/nginx.conf
