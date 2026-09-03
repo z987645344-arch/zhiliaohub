@@ -1,4 +1,9 @@
 // Docker-only regression probe that executes the real restore directory-swap helper.
+// Windows Git Bash rewrites container paths unless each docker command is prefixed with
+// MSYS_NO_PATHCONV=1. Run from the repository root after building zhiliaohub-admin:local:
+// mkdir -p runtime/restore-bind-check/old-leaf runtime/restore-bind-check/new-parent/leaf
+// MSYS_NO_PATHCONV=1 docker run --rm --user 0:0 -e NODE_PATH=/app/node_modules --mount type=bind,source="$(pwd -W)/runtime/restore-bind-check/old-leaf",target=/runtime/leaf --mount type=bind,source="$(pwd -W)/admin-server",target=/workspace,readonly zhiliaohub-admin:local node /workspace/scripts/verify-restore-bind-layout.js --mode old --target /runtime/leaf
+// MSYS_NO_PATHCONV=1 docker run --rm --user 0:0 -e NODE_PATH=/app/node_modules --mount type=bind,source="$(pwd -W)/runtime/restore-bind-check/new-parent",target=/runtime --mount type=bind,source="$(pwd -W)/admin-server",target=/workspace,readonly zhiliaohub-admin:local node /workspace/scripts/verify-restore-bind-layout.js --mode new --target /runtime/leaf
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');

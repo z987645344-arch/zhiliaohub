@@ -1,7 +1,7 @@
 # 知了hub 项目状态 · 协作记忆
 > 用于在后续协作中快速恢复项目上下文。
 > 本文只维护当前状态；历史改动见 `CHANGELOG.md`，协作规范见 `claude_skill.md`。
-> **最后更新：2026-09-02**（最新Git标签 `v2.8`，`main` 已推进到 `ab008e7`（未打标）；生产基线只有统筹师看得到，本文不作断言；配套 App `v0.3.1`；2026-08-28 起的四角色协作结构。恢复停服守卫已加固为三道 AND 判据，见「当前验证基线」与「不可混淆的边界」）
+> **最后更新：2026-09-02**（**最新Git标签一律以 `git tag` 为准，本文不再复述具体号**——该说法已连续漂移三轮；生产运行版本只有统筹师看得到，本文不作断言。本轮记录：恢复停服守卫三道 AND 判据、gateway 拓扑接入、备份三谱系隔离、恢复挂载布局重构，详见下文各节）
 
 ---
 
@@ -11,13 +11,13 @@
 |---|---|
 | 项目名 | 知了hub（zhiliaohub） |
 | 主仓库 | `https://github.com/z987645344-arch/zhiliaohub` |
-| 当前已存档版本 | 最新Git标签 **`v2.8`**（`git tag` 自证，指向 `5d15a82`）。**生产运行的版本不由本仓库推导**：据统筹师 2026-08-28 简报为 `v2.8` 已部署，以统筹师口径为准；任何角色都不得凭本地Git状态宣称某版本已上线 |
+| 当前已存档版本 | ⚠️ **不在本文记具体标签号**——用 `git tag --sort=-v:refname \| head -1` 现查，那是唯一不会过期的来源。本文只记 `git` 查不到的事：**生产运行的版本不由本仓库推导**，只有统筹师看得到；任何角色都不得凭本地Git状态宣称某版本已上线。历史锚点：`v2.8` 指向 `5d15a82`，统筹师 2026-08-28 简报称其时 `v2.8` 已部署 |
 | 生产入口 | `https://zhiliaohub.com`；主站、`/admin/login` 与 `/health` 已真实返回 HTTP 200 |
 | 定位 | 个人多作品展示、学习心得、反馈交流与静态小作坊入口 |
 | 前台 | 原生 HTML / CSS / JavaScript，零构建；作品、日记和反馈内容由后台发布为静态 HTML |
 | 后台 | Node.js 22+ / Express 5 / better-sqlite3 / Markdown + marked |
-| 部署 | Docker Compose 双服务：`admin-server` + Nginx；Nginx 终止 HTTPS、直接伺服静态站并反代后台路径 |
-| 配套 App | 独立仓库 `zhiliaohub_app`，当前版本 v0.3；prod/qa 可并装，已完成设备认证和网络容错真机验证 |
+| 部署 | Docker Compose 双服务：`admin-server` + Nginx。**本项目的 Nginx 不再终止 HTTPS**——TLS 只在独立仓库 `zhiliao-gateway` 终止一次，本项目降级为只绑回环的纯 HTTP 后端，伺服静态站并反代后台路径。两个容器共用同一个父级 bind mount（见下文恢复前提） |
+| 配套 App | 独立仓库 `zhiliaohub_app`，**独立标签线**，当前 `v0.3.1`（纯文档与 `.gitignore` 整理，无代码改动；功能基线仍是 `v0.3`）；prod/qa 可并装，已完成设备认证和网络容错真机验证 |
 | CI | 主仓库 Actions 自 `v2.8`（2026-08-27）起按 `package-lock.json` 执行 `npm ci` 并运行完整后台 `npm test`，原有全仓 JavaScript 语法与 HTML 本地引用检查保留；仍不做容器、Nginx 与浏览器验证 |
 | 与知天关系 | **仓库、账号、数据和部署仍完全独立，本仓库不包含其业务代码**；但两者共用同一台服务器（各占一个公网 IP）与**同一个顶层域名**。2026-08-16 确定：知天挂在本域名的子域名 `agent.zhiliaohub.com` 下，解析到知天专属 IP；本站为首页，后续在 `tools.html` 增加跳转入口，并规划分层融合（详见「与知天的域名与融合边界」）。域名分流属跨项目协调，不构成任一方的运行依赖 |
 | 协作模式 | 2026-08-28 起为四角色：**统筹师**（跨项目发现问题、架构讨论、**独占云服务器 SSH 与部署**）、**指挥师**（每项目一名，确认问题、写执行指令、独立验证交付）、**Codex 程序员**（按指令改代码、自测后推送自己那一轮）、**Claude Code 程序员**（审核、推送、**打标**）。权威分工见仓库外的《团队角色条例》，本表与其冲突时以它为准 |
@@ -82,7 +82,10 @@ v2.0 完成两项本地代码与文档工作：
 - 根目录 `.env` 只存 Compose 拓扑；`admin-server/.env` 保存后台密钥与业务参数，两者均不入 Git。
 - 后台只在 Compose 内部网络暴露 3001；Nginx 直接伺服独立公开站点目录，并反代 `/admin`、`/api`、`/uploads`、`/health`。
 - Compose 强制 `NODE_ENV=production`、`HOST=0.0.0.0`、`PORT=3001`、`TRUST_PROXY_HOPS=1` 和容器路径。
-- **真实客户端 IP 还原（源站位于 Cloudflare 之后）**：`deploy/nginx.conf` 在 http 级（第一个 `server` 块之前）配置 22 条 Cloudflare 官方网段的 `set_real_ip_from` 加 `real_ip_header CF-Connecting-IP`，使 `$remote_addr` 与转发出去的 XFF 末位都成为真实访客 IP，Express 的 `req.ip` 因而正确。**`TRUST_PROXY_HOPS` 保持 1，不得改成 2**——改层数等于盲信 XFF，直连源站伪造该头即可绕过限流。网段必须限定而不能写 `0.0.0.0/0`：源站可被直连，无条件信任该头等于允许任意伪造。**这份网段列表需人工维护**，来源是 `https://www.cloudflare.com/ips-v4` 与 `ips-v6`（当前列表取于 2026-08-17）；过期的失败模式是新网段退回记 CF 边缘 IP，属优雅降级、不中断服务。
+- **真实客户端 IP 还原（当前仓库配置：gateway 拓扑）**：链路是 `访客 → zhiliao-gateway → 本项目 Nginx → Express`，共两跳。`deploy/nginx.conf` 用**单条 env 驱动**的 `set_real_ip_from ${TRUSTED_PROXY_CIDR}` 加 `real_ip_header X-Forwarded-For`，`real_ip_recursive` 保持默认 off（取 XFF 末位）。**`TRUST_PROXY_HOPS` 保持 1，不得盲目改数字**——还原成功后 XFF 末位仍是访客 IP，1 仍正确；改层数等于盲信 XFF。
+  - ⚠️ 可信来源**不是 `127.0.0.1`**：gateway 经宿主回环连入，报文过 docker-proxy 后本项目 Nginx 看到的是自身 compose 网络的**桥网关地址**；该地址随网络重建而变，必须由 `.env` 注入。**也不得写 `0.0.0.0/0`**，那等于允许任意伪造来源 IP。
+  - ⚠️ **配错不报错**：real_ip 未生效时 Express 取到桥网关地址，密码/TOTP/设备认证/反馈四个限流器合并成一个桶而毫无提示。**验证方法是看日志里实际记录的客户端地址**，不是读配置、不是 `nginx -t` 通过。
+- **【旧生产配置，仅供对照，已不再是仓库现状】** 去 CF 之前，源站位于 Cloudflare 之后，`deploy/nginx.conf` 曾配置 22 条 Cloudflare 官方网段的 `set_real_ip_from` 加 `real_ip_header CF-Connecting-IP`，并需人工维护该列表。该配置已随 gateway 拓扑整体移除，对应的「定期复核 CF 网段」待办也随之作废。**旧机上跑的仍是这一版，直到迁移完成为止**——引用时务必分清「旧生产」与「当前仓库」。
 - 线上域名和 HTTPS 已真实可用。真实服务器路径、IP、证书和密钥只存在于服务器现场文件，不写入仓库文档。
 - 小作坊独立子域名的真实 Cookie 隔离仍需单独确认；不能仅凭 localhost 路由或 Nginx 模板宣称已验证。
 
@@ -172,7 +175,7 @@ DNS 权威在 Cloudflare（免费版），根域、`www`、`lab` 均已开启橙
 ## 不可混淆的边界
 
 - ⚠️ **恢复必须走固定序列，新机不能"什么都没起就恢复"**：`deploy/nginx.conf` 用静态上游名 `proxy_pass http://admin-server:3001`，且 Compose 有 `depends_on: admin-server: service_healthy`——整栈从未启动过时 Nginx 起不来。唯一路径是**起整栈 → 单停 `admin-server` → 恢复 → 重启 `admin-server`**。`RESTORE_PROBE_URL` 必须填**本机** Nginx 地址，**禁止填公开域名**：迁移期间公开 DNS 仍指向旧机，旧机返回 200 会让恢复被拒并把排查方向带错。
-- `v2.8` 是当前最新Git标签（`git tag` 自证）。**生产基线只有统筹师看得到**，本文只转述其口径（2026-08-28：`v2.8` 已部署），不自行推导、不据「已推送」写成「已生效」。注意 `v2.0` 曾在存档后三天未部署，**存档完成从来不等于线上生效**。
+- **最新Git标签用 `git tag` 现查，本文不复述**——这条说法已连续漂移三轮（`v2.5`/`v2.6` 自相矛盾 → 停在 `v2.8` 又漏两轮）。**生产基线只有统筹师看得到**，不自行推导、不据「已推送」写成「已生效」。注意 `v2.0` 曾在存档后三天未部署，**存档完成从来不等于线上生效**。
 - 线上已部署不等于远程备份、告警、恢复演练和小作坊子域隔离全部完成。
 - `real_ip` 已于 2026-08-17 随 `v2.1` 上线并用日志实证；但**「仓库里写了配置」与「线上已生效」始终是两件事**，本次正是靠核对容器内渲染结果才发现 `docker compose up -d` 没有重建 nginx。今后改此类挂载模板，必须 `--force-recreate` 并核对容器内实际渲染，不得以 `nginx -t` 通过或站点可访问作为证据。
 - `docker compose up -d` 不保证使用最新代码；代码或依赖改变后必须先显式构建镜像。

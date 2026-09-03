@@ -83,6 +83,34 @@ chown -R 1000:1000 <runtime-root>
 不要用全员可写规避权限问题。已有部署升级到本布局时，应先停栈，把原六个目录移动到
 同一个持久父目录下，再把 `RUNTIME_ROOT_PATH` 指向该父目录；不能保留六个叶子挂载。
 
+### Windows下验证真实bind mount布局
+
+`scripts/verify-restore-bind-layout.js` 必须在Docker内运行。Windows Git Bash会默认把
+`/runtime/leaf` 等容器内路径转换成Windows路径，继而报工作目录或挂载目标无效；每条
+Docker命令都必须加 `MSYS_NO_PATHCONV=1`。先从仓库根目录构建本机镜像并准备探针目录：
+
+```bash
+docker compose --env-file .env.local.example build admin-server
+mkdir -p runtime/restore-bind-check/old-leaf runtime/restore-bind-check/new-parent/leaf
+```
+
+旧布局把目标自身作为bind mount；下面是可直接复制的完整命令，预期输出
+`OLD_LAYOUT_RESULT=EBUSY`：
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm --user 0:0 -e NODE_PATH=/app/node_modules --mount type=bind,source="$(pwd -W)/runtime/restore-bind-check/old-leaf",target=/runtime/leaf --mount type=bind,source="$(pwd -W)/admin-server",target=/workspace,readonly zhiliaohub-admin:local node /workspace/scripts/verify-restore-bind-layout.js --mode old --target /runtime/leaf
+```
+
+新布局只挂父目录、目标是其内部子目录；完整命令如下，预期输出
+`NEW_LAYOUT_RESULT=REPLACE_SUCCESS`：
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm --user 0:0 -e NODE_PATH=/app/node_modules --mount type=bind,source="$(pwd -W)/runtime/restore-bind-check/new-parent",target=/runtime --mount type=bind,source="$(pwd -W)/admin-server",target=/workspace,readonly zhiliaohub-admin:local node /workspace/scripts/verify-restore-bind-layout.js --mode new --target /runtime/leaf
+```
+
+示例中的 `$(pwd -W)` 由Git Bash在现场生成当前仓库的Windows路径，文档没有固化任何
+开发机绝对路径。该验证只证明挂载布局下的原子替换行为，不证明生产UID/GID属主正确。
+
 `RUNTIME_ROOT_PATH/site` 必须是**只包含公开前台文件的独立目录**，绝不能指向整个Git仓库，否则源码、文档或现场配置可能被Nginx当作静态文件暴露。它应包含：
 
 - `index.html`、`works*.html`、`notes*.html`、`feedback.html`、`tools.html`；

@@ -3,6 +3,19 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-03**
 
+## 2026-09-03 补充Windows恢复验证说明并校准项目概览（实施方现场记录）
+
+- `README.md` **+3/-3**：最新标签校准为 `v2.9`、配套App校准为独立标签线 `v0.3.1`；部署摘要改为仓库已完成gateway拓扑，不写统筹师才能确认的生产运行版本，也不把仓库状态表述成已经上线。
+- `admin-server/deploy/README.md` **+28/-0**：补充Windows Git Bash下以 `MSYS_NO_PATHCONV=1` 运行真实bind mount验证的完整old/new命令、预期结果与验证边界。
+- `admin-server/scripts/verify-restore-bind-layout.js` **+5/-0**：仅在文件头注释补充同一组Git Bash调用示例，脚本行为未改变。
+- `docs/claude_memory.md` **+9/-6**：由指挥师维护，实施方未改其内容；其当前仓库gateway拓扑、旧生产Cloudflare配置、App独立标签线与历史锚点校准随本轮一并存档。
+- `docs/zhiliaohub_structure.md` **+1/-1**：由指挥师维护，实施方未改其内容；文件头改为要求用Git标签现查版本，避免复制值持续漂移。
+- `CHANGELOG.md` **+13/-0**：新增本条普通工作记录，不写版本号、不暗示已经打标或部署。
+- **本地残留清理**：删除两个历史误操作留下的未跟踪空目录 `admin-server/package.json;W/` 与 `admin-server/package-lock.json;W/`；删除前已包含隐藏项检查，均为0项，因此没有删除文件，也不产生Git文件变更。
+- **本场验证**：完整 `npm test` **96/96通过、0失败**，项数与基线一致；`npm run check`、脚本 `node --check` 与 `git diff --check` 通过。按Git受控文件集合检查19个HTML，全部本地引用存在。
+- **检查范围校正**：首次直接复刻CI递归算法时，本机被忽略的 `runtime/site/` 旧副本也被扫描并报告缺链；已确认 `runtime/` 整体为Git忽略项，CI干净检出不会包含它，随后以等价的受控HTML集合重跑通过，未删除断言、未修改运行时副本来迎合结果。
+- **未验证边界**：本轮不改行为、不连接服务器、不部署、不打标签；仓库完成gateway拓扑不等于生产已经切换。
+
 ## 2026-09-03 修正恢复必然失败的叶子挂载布局（实施方现场记录）
 
 - `.env.example` **+6/-8**：六个宿主叶子路径合并为一个 `RUNTIME_ROOT_PATH`，明确同父目录是恢复正确性前提而非布局偏好。
