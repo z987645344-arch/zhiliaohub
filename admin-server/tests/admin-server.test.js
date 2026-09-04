@@ -36,7 +36,9 @@ async function createRuntime(overrides = {}) {
     databasePath: path.join(runtimeRoot, 'data', 'test.sqlite3'),
     contentDir: path.join(runtimeRoot, 'content'),
     uploadsDir: path.join(runtimeRoot, 'uploads'),
+    backupDir: path.join(runtimeRoot, 'backups'),
     siteRoot: path.join(runtimeRoot, 'site'),
+    backupStatusOverdueMs: overrides.backupStatusOverdueMs,
     uploadMaxBytes: 1024,
     contentMaxBytes: 64 * 1024,
     authRateLimitWindowMs: 60 * 1000,
@@ -201,6 +203,7 @@ test('/health根据运行环境准确区分本地与生产部署', async (t) => 
   const localRuntime = await createRuntime();
   const productionRuntime = await createRuntime({ nodeEnv: 'production' });
   t.after(() => Promise.all([localRuntime.close(), productionRuntime.close()]));
+  assert.equal(localRuntime.config.backupStatusOverdueMs, 30 * 60 * 60 * 1000);
 
   let response = await fetch(`${localRuntime.baseUrl}/health`);
   assert.equal(response.status, 200);
@@ -231,6 +234,53 @@ test('/health无Cookie请求不创建会话也不下发Cookie', async (t) => {
   const sessionsAfter = runtime.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count;
   assert.equal(response.headers.get('set-cookie'), null);
   assert.equal(sessionsAfter, sessionsBefore);
+});
+
+test('备份状态只经认证通道返回，超期在仪表盘显眼展示且登录后管理写入仍成功', async (t) => {
+  const runtime = await createRuntime({ backupStatusOverdueMs: 60 * 60 * 1000 });
+  t.after(() => runtime.close());
+  const anonymousClient = createClient(runtime.baseUrl);
+
+  let response = await anonymousClient.request('/api/admin/backup-status');
+  assert.equal(response.status, 401, '未登录不得读取备份状态。');
+
+  response = await fetch(`${runtime.baseUrl}/health`);
+  const health = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(Object.keys(health).some((key) => /backup/i.test(key)), false);
+  assert.doesNotMatch(JSON.stringify(health), /备份|backup/i, '公开健康端点不得泄露备份状态。');
+
+  await fs.mkdir(runtime.config.backupDir, { recursive: true });
+  const twoHoursAgo = new Date(Date.now() - (2 * 60 * 60 * 1000));
+  const archiveTimestamp = twoHoursAgo.toISOString().replace(/[-:.]/g, '');
+  await fs.writeFile(
+    path.join(runtime.config.backupDir, `scheduled-backup-${archiveTimestamp}.tar.gz`),
+    'authenticated-status-proof',
+  );
+
+  const client = createClient(runtime.baseUrl);
+  const { csrf } = await bindAndAuthenticate(client, runtime);
+  response = await client.request('/admin');
+  const dashboard = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(dashboard, /data-backup-status="overdue"/);
+  assert.match(dashboard, /backup-status-danger/);
+  assert.match(dashboard, /已超期/);
+  assert.match(dashboard, /最近一次调度备份成功于2小时前/);
+
+  response = await client.request('/api/admin/backup-status');
+  const status = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(status.status, 'overdue');
+  assert.equal(status.label, '已超期');
+  assert.ok(status.lastSuccessfulAt, '认证API可提供次要精确时间供App复用。');
+
+  response = await client.request('/api/admin/notes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
+    body: JSON.stringify(noteInput('备份状态验收')),
+  });
+  assert.equal(response.status, 201, '密码+TOTP登录后的真实管理写操作必须继续成功。');
 });
 
 test('无Cookie匿名扫描不存在路径不会创建会话', async (t) => {

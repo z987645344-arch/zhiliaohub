@@ -26,6 +26,7 @@ const { ContentService, ContentValidationError } = require('./services/content-s
 const { DeviceAuthError, DeviceAuthService } = require('./services/device-auth-service');
 const { FeedbackService, FeedbackValidationError } = require('./services/feedback-service');
 const { LabService, LabValidationError } = require('./services/lab-service');
+const { BackupStatusService } = require('./services/backup-status-service');
 const { PublishError, PublishService } = require('./services/publish-service');
 const {
   loginPage,
@@ -93,6 +94,7 @@ function createApp(overrides = {}) {
   const deviceAuthService = new DeviceAuthService(database, config);
   const feedbackService = new FeedbackService(database);
   const labService = new LabService(database, config);
+  const backupStatusService = new BackupStatusService(config);
   const sessionStore = new SQLiteSessionStore({
     database,
     defaultTtlMs: config.sessionMaxAgeMs,
@@ -429,13 +431,14 @@ function createApp(overrides = {}) {
     }
   });
 
-  app.get('/admin', requireAdmin, (request, response) => {
+  app.get('/admin', requireAdmin, async (request, response) => {
     response.send(dashboardPage({
       csrfToken: response.locals.csrfToken,
       works: contentService.listWorks(),
       notes: contentService.listNotes(),
       publishStatus: publishService.getStatus(),
       pendingFeedbackCount: feedbackService.countPending(),
+      backupStatus: await backupStatusService.getStatus(),
       notice: request.query.notice || '',
     }));
   });
@@ -673,6 +676,10 @@ function createApp(overrides = {}) {
     response.json({ items: labService.listProjects() });
   });
 
+  app.get('/api/admin/backup-status', requireAdmin, async (_request, response) => {
+    response.json(await backupStatusService.getStatus());
+  });
+
   app.post('/api/admin/lab/:id/visibility', requireAdmin, requireCsrf, async (request, response, next) => {
     try {
       const project = labService.toggleVisibility(request.params.id);
@@ -869,6 +876,7 @@ function createApp(overrides = {}) {
   app.locals.deviceAuthService = deviceAuthService;
   app.locals.feedbackService = feedbackService;
   app.locals.labService = labService;
+  app.locals.backupStatusService = backupStatusService;
   app.locals.sessionStore = sessionStore;
   return {
     app,
@@ -879,6 +887,7 @@ function createApp(overrides = {}) {
     deviceAuthService,
     feedbackService,
     labService,
+    backupStatusService,
     sessionStore,
   };
 }

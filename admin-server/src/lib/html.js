@@ -395,6 +395,21 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     .admin-reply-form { padding-top: 0.25rem; }
     .admin-reply-form textarea { min-height: 6rem; }
     .empty-state { margin: 0; color: var(--ink-soft); }
+    .backup-status {
+      border-left: 5px solid #4a6f52;
+      background: #e2eee3;
+    }
+    .backup-status p { margin: 0.2rem 0; }
+    .backup-status h2 { margin: 0.1rem 0 0.35rem; color: #31583a; font-size: 1.45rem; }
+    .backup-status small { display: block; margin-top: 0.5rem; color: var(--ink-soft); }
+    .backup-status-kicker { color: var(--ink-soft); font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
+    .backup-status-danger {
+      border: 2px solid #9f2f2f;
+      border-left-width: 8px;
+      background: #f8eaea;
+      box-shadow: 0 3px 12px rgba(159, 47, 47, 0.18);
+    }
+    .backup-status-danger h2 { color: #8c2424; }
     .lab-list { display: grid; gap: 1rem; }
     .lab-project { display: grid; gap: 0.8rem; }
     .lab-project-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; }

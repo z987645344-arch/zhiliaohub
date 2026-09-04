@@ -19,6 +19,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
 const UTC_PLUS_8_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_LOCAL_TIME = '00:00';
+const RETRY_DELAYS_MS = Object.freeze([5 * MINUTE_MS, 30 * MINUTE_MS]);
 
 // Matches the archiveTimestamp() format: YYYYMMDD 'T' HHMMSSmmm 'Z'.
 const ARCHIVE_PATTERN = new RegExp(`^${SCHEDULED_BACKUP_PREFIX}-(\\d{8})T(\\d{9})Z\\.tar\\.gz(?:\\.enc)?$`);
@@ -75,11 +76,15 @@ class BackupScheduler {
     this.logger = options.logger || console;
     this.setTimeout = options.setTimeout || setTimeout;
     this.clearTimeout = options.clearTimeout || clearTimeout;
+    this.wait = options.wait || ((delay) => this.waitForRetry(delay));
     this.timer = null;
+    this.retryTimer = null;
+    this.retryResolve = null;
     this.stopped = false;
     this.inFlight = false;
     this.createdCount = 0;
     this.failureCount = 0;
+    this.runPromise = null;
   }
 
   // Runs one due-check. Never rejects: a scheduled job that throws into an interval handler
@@ -104,6 +109,7 @@ class BackupScheduler {
         namePrefix: SCHEDULED_BACKUP_PREFIX,
       });
       this.createdCount += 1;
+      this.failureCount = 0;
       this.logger.log(`[backup] 定时备份已创建：${result.archivePath}`);
       if (result.replication?.ok) {
         this.logger.log(`[backup] 已同步到${result.replication.destination}：${result.replication.location}`);
@@ -126,6 +132,59 @@ class BackupScheduler {
     }
   }
 
+  waitForRetry(delay) {
+    return new Promise((resolve) => {
+      this.retryResolve = resolve;
+      this.retryTimer = this.setTimeout(() => {
+        this.retryTimer = null;
+        this.retryResolve = null;
+        resolve(true);
+      }, delay);
+      if (typeof this.retryTimer?.unref === 'function') this.retryTimer.unref();
+    });
+  }
+
+  // A scheduled cycle gets two bounded same-day retries. A retry that would cross the
+  // next configured UTC+8 boundary is not started; the next daily cycle owns that work.
+  async runDueCycle() {
+    let result = await this.tick();
+    let attempts = 1;
+    for (const delay of RETRY_DELAYS_MS) {
+      if (!result.failed || this.stopped) return { ...result, attempts };
+      const now = this.now();
+      const nextBoundary = nextScheduledAt(now, this.localTime);
+      if (now.getTime() + delay >= nextBoundary.getTime()) {
+        this.logger.error(
+          `[backup] 本调度周期剩余时间不足以等待${Math.round(delay / MINUTE_MS)}分钟，`
+          + `停止当日自动重试；下次计划时间：${nextBoundary.toISOString()}。`,
+        );
+        return { ...result, attempts, retriesExhausted: true, nextScheduledAt: nextBoundary };
+      }
+      this.logger.error(
+        `[backup] 将在${Math.round(delay / MINUTE_MS)}分钟后进行本调度周期第${attempts + 1}次尝试。`,
+      );
+      const shouldContinue = await this.wait(delay);
+      if (shouldContinue === false || this.stopped) return { ...result, attempts, stopped: true };
+      result = await this.tick();
+      attempts += 1;
+    }
+    if (result.failed) {
+      const nextBoundary = nextScheduledAt(this.now(), this.localTime);
+      this.logger.error(
+        `[backup] 本调度周期的${attempts}次尝试均失败，自动重试预算已耗尽；`
+        + `下次计划时间：${nextBoundary.toISOString()}。`,
+      );
+      return { ...result, attempts, retriesExhausted: true, nextScheduledAt: nextBoundary };
+    }
+    return { ...result, attempts };
+  }
+
+  async runAndSchedule() {
+    const result = await this.runDueCycle();
+    if (!this.stopped) this.scheduleNext();
+    return result;
+  }
+
   start() {
     if (this.config.backupScheduleEnabled === false) {
       this.logger.log('[backup] 定时备份已通过 BACKUP_SCHEDULE_ENABLED=false 关闭；只能手动运行 npm run backup。');
@@ -134,8 +193,7 @@ class BackupScheduler {
     this.stopped = false;
     // Check once at boot: an empty directory gets protection immediately, and a process
     // returning after a missed boundary catches up without waiting for tomorrow.
-    this.tick();
-    this.scheduleNext();
+    this.runPromise = this.runAndSchedule();
     this.logger.log(
       `[backup] 定时备份已启用：每日 UTC+8 ${this.localTime}；`
       + '启动时会读取现有归档并补做缺失的当日备份。',
@@ -149,8 +207,8 @@ class BackupScheduler {
     const delay = Math.max(0, scheduledAt.getTime() - now.getTime());
     this.timer = this.setTimeout(async () => {
       this.timer = null;
-      await this.tick();
-      if (!this.stopped) this.scheduleNext();
+      this.runPromise = this.runAndSchedule();
+      await this.runPromise;
     }, delay);
     if (typeof this.timer?.unref === 'function') this.timer.unref();
     return scheduledAt;
@@ -159,13 +217,18 @@ class BackupScheduler {
   stop() {
     this.stopped = true;
     if (this.timer) this.clearTimeout(this.timer);
+    if (this.retryTimer) this.clearTimeout(this.retryTimer);
+    if (this.retryResolve) this.retryResolve(false);
     this.timer = null;
+    this.retryTimer = null;
+    this.retryResolve = null;
     return this;
   }
 }
 
 module.exports = {
   BackupScheduler,
+  RETRY_DELAYS_MS,
   UTC_PLUS_8_OFFSET_MS,
   lastBackupAt,
   nextScheduledAt,

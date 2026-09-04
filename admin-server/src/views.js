@@ -41,17 +41,24 @@ function dashboardPage({
   works,
   notes,
   publishStatus,
+  backupStatus,
   pendingFeedbackCount = 0,
   notice = '',
 }) {
   const publication = publishStatus
     ? `<p class="notice"><strong>已发布</strong> · 最近发布时间：${escapeHtml(publishStatus.last_published_at)} · ${publishStatus.works_count} 个作品 / ${publishStatus.notes_count} 篇日记</p>`
     : '<p class="notice warning"><strong>尚未发布</strong> · 保存第一条内容或手动执行全量发布后，静态前台才会由数据库生成。</p>';
+  const backupState = backupStatus?.status || 'never';
+  const backupDanger = backupState === 'normal' ? '' : ' backup-status-danger';
+  const backupExact = backupStatus?.lastSuccessfulAt
+    ? `<small>精确时间：<time datetime="${escapeHtml(backupStatus.lastSuccessfulAt)}">${escapeHtml(backupStatus.lastSuccessfulAt)}</time></small>`
+    : '<small>当前备份目录中没有调度归档记录。</small>';
+  const backup = `<section class="panel backup-status backup-status-${escapeHtml(backupState)}${backupDanger}" data-backup-status="${escapeHtml(backupState)}"><div><p class="backup-status-kicker">调度备份</p><h2>${escapeHtml(backupStatus?.label || '从未成功过')}</h2><p>${escapeHtml(backupStatus?.description || '尚未发现成功的调度备份。')}</p>${backupExact}</div></section>`;
   return layout({
     title: '管理面板',
     authenticated: true,
     csrfToken,
-    content: `${noticeBlock(notice)}<section class="panel"><h1>内容管理</h1><p>元数据保存在SQLite，正文保存在Markdown文件；保存后立即全量生成静态前台页面。</p>${publication}<form method="post" action="/admin/publish"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit">重新全量发布</button></form><p><a class="button button-secondary" href="/admin/feedback">审核反馈${pendingFeedbackCount ? `（${pendingFeedbackCount} 条待审核）` : ''}</a> <a class="button button-secondary" href="/admin/lab">管理小作坊</a> <a class="button button-secondary" href="/admin/device">管理安卓App配对设备</a></p></section><div class="grid"><section class="panel"><h2>作品</h2><a class="button button-secondary" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>分类</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button button-secondary" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div>`,
+    content: `${noticeBlock(notice)}${backup}<section class="panel"><h1>内容管理</h1><p>元数据保存在SQLite，正文保存在Markdown文件；保存后立即全量生成静态前台页面。</p>${publication}<form method="post" action="/admin/publish"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit">重新全量发布</button></form><p><a class="button button-secondary" href="/admin/feedback">审核反馈${pendingFeedbackCount ? `（${pendingFeedbackCount} 条待审核）` : ''}</a> <a class="button button-secondary" href="/admin/lab">管理小作坊</a> <a class="button button-secondary" href="/admin/device">管理安卓App配对设备</a></p></section><div class="grid"><section class="panel"><h2>作品</h2><a class="button button-secondary" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>分类</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button button-secondary" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div>`,
   });
 }
 

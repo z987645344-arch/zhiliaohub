@@ -22,11 +22,13 @@ const {
 const { LocalMirrorDestination } = require('../src/services/backup-destination');
 const {
   BackupScheduler,
+  RETRY_DELAYS_MS,
   nextScheduledAt,
   lastBackupAt,
   parseArchiveTimestamp,
   scheduledBoundaryAtOrBefore,
 } = require('../src/services/backup-scheduler');
+const { BackupStatusService } = require('../src/services/backup-status-service');
 
 function createConfig(runtimeRoot, overrides = {}) {
   const dataDir = path.join(runtimeRoot, 'data');
@@ -315,6 +317,178 @@ test('定时备份失败时记录明确日志且不抛出，不会静默失败',
     assert.match(messages[0], /定时备份失败/);
     assert.match(messages[0], /no space left on device/);
     assert.match(messages[0], /现在没有产生新的备份/, '日志必须说明当前没有新备份。');
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('定时备份失败会在同一调度周期按固定退避重试，成功后连续失败计数归零', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-schedule-retry-'));
+  const config = createConfig(runtimeRoot);
+  const waits = [];
+  const errors = [];
+  let attempt = 0;
+  try {
+    await seedStorage(config);
+    const scheduler = new BackupScheduler(config, {
+      now: () => new Date('2026-08-11T00:00:00.000Z'),
+      logger: { log() {}, error: (message) => errors.push(message) },
+      wait: async (delay) => { waits.push(delay); return true; },
+      createBackup: async () => {
+        attempt += 1;
+        if (attempt <= 2 || attempt === 4) throw new Error(`attempt-${attempt}-failed`);
+        return { archivePath: `scheduled-attempt-${attempt}.tar.gz` };
+      },
+    });
+
+    const recovered = await scheduler.runDueCycle();
+    assert.equal(recovered.created, true);
+    assert.equal(recovered.attempts, 3, '首次尝试加两次自动重试后成功。');
+    assert.deepEqual(waits, RETRY_DELAYS_MS);
+    assert.equal(scheduler.failureCount, 0, '成功后连续失败计数必须清零。');
+
+    const failedAgain = await scheduler.tick();
+    assert.equal(failedAgain.failed, true);
+    assert.equal(scheduler.failureCount, 1);
+    assert.match(errors.at(-1), /连续第1次/, '成功后的下一次失败必须重新从1计数。');
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('持续失败只尝试三次，耗尽后才排到下一调度边界且不会无限重试', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-schedule-exhaust-'));
+  const config = createConfig(runtimeRoot);
+  const waits = [];
+  const scheduledDelays = [];
+  let attempts = 0;
+  const clock = new Date('2026-08-11T00:00:00.000Z');
+  try {
+    await seedStorage(config);
+    const scheduler = new BackupScheduler(config, {
+      now: () => clock,
+      logger: silentLogger,
+      wait: async (delay) => { waits.push(delay); return true; },
+      setTimeout: (_callback, delay) => {
+        scheduledDelays.push(delay);
+        return { unref() {} };
+      },
+      clearTimeout() {},
+      createBackup: async () => {
+        attempts += 1;
+        throw new Error('persistent failure');
+      },
+    });
+
+    const result = await scheduler.runAndSchedule();
+    assert.equal(result.failed, true);
+    assert.equal(result.retriesExhausted, true);
+    assert.equal(result.attempts, 3);
+    assert.equal(attempts, 3);
+    assert.deepEqual(waits, RETRY_DELAYS_MS);
+    assert.deepEqual(
+      scheduledDelays,
+      [nextScheduledAt(clock, '00:00').getTime() - clock.getTime()],
+      '重试预算耗尽后才应设置下一日主计时器。',
+    );
+    scheduler.stop();
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('重试等待会跨过下一调度边界时停止本周期重试', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-schedule-budget-'));
+  const config = createConfig(runtimeRoot);
+  let attempts = 0;
+  let waits = 0;
+  try {
+    await seedStorage(config);
+    const scheduler = new BackupScheduler(config, {
+      now: () => new Date('2026-08-11T15:56:00.000Z'),
+      logger: silentLogger,
+      wait: async () => { waits += 1; return true; },
+      createBackup: async () => {
+        attempts += 1;
+        throw new Error('near-boundary failure');
+      },
+    });
+    const result = await scheduler.runDueCycle();
+    assert.equal(result.retriesExhausted, true);
+    assert.equal(result.attempts, 1);
+    assert.equal(attempts, 1);
+    assert.equal(waits, 0, '不得启动会跨过UTC+8下一调度边界的等待。');
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('进程错过调度边界后启动仍会立即补做当日备份', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-schedule-boot-catchup-'));
+  const config = createConfig(runtimeRoot);
+  let created = 0;
+  try {
+    await seedStorage(config);
+    await fs.mkdir(config.backupDir, { recursive: true });
+    await fs.writeFile(
+      path.join(config.backupDir, 'scheduled-backup-20260810T160000000Z.tar.gz'),
+      'previous-day',
+    );
+    const scheduler = new BackupScheduler(config, {
+      now: () => new Date('2026-08-11T17:00:00.000Z'),
+      logger: silentLogger,
+      setTimeout: () => ({ unref() {} }),
+      clearTimeout() {},
+      createBackup: async () => {
+        created += 1;
+        return { archivePath: 'startup-catchup.tar.gz' };
+      },
+    }).start();
+    const result = await scheduler.runPromise;
+    assert.equal(result.created, true);
+    assert.equal(created, 1, 'start()必须立即执行缺失调度备份，不能只排到明天。');
+    scheduler.stop();
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('调度备份状态区分正常、已超期与从未成功，且阈值可配置', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-status-'));
+  const backupDir = path.join(runtimeRoot, 'backups');
+  const now = new Date('2026-09-04T12:00:00.000Z');
+  try {
+    await fs.mkdir(backupDir, { recursive: true });
+    const never = await new BackupStatusService({
+      backupDir,
+      backupStatusOverdueMs: 30 * 60 * 60 * 1000,
+    }, { now: () => now }).getStatus();
+    assert.deepEqual(never, {
+      status: 'never',
+      label: '从未成功过',
+      description: '尚未发现成功的调度备份。',
+      lastSuccessfulAt: null,
+    });
+
+    await fs.writeFile(
+      path.join(backupDir, 'scheduled-backup-20260904T100000000Z.tar.gz'),
+      'status-proof',
+    );
+    const normal = await new BackupStatusService({
+      backupDir,
+      backupStatusOverdueMs: 30 * 60 * 60 * 1000,
+    }, { now: () => now }).getStatus();
+    assert.equal(normal.status, 'normal');
+    assert.equal(normal.label, '正常');
+    assert.equal(normal.description, '最近一次调度备份成功于2小时前。');
+
+    const overdue = await new BackupStatusService({
+      backupDir,
+      backupStatusOverdueMs: 60 * 60 * 1000,
+    }, { now: () => now }).getStatus();
+    assert.equal(overdue.status, 'overdue', '缩短配置阈值后，同一归档应变为超期。');
+    assert.equal(overdue.label, '已超期');
+    assert.equal(overdue.lastSuccessfulAt, '2026-09-04T10:00:00.000Z');
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
   }

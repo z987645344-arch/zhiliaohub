@@ -51,6 +51,7 @@ function loadConfig(overrides = {}) {
   const contentDir = overrides.contentDir || resolveLocalPath(process.env.CONTENT_DIR, 'content');
   const uploadsDir = overrides.uploadsDir || resolveLocalPath(process.env.UPLOAD_DIR, 'uploads');
   const labStorageDir = overrides.labStorageDir || resolveLocalPath(process.env.LAB_STORAGE_DIR, 'lab-storage');
+  const backupDir = overrides.backupDir || resolveLocalPath(process.env.BACKUP_DIR, 'backups');
   // Defaults to the repository root next to admin-server/, which is correct for local
   // development. Containers must set SITE_ROOT, because serverRoot/.. resolves to / there.
   const siteRoot = overrides.siteRoot || resolveLocalPath(process.env.SITE_ROOT, '..');
@@ -149,6 +150,12 @@ function loadConfig(overrides = {}) {
     contentDir,
     uploadsDir,
     labStorageDir,
+    backupDir,
+    backupStatusOverdueMs: positiveInteger(
+      overrides.backupStatusOverdueMs ?? process.env.BACKUP_STATUS_OVERDUE_MS,
+      'BACKUP_STATUS_OVERDUE_MS',
+      30 * 60 * 60 * 1000,
+    ),
     labBaseUrl: String(
       overrides.labBaseUrl || process.env.LAB_BASE_URL || `http://localhost:${port}/lab`,
     ).replace(/\/+$/, ''),
