@@ -1,6 +1,6 @@
 # 知了hub
 
-知了hub 是用于整理和展示个人作品、学习心得、反馈交流与持续探索的多页面网站，公开地址为 [https://zhiliaohub.com](https://zhiliaohub.com)。当前最新Git标签为 `v2.9`；仓库已完成面向唯一前置gateway的新部署配置，生产实际运行版本不在本文档中断言。
+知了hub 是用于整理和展示个人作品、学习心得、反馈交流与持续探索的多页面网站，公开地址为 [https://zhiliaohub.com](https://zhiliaohub.com)。当前最新Git标签为 `v3.1`；仓库已完成面向唯一前置gateway的新部署配置，生产实际运行版本不在本文档中断言。
 
 访客前台仍使用原生 HTML、CSS 和 JavaScript，不需要前端构建工具；作品、日记和已审核反馈由独立的 Node.js/Express 管理后台在发布时生成静态 HTML。页面读取保持静态，只有访客主动提交留言或回复时会调用后台公开 API。
 

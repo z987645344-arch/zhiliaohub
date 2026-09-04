@@ -11,6 +11,12 @@ function positiveInteger(value, name, fallback) {
   return candidate;
 }
 
+function integerAtLeast(value, name, fallback, minimum) {
+  const candidate = positiveInteger(value, name, fallback);
+  if (candidate < minimum) throw new Error(`${name} must be at least ${minimum}.`);
+  return candidate;
+}
+
 function resolveLocalPath(value, fallback) {
   return path.resolve(serverRoot, value || fallback);
 }
@@ -72,6 +78,12 @@ function loadBackupConfig(overrides = {}) {
     backupEncryptionPassword: overrides.backupEncryptionPassword
       ?? process.env.BACKUP_ENCRYPTION_PASSWORD
       ?? '',
+    orphanUploadMinAgeMs: integerAtLeast(
+      overrides.orphanUploadMinAgeMs ?? process.env.ORPHAN_UPLOAD_MIN_AGE_MS,
+      'ORPHAN_UPLOAD_MIN_AGE_MS',
+      24 * 60 * 60 * 1000,
+      24 * 60 * 60 * 1000,
+    ),
   };
 }
 
