@@ -153,9 +153,11 @@ function createApp(overrides = {}) {
   }));
 
   app.use((request, response, next) => {
-    const publicApiRequest = request.path.startsWith('/api/device-auth/')
-      || request.path.startsWith('/api/feedback/');
-    if (!publicApiRequest && !request.session.csrfToken) request.session.csrfToken = csrfToken();
+    const csrfProtectedRequest = request.path === '/admin'
+      || request.path.startsWith('/admin/')
+      || request.path === '/api/admin'
+      || request.path.startsWith('/api/admin/');
+    if (csrfProtectedRequest && !request.session.csrfToken) request.session.csrfToken = csrfToken();
     response.locals.csrfToken = request.session.csrfToken || '';
     next();
   });

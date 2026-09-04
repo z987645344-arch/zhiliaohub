@@ -30,7 +30,7 @@ services:
       - "3001"
     volumes:
       - type: bind
-        source: ${RUNTIME_ROOT_PATH}
+        source: ${RUNTIME_ROOT_PATH:?RUNTIME_ROOT_PATH must point to the shared runtime root}
         target: /app/runtime
     restart: unless-stopped
     healthcheck:
@@ -50,16 +50,16 @@ services:
       admin-server:
         condition: service_healthy
     environment:
-      SERVER_NAME: ${SERVER_NAME}
-      LAB_SERVER_NAME: ${LAB_SERVER_NAME}
-      TRUSTED_PROXY_CIDR: ${TRUSTED_PROXY_CIDR}
+      SERVER_NAME: ${SERVER_NAME:?SERVER_NAME must be the main site hostname}
+      LAB_SERVER_NAME: ${LAB_SERVER_NAME:?LAB_SERVER_NAME must be the lab site hostname}
+      TRUSTED_PROXY_CIDR: ${TRUSTED_PROXY_CIDR:?TRUSTED_PROXY_CIDR must be the trusted gateway proxy network}
       NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-100m}
       NGINX_ENVSUBST_FILTER: ^(SERVER_NAME|LAB_SERVER_NAME|TRUSTED_PROXY_CIDR|NGINX_CLIENT_MAX_BODY_SIZE)$$
     ports:
       - "${SERVER_PUBLIC_IP:-127.0.0.1}:${SERVER_HTTP_PORT:-80}:80"
     volumes:
       - type: bind
-        source: ${RUNTIME_ROOT_PATH}/public
+        source: ${RUNTIME_ROOT_PATH:?RUNTIME_ROOT_PATH must point to the shared runtime root}/public
         target: /app/runtime/public
         read_only: true
       - type: bind

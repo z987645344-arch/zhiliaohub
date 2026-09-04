@@ -3,6 +3,19 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-04**
 
+## 2026-09-04 收窄匿名会话创建并补齐部署与CI防误配门禁（实施方现场记录）
+
+- **生产现象与根因**：统筹师在生产观察到一次凭据扫描的332个404请求生成85行匿名session；这不是泄漏，过期行仍由15分钟清理任务回收，但8小时有效窗口内可无上限增长。实施方复核确认 `saveUninitialized: false` 本可阻止纯匿名请求落盘，真正根因是全局CSRF中间件为除两个公开API前缀外的每个请求写入令牌，把404请求也变成了“已修改session”。
+- `.github/workflows/ci.yml` **+2/-2**：只将 `actions/checkout` 与 `actions/setup-node` 从v4升到v5；步骤、Node 22、依赖安装、完整 `npm test`、JavaScript语法和HTML本地引用门禁均未改。推送后仍须以对应提交的CI日志确认100项测试真实执行且旧Node 20 action runtime警告消失。
+- `admin-server/src/app.js` **+5/-3**：CSRF令牌只在 `/admin` 与 `/api/admin` 两个实际消费它的管理前缀生成；`saveUninitialized`、session Cookie、安全认证协议、设备认证、公开反馈、`/lab`、`/uploads`与先于session注册的 `/health` 均未改。
+- `admin-server/tests/admin-server.test.js` **+46/-0**：新增24条无Cookie扫描路径的证伪式回归；每条均为404、无 `Set-Cookie`，SQLite sessions实测前后均为0。既有密码+TOTP后管理写入、设备挑战应答登录与公开反馈提交用例继续覆盖三条不得回归的真实HTTP链路。
+- `docker-compose.yml` **+5/-5**：为 `RUNTIME_ROOT_PATH`、`SERVER_NAME`、`LAB_SERVER_NAME`、`TRUSTED_PROXY_CIDR` 四个无默认值变量增加 `${VAR:?说明}`；逐项置空均使 `docker compose config --quiet` 失败并点名变量。`SERVER_PUBLIC_IP`、`SERVER_HTTP_PORT`、`NGINX_CLIENT_MAX_BODY_SIZE`、`ZHILIAOHUB_IMAGE_TAG` 的安全或本地默认值保持不变，四项同时置空仍通过配置检查。
+- `docs/claude_memory.md` **+27/-4**、`docs/zhiliaohub_structure.md` **+13/-12**：由指挥师维护，实施方未改内容；两份文档校准2026-09-04生产迁移、gateway拓扑、真实恢复、`site/`恢复口径、CI能力与App独立标签线，随本轮一并存档。两份合计以当场 `git diff --numstat` 复核为 **+40/-16**，没有沿用此前漏重跑产生的错误统计。
+- `CHANGELOG.md` **+13/-0**：新增本条普通工作记录，不写版本号、不暗示已经打标或部署。
+- **gateway v0.2角色越界补记（据指挥师独立核验）**：zhiliao-gateway v0.2的存档与打标由codex程序员执行，而《团队角色条例》第三节规定codex不负责打标、第四节规定打标归claudecode程序员。指令抬头写的是“执行者：Claude Code程序员”，实际派发时派给了codex；指挥师验收时未核对执行者身份。标签本身经指挥师独立核验正确（远程 `37627f5a`、解引用 `fd5af7a`、覆盖2提交、附注标签、未删重打），不回滚。但该轮www实现同样由codex完成，因此“实施方与验证存档方分离”这道检查在那一轮实际不存在；报告中出现的不存在对象哈希 `59a1a99` 可视为其代价之一。
+- **本场验证**：改动前完整 `npm test` **99/99通过、0失败**；改动后 **100/100通过、0失败**。四个Compose必填变量分别缺失时均失败且报错点名变量，四个有默认值变量同时置空时检查成功。`npm run check`、涉及文件 `node --check`、`git diff --check`将在最终暂存前复跑；CI只在推送后形成证据，本条不提前写成通过。
+- ⚠️ **未验证，不得当作已通过**：本轮不连接或修改服务器、不部署，未在生产扫描流量下观察session增长曲线，也未用生产账号执行认证或管理写操作；认证链路证据来自隔离SQLite与真实HTTP请求的本地自动化测试。Actions v5的CI运行状态与Node 20警告是否消失必须在推送后按本提交日志核实。
+
 ## Git标签 v3.1 - 2026-09-04
 
 - **覆盖 1 条工作条目、2 个提交**，其中 1 个提交属本轮存档动作本身（本条存档条目），**不是 2 件工作**：

@@ -233,6 +233,52 @@ test('/health无Cookie请求不创建会话也不下发Cookie', async (t) => {
   assert.equal(sessionsAfter, sessionsBefore);
 });
 
+test('无Cookie匿名扫描不存在路径不会创建会话', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const probePaths = [
+    '/@fs/.env?raw??',
+    '/@fs/root/.aws/credentials',
+    '/%2e%2e/%2e%2e/etc/passwd',
+    '/%252e%252e/%252e%252e/etc/passwd',
+    '/..%2f..%2fetc%2fpasswd',
+    '/.env',
+    '/.git/config',
+    '/wp-login.php',
+    '/xmlrpc.php',
+    '/owa/auth/logon.aspx',
+    '/error_log.php',
+    '/cloud/form_probe.pdf.ps1',
+    '/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php',
+    '/actuator/env',
+    '/server-status',
+    '/cgi-bin/test.cgi',
+    '/api/swagger.json',
+    '/adminer.php',
+    '/phpinfo.php',
+    '/scanner-probe-01',
+    '/scanner-probe-02',
+    '/scanner-probe-03',
+    '/scanner-probe-04',
+    '/scanner-probe-05',
+  ];
+  const sessionsBefore = runtime.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count;
+
+  for (const probePath of probePaths) {
+    const response = await fetch(`${runtime.baseUrl}${probePath}`, { redirect: 'manual' });
+    assert.equal(response.status, 404, `${probePath} 应落到不存在路径。`);
+    assert.equal(response.headers.get('set-cookie'), null, `${probePath} 不应下发会话Cookie。`);
+    await response.text();
+  }
+
+  const sessionsAfter = runtime.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count;
+  assert.deepEqual(
+    { sessionsBefore, sessionsAfter },
+    { sessionsBefore: 0, sessionsAfter: 0 },
+    '24条匿名扫描前后都不应存在会话行。',
+  );
+});
+
 test('密码错误会被明确拒绝，正确密码会进入首次 TOTP 绑定', async (t) => {
   const runtime = await createRuntime();
   t.after(() => runtime.close());
