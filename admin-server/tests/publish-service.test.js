@@ -7,6 +7,7 @@ const test = require('node:test');
 const { promisify } = require('node:util');
 
 const { initializeDatabase } = require('../src/db');
+const { MAX_SLUG_BYTES, baseSlug, createUniqueSlug } = require('../src/lib/slug');
 const { ContentService } = require('../src/services/content-service');
 const { PublishService } = require('../src/services/publish-service');
 const { GENERATED_MARKER } = require('../src/templates/shared');
@@ -74,6 +75,64 @@ async function assertReadableByNginxWorker(filePath, expectedContent) {
   assert.equal(identity.stdout.trim(), '101');
   assert.equal(content.stdout, expectedContent);
 }
+
+test('超长中文标题发布文件受字节上限约束且唯一后缀与链接稳定性不回归', async (t) => {
+  const fixture = await createFixture();
+  t.after(async () => {
+    fixture.database.close();
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  });
+
+  assert.equal(baseSlug('Short ASCII title'), 'short-ascii-title');
+  assert.equal(createUniqueSlug('Short ASCII title'), 'short-ascii-title');
+
+  const commonPrefix = '长'.repeat(100);
+  const works = [];
+  for (const ending of ['甲', '乙', '丙']) {
+    works.push(await fixture.contentService.createWork({
+      title: `${commonPrefix}${ending}`,
+      workDate: '2026-09-10',
+      category: '程序',
+      detailIntro: '验证超长标题不会生成超限文件名。',
+      body: '超长标题发布验证。',
+    }));
+  }
+  const note = await fixture.contentService.createNote({
+    title: '日'.repeat(100),
+    noteDate: '2026-09-10',
+    summary: '验证超长日记标题。',
+    body: '超长日记标题发布验证。',
+  });
+
+  assert.equal(works[1].slug.endsWith('-2'), true);
+  assert.equal(works[2].slug.endsWith('-3'), true);
+  assert.equal(new Set(works.map((work) => work.slug)).size, works.length);
+  for (const record of [...works, note]) {
+    assert.ok(Buffer.byteLength(record.slug, 'utf8') <= MAX_SLUG_BYTES);
+    assert.match(record.slug, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    assert.doesNotMatch(record.slug, /-$/);
+  }
+
+  const stableSlug = works[0].slug;
+  const updated = await fixture.contentService.updateWork(works[0].id, {
+    title: '更新后的短标题',
+    workDate: works[0].work_date,
+    category: works[0].category,
+    detailIntro: works[0].detail_intro,
+    body: '标题更新后链接保持稳定。',
+  });
+  assert.equal(updated.slug, stableSlug);
+
+  await fixture.publishService.publishAll();
+  const filenames = [
+    ...works.map((work) => `works-${work.slug}.html`),
+    `notes-${note.slug}.html`,
+  ];
+  for (const filename of filenames) {
+    assert.ok(Buffer.byteLength(filename, 'utf8') <= 255);
+    await fs.access(path.join(fixture.config.siteRoot, filename));
+  }
+});
 
 test('全量发布生成安全静态页、解决slug重名并只清理带标记的过期详情页', async (t) => {
   const fixture = await createFixture();

@@ -9,6 +9,7 @@ const bcrypt = require('bcrypt');
 const speakeasy = require('speakeasy');
 
 const { createApp } = require('../src/app');
+const { MAX_SLUG_BYTES } = require('../src/lib/slug');
 const { LabValidationError } = require('../src/services/lab-service');
 
 const CRC_TABLE = Array.from({ length: 256 }, (_unused, number) => {
@@ -199,6 +200,30 @@ test('有效网页ZIP可解压、发布显隐、生成链接并在删除时清�
   await runtime.labService.deleteProject(project.id);
   assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM lab_projects').get().count, 0);
   await assert.rejects(fs.access(path.join(runtime.config.labStorageDir, project.slug)), /ENOENT/);
+});
+
+test('小作坊超长中文标题仍创建受限且唯一的目录名', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const commonPrefix = '坊'.repeat(100);
+  const first = await runtime.labService.createProject(
+    await runtime.writeUpload('long-first.zip', validLabZip()),
+    { title: `${commonPrefix}甲`, description: '第一个超长标题项目。' },
+  );
+  const second = await runtime.labService.createProject(
+    await runtime.writeUpload('long-second.zip', validLabZip()),
+    { title: `${commonPrefix}乙`, description: '第二个超长标题项目。' },
+  );
+
+  assert.notEqual(first.slug, second.slug);
+  assert.equal(second.slug.endsWith('-2'), true);
+  for (const project of [first, second]) {
+    assert.ok(Buffer.byteLength(project.slug, 'utf8') <= MAX_SLUG_BYTES);
+    assert.match(project.slug, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    const directory = path.join(runtime.config.labStorageDir, project.slug);
+    assert.ok((await fs.stat(directory)).isDirectory());
+    assert.match(await fs.readFile(path.join(directory, 'index.html'), 'utf8'), /本地小作坊验证/);
+  }
 });
 
 test('ZIP路径穿越、解压炸弹和服务端脚本均在写出文件前被拒绝', async (t) => {

@@ -9,6 +9,7 @@ const {
   WORK_CATEGORY_MIGRATION_NAME,
   initializeDatabase,
 } = require('../src/db');
+const { MAX_SLUG_BYTES } = require('../src/lib/slug');
 
 const expectedColumns = [
   'cover_image',
@@ -60,6 +61,9 @@ test('旧 works 表补齐8个可空字段并只执行一次真实分类映射', 
     `);
     const categories = ['影像创作', 'AI音乐', 'AI影像', '三维建模', '网页设计', '软件', 'AI系统'];
     categories.forEach((category, index) => insert.run(`作品${index}`, `work-${index}`, category, `works/${index}.md`));
+    const longPrefix = '旧'.repeat(100);
+    insert.run(`${longPrefix}甲`, null, '程序', 'works/long-1.md');
+    insert.run(`${longPrefix}乙`, null, '程序', 'works/long-2.md');
     legacy.close();
 
     let database = initializeDatabase(config);
@@ -70,8 +74,16 @@ test('旧 works 表补齐8个可空字段并只执行一次真实分类映射', 
     }
     assert.deepEqual(
       database.prepare('SELECT category, COUNT(*) AS count FROM works GROUP BY category ORDER BY category').all(),
-      [{ category: '影视', count: 4 }, { category: '程序', count: 3 }],
+      [{ category: '影视', count: 4 }, { category: '程序', count: 5 }],
     );
+    const backfilled = database.prepare("SELECT slug FROM works WHERE markdown_path LIKE 'works/long-%' ORDER BY id").all();
+    assert.equal(backfilled.length, 2);
+    assert.notEqual(backfilled[0].slug, backfilled[1].slug);
+    assert.equal(backfilled[1].slug.endsWith('-2'), true);
+    for (const row of backfilled) {
+      assert.ok(Buffer.byteLength(row.slug, 'utf8') <= MAX_SLUG_BYTES);
+      assert.match(row.slug, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    }
     assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_CATEGORY_MIGRATION_NAME));
 
     database.prepare("UPDATE works SET category = '软件' WHERE slug = 'work-5'").run();
