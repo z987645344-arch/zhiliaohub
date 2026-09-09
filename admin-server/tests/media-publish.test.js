@@ -30,6 +30,11 @@ async function stageUpload(config, filename, mimeType, content) {
   }, config);
 }
 
+async function assertMode(filePath, expectedMode) {
+  if (process.platform === 'win32') return;
+  assert.equal((await fs.stat(filePath)).mode & 0o777, expectedMode, filePath);
+}
+
 test('作品媒体完成上传、发布复制、编辑清理与删除清理完整流程', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-media-publish-'));
   const config = {
@@ -63,6 +68,10 @@ test('作品媒体完成上传、发布复制、编辑清理与删除清理完�
     download: assetPath('downloads', download),
   };
 
+  for (const upload of [cover, main, galleryOne, galleryTwo, download]) {
+    await fs.chmod(path.join(config.uploadsDir, upload.storedName), 0o600);
+  }
+
   const created = await contentService.createWork({
     title: '阶段二媒体测试作品',
     workDate: '2026-08-08',
@@ -88,8 +97,10 @@ test('作品媒体完成上传、发布复制、编辑清理与删除清理完�
   const firstPublication = await publishService.publishAll();
   assert.deepEqual(new Set(firstPublication.mediaFiles), new Set(Object.values(paths)));
   for (const relativePath of Object.values(paths)) {
-    assert.deepEqual(await fs.readFile(path.join(config.siteRoot, ...relativePath.split('/'))),
+    const publishedPath = path.join(config.siteRoot, ...relativePath.split('/'));
+    assert.deepEqual(await fs.readFile(publishedPath),
       relativePath.endsWith('.zip') ? MINIMAL_ZIP : ONE_PIXEL_PNG);
+    await assertMode(publishedPath, 0o644);
   }
   await assert.rejects(fs.access(orphan), /ENOENT/);
   const listHtml = await fs.readFile(path.join(config.siteRoot, 'works.html'), 'utf8');

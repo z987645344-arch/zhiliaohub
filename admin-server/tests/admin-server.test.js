@@ -617,6 +617,15 @@ test('原子写入在替换前中断时会保留旧文件并清理临时文件',
     );
     assert.equal(await fs.readFile(target, 'utf8'), '完整旧内容\n');
     assert.deepEqual((await fs.readdir(runtimeRoot)).filter((name) => name.includes('.tmp-')), []);
+
+    const privateTarget = path.join(runtimeRoot, 'private.md');
+    const publicTarget = path.join(runtimeRoot, 'public.html');
+    await atomicWriteFile(privateTarget, 'private\n');
+    await atomicWriteFile(publicTarget, 'public\n', { mode: 0o644 });
+    if (process.platform !== 'win32') {
+      assert.equal((await fs.stat(privateTarget)).mode & 0o777, 0o600);
+      assert.equal((await fs.stat(publicTarget)).mode & 0o777, 0o644);
+    }
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
   }
@@ -667,9 +676,14 @@ test('上传策略接受真实 PNG，并分别拒绝非白名单、内容伪装�
   }
 
   await t.test('真实 PNG 上传成功', async () => {
-    const response = await upload(ONE_PIXEL_PNG, 'image/png', 'cover.png');
+    const originalName = '中文封面.png';
+    const response = await upload(ONE_PIXEL_PNG, 'image/png', originalName);
     assert.equal(response.status, 201);
-    assert.equal((await response.json()).mimeType, 'image/png');
+    const payload = await response.json();
+    assert.equal(payload.mimeType, 'image/png');
+    assert.equal(payload.originalName, originalName);
+    assert.match(payload.storedName, /^\d+-[0-9a-f-]+\.png$/);
+    assert.doesNotMatch(payload.storedName, /中文封面/);
   });
 
   await t.test('带 PK 文件头的 ZIP 上传成功', async () => {

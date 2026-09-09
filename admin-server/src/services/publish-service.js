@@ -15,6 +15,15 @@ const {
 const { renderNotesList, renderNoteDetail } = require('../templates/notes');
 const { renderFeedbackPage } = require('../templates/feedback');
 
+const PUBLIC_FILE_MODE = 0o644;
+
+async function copyPublicFile(source, target) {
+  await fs.copyFile(source, target);
+  // Upload-pool permissions are private implementation details; published copies must
+  // remain readable by the separate, non-privileged Nginx worker.
+  await fs.chmod(target, PUBLIC_FILE_MODE);
+}
+
 class PublishError extends Error {
   constructor(message, cause) {
     super(message, { cause });
@@ -270,13 +279,13 @@ class PublishService {
       for (const [relativePath, source] of build.mediaFiles) {
         const target = resolvePublishedMediaFile(this.config.siteRoot, relativePath);
         await fs.mkdir(path.dirname(target), { recursive: true });
-        await fs.copyFile(source, target);
+        await copyPublicFile(source, target);
       }
       for (const relativePath of staleMedia) {
         await fs.unlink(resolvePublishedMediaFile(this.config.siteRoot, relativePath));
       }
       for (const [filename, html] of build.files) {
-        await atomicWriteFile(resolveSiteFile(this.config.siteRoot, filename), html);
+        await atomicWriteFile(resolveSiteFile(this.config.siteRoot, filename), html, { mode: PUBLIC_FILE_MODE });
       }
       for (const filename of stale) await fs.unlink(resolveSiteFile(this.config.siteRoot, filename));
 
@@ -304,7 +313,7 @@ class PublishService {
         });
         else {
           await fs.mkdir(path.dirname(target), { recursive: true });
-          await fs.copyFile(snapshot, target);
+          await copyPublicFile(snapshot, target);
         }
       }
       for (const [filename, snapshot] of snapshots) {
@@ -312,7 +321,7 @@ class PublishService {
         if (snapshot === null) await fs.unlink(target).catch((unlinkError) => {
           if (unlinkError.code !== 'ENOENT') throw unlinkError;
         });
-        else await atomicWriteFile(target, snapshot);
+        else await atomicWriteFile(target, snapshot, { mode: PUBLIC_FILE_MODE });
       }
       throw new PublishError(`写入静态页面或媒体失败，已恢复发布前文件：${error.message}`, error);
     } finally {

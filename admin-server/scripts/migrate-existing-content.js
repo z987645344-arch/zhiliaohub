@@ -166,7 +166,7 @@ async function applyMigration(config) {
       for (const [name, snapshot] of siteSnapshots) {
         const target = path.join(config.siteRoot, name);
         if (snapshot === null) await fsPromises.unlink(target).catch(() => {});
-        else await atomicWriteFile(target, snapshot);
+        else await atomicWriteFile(target, snapshot, { mode: 0o644 });
       }
     }
     for (const target of createdMarkdown.reverse()) await fsPromises.unlink(target).catch(() => {});

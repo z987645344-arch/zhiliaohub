@@ -650,6 +650,9 @@ test('服务已停止且确认参数齐全时恢复正常完成', async () => {
     } finally {
       recovered.close();
     }
+    if (process.platform !== 'win32') {
+      assert.equal((await fs.stat(config.databasePath)).mode & 0o777, 0o600);
+    }
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
   }

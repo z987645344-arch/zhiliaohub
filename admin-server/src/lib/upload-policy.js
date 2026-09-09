@@ -79,7 +79,7 @@ async function validateAndFinalizeUpload(file, config) {
   await fs.rename(file.path, finalPath);
 
   return {
-    originalName: file.originalname,
+    originalName: Buffer.from(file.originalname, 'latin1').toString('utf8'),
     storedName: finalName,
     mimeType: file.mimetype,
     size: file.size,

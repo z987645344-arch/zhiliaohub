@@ -1,14 +1,18 @@
 const assert = require('node:assert/strict');
+const { execFile } = require('node:child_process');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { promisify } = require('node:util');
 
 const { initializeDatabase } = require('../src/db');
 const { ContentService } = require('../src/services/content-service');
 const { PublishService } = require('../src/services/publish-service');
 const { GENERATED_MARKER } = require('../src/templates/shared');
 const { renderWorkCategory, renderWorksList } = require('../src/templates/works');
+
+const execFileAsync = promisify(execFile);
 
 const NAVIGATION_ITEMS = [
   ['index.html', '首页'],
@@ -32,6 +36,7 @@ function assertFiveItemNavigation(html, currentHref) {
 
 async function createFixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-publish-'));
+  if (process.platform !== 'win32') await fs.chmod(root, 0o755);
   const config = {
     serverRoot: path.resolve(__dirname, '..'),
     dataDir: path.join(root, 'data'),
@@ -54,6 +59,20 @@ async function createFixture() {
   ]);
   for (const [filename, content] of sentinels) await fs.writeFile(path.join(config.siteRoot, filename), content, 'utf8');
   return { root, config, database, contentService, publishService, sentinels };
+}
+
+async function assertMode(filePath, expectedMode) {
+  if (process.platform === 'win32') return;
+  assert.equal((await fs.stat(filePath)).mode & 0o777, expectedMode, filePath);
+}
+
+async function assertReadableByNginxWorker(filePath, expectedContent) {
+  if (process.platform === 'win32' || process.getuid?.() !== 0) return;
+  const options = { uid: 101, gid: 101, encoding: 'utf8' };
+  const identity = await execFileAsync('id', ['-u'], options);
+  const content = await execFileAsync('cat', [filePath], options);
+  assert.equal(identity.stdout.trim(), '101');
+  assert.equal(content.stdout, expectedContent);
 }
 
 test('全量发布生成安全静态页、解决slug重名并只清理带标记的过期详情页', async (t) => {
@@ -125,6 +144,67 @@ test('全量发布生成安全静态页、解决slug重名并只清理带标记�
   const state = fixture.publishService.getStatus();
   assert.equal(state.works_count, 2);
   assert.equal(state.notes_count, 0);
+
+  for (const filename of publication.files) {
+    const generatedPath = path.join(fixture.config.siteRoot, filename);
+    await assertMode(generatedPath, 0o644);
+    await assertMode(path.dirname(generatedPath), 0o755);
+  }
+  await assertReadableByNginxWorker(
+    path.join(fixture.config.siteRoot, 'works.html'),
+    listHtml,
+  );
+});
+
+test('发布失败回滚仍将HTML和媒体恢复为Nginx worker可读权限', async (t) => {
+  const fixture = await createFixture();
+  t.after(async () => {
+    fixture.database.close();
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  });
+
+  const sourceName = 'rollback-source.png';
+  const sourcePath = path.join(fixture.config.uploadsDir, sourceName);
+  await fs.mkdir(fixture.config.uploadsDir, { recursive: true });
+  await fs.writeFile(sourcePath, Buffer.from('published media'));
+  await fs.chmod(sourcePath, 0o600);
+  const mediaPath = `assets/works/covers/${sourceName}`;
+  const work = await fixture.contentService.createWork({
+    title: '发布回滚权限测试',
+    workDate: '2026-09-09',
+    category: '程序',
+    detailIntro: '验证故障路径的公开文件权限。',
+    coverImage: mediaPath,
+    body: '初始正文',
+  });
+  await fixture.publishService.publishAll();
+
+  const htmlPath = path.join(fixture.config.siteRoot, `works-${work.slug}.html`);
+  const publishedMediaPath = path.join(fixture.config.siteRoot, ...mediaPath.split('/'));
+  const htmlBeforeFailure = await fs.readFile(htmlPath);
+  const mediaBeforeFailure = await fs.readFile(publishedMediaPath);
+  await fs.chmod(htmlPath, 0o600);
+  await fs.chmod(publishedMediaPath, 0o600);
+
+  const missingName = 'missing-after-build.png';
+  await fixture.contentService.updateWork(work.id, {
+    title: work.title,
+    workDate: work.work_date,
+    category: work.category,
+    detailIntro: work.detail_intro,
+    coverImage: mediaPath,
+    mainMediaType: 'image',
+    mainMediaPath: `assets/works/main/${missingName}`,
+    body: '触发媒体复制失败的新正文',
+  });
+
+  await assert.rejects(fixture.publishService.publishAll(), /写入静态页面或媒体失败，已恢复发布前文件/);
+  assert.deepEqual(await fs.readFile(htmlPath), htmlBeforeFailure);
+  assert.deepEqual(await fs.readFile(publishedMediaPath), mediaBeforeFailure);
+  await assertMode(htmlPath, 0o644);
+  await assertMode(publishedMediaPath, 0o644);
+  await assertReadableByNginxWorker(htmlPath, htmlBeforeFailure.toString('utf8'));
+  await assertReadableByNginxWorker(publishedMediaPath, mediaBeforeFailure.toString('utf8'));
 });
 
 test('一级页每组按更新时间只显示最新4条，二级页保留该分类全部作品', () => {

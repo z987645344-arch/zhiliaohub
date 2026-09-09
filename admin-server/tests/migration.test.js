@@ -8,6 +8,11 @@ const Database = require('better-sqlite3');
 
 const { applyMigration, assertServerStopped, MIGRATION_NAME } = require('../scripts/migrate-existing-content');
 
+async function assertMode(filePath, expectedMode) {
+  if (process.platform === 'win32') return;
+  assert.equal((await fs.stat(filePath)).mode & 0o777, expectedMode, filePath);
+}
+
 test('迁移前端口探测会拒绝仍在运行的后台', async () => {
   const server = net.createServer();
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -46,6 +51,7 @@ test('一次性迁移在隔离目录导入11条内容、生成静态页面并拒
 
     const generated = (await fs.readdir(config.siteRoot)).filter((name) => /^(?:works|notes)(?:-[a-z0-9-]+)?\.html$/.test(name));
     assert.equal(generated.length, 16);
+    for (const filename of generated) await assertMode(path.join(config.siteRoot, filename), 0o644);
     assert.ok(generated.includes('works-category-program.html'));
     assert.ok(generated.includes('works-category-film.html'));
     assert.ok(generated.includes('works-category-life.html'));
@@ -71,6 +77,7 @@ test('一次性迁移在隔离目录导入11条内容、生成静态页面并拒
     assert.match(await fs.readFile(path.join(config.siteRoot, 'works-category-life.html'), 'utf8'), /生活类作品还在路上/);
     assert.match(await fs.readFile(path.join(config.siteRoot, 'notes-rain-window.html'), 'utf8'), /content="占位日记《雨落在窗外的时候》的详情模板。"/);
     assert.match(await fs.readFile(path.join(config.contentDir, 'notes', 'rain-window.md'), 'utf8'), /日记正文筹备中/);
+    await assertMode(path.join(config.contentDir, 'notes', 'rain-window.md'), 0o600);
     await assert.rejects(applyMigration(config), /迁移已执行过/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
