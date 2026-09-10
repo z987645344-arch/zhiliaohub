@@ -63,6 +63,11 @@ jobs:
           const missing = [];
           const referencePattern = /(?:href|src)="([^"]+)"/g;
           const externalPattern = /^(?:#|[a-z][a-z0-9+.-]*:|\/\/)/i;
+          // Keep this exact namespace aligned with publish-service.js resolveSiteFile().
+          // These root-level files are generated during publishing and intentionally
+          // do not live in the repository's static skeleton.
+          const publishedFilenamePattern = /^(?:(?:works|notes)(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?|feedback|tools)\.html$/;
+          const repositoryRoot = path.resolve('.');
 
           for (const htmlFile of htmlFiles) {
             const html = fs.readFileSync(htmlFile, 'utf8');
@@ -72,7 +77,11 @@ jobs:
               const localReference = reference.split(/[?#]/, 1)[0];
               if (!localReference) continue;
               const target = path.resolve(path.dirname(htmlFile), decodeURIComponent(localReference));
-              if (!fs.existsSync(target)) missing.push(`${htmlFile}: ${reference}`);
+              const isPublishedRootFile = path.dirname(target) === repositoryRoot
+                && publishedFilenamePattern.test(path.basename(target));
+              if (!fs.existsSync(target) && !isPublishedRootFile) {
+                missing.push(`${htmlFile}: ${reference}`);
+              }
             }
           }
 
