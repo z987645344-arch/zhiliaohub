@@ -14,6 +14,7 @@ const {
 } = require('../templates/works');
 const { renderNotesList, renderNoteDetail } = require('../templates/notes');
 const { renderFeedbackPage } = require('../templates/feedback');
+const { renderToolsPage } = require('../templates/tools');
 
 const PUBLIC_FILE_MODE = 0o644;
 
@@ -40,7 +41,7 @@ function assertSlug(slug) {
 }
 
 function resolveSiteFile(siteRoot, filename) {
-  if (!/^(?:(?:works|notes)(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?|feedback)\.html$/.test(filename)) {
+  if (!/^(?:(?:works|notes)(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?|feedback|tools)\.html$/.test(filename)) {
     throw new PublishError(`发布目标不在允许范围内：${filename}`);
   }
   const root = path.resolve(siteRoot);
@@ -182,6 +183,7 @@ class PublishService {
         renderWorkCategory(category.name, works),
       ]),
       ['notes.html', renderNotesList(notes)],
+      ['tools.html', renderToolsPage(works)],
       ['feedback.html', renderFeedbackPage(feedbackTopics)],
     ]);
     const mediaFiles = new Map();

@@ -130,6 +130,11 @@ function validateWorkGallery(value) {
 
 function workRecord(input, maxBytes, existing = null) {
   const detailIntro = requiredText(input.detailIntro, '详情页简介', 500);
+  const experienceUrl = validateExperienceUrl(input.experienceUrl ?? existing?.experience_url);
+  const showOnTools = booleanFlag(input.showOnTools, Boolean(existing?.show_on_tools));
+  if (showOnTools && !experienceUrl) {
+    throw new ContentValidationError('在智能工具页显示作品时必须填写体验链接。');
+  }
   const versionLog = markdownBody(
     input.versionLog ?? input.body ?? existing?.version_log ?? existing?.body,
     maxBytes,
@@ -162,7 +167,8 @@ function workRecord(input, maxBytes, existing = null) {
       MEDIA_DIRECTORIES.download,
       ['.zip'],
     ),
-    experienceUrl: validateExperienceUrl(input.experienceUrl ?? existing?.experience_url),
+    experienceUrl,
+    showOnTools,
     mainMediaType,
     mainMediaPath,
     gallery: validateWorkGallery(input.gallery ?? existing?.gallery),
@@ -262,9 +268,10 @@ class ContentService {
         INSERT INTO works (
           title, slug, work_date, category, summary, detail_intro,
           cover_image, is_downloadable, download_file, experience_url,
+          show_on_tools,
           main_media_type, main_media_path, gallery, version_log,
           markdown_path, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         record.title,
         record.slug,
@@ -276,6 +283,7 @@ class ContentService {
         record.isDownloadable,
         record.downloadFile,
         record.experienceUrl,
+        record.showOnTools,
         record.mainMediaType,
         record.mainMediaPath,
         record.gallery,
@@ -327,6 +335,7 @@ class ContentService {
           UPDATE works SET
             title = ?, work_date = ?, category = ?, summary = ?, detail_intro = ?,
             cover_image = ?, is_downloadable = ?, download_file = ?, experience_url = ?,
+            show_on_tools = ?,
             main_media_type = ?, main_media_path = ?, gallery = ?, version_log = ?, updated_at = ?
           WHERE id = ?
         `).run(
@@ -339,6 +348,7 @@ class ContentService {
           record.isDownloadable,
           record.downloadFile,
           record.experienceUrl,
+          record.showOnTools,
           record.mainMediaType,
           record.mainMediaPath,
           record.gallery,

@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS works (
   detail_intro TEXT,
   special_status TEXT,
   is_placeholder INTEGER NOT NULL DEFAULT 0 CHECK (is_placeholder IN (0, 1)),
+  show_on_tools INTEGER NOT NULL DEFAULT 0 CHECK (show_on_tools IN (0, 1)),
   display_order INTEGER,
   cover_image TEXT,
   is_downloadable INTEGER,

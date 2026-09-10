@@ -9,7 +9,7 @@ const { promisify } = require('node:util');
 const { initializeDatabase } = require('../src/db');
 const { MAX_SLUG_BYTES, baseSlug, createUniqueSlug } = require('../src/lib/slug');
 const { ContentService } = require('../src/services/content-service');
-const { PublishService } = require('../src/services/publish-service');
+const { PublishService, resolveSiteFile } = require('../src/services/publish-service');
 const { GENERATED_MARKER } = require('../src/templates/shared');
 const { renderWorkCategory, renderWorksList } = require('../src/templates/works');
 
@@ -215,6 +215,63 @@ test('全量发布生成安全静态页、解决slug重名并只清理带标记�
   );
 });
 
+test('智能工具页只展示勾选作品且在空状态下仍无条件生成', async (t) => {
+  const fixture = await createFixture();
+  t.after(async () => {
+    fixture.database.close();
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  });
+
+  const visible = await fixture.contentService.createWork({
+    title: '已公开工具',
+    workDate: '2026-09-10',
+    category: '程序',
+    detailIntro: '只在勾选后出现在智能工具页。',
+    experienceUrl: 'https://tools.example.com/run',
+    showOnTools: '1',
+    body: '工具版本记录。',
+  });
+  await fixture.contentService.createWork({
+    title: '普通程序作品',
+    workDate: '2026-09-09',
+    category: '程序',
+    detailIntro: '没有勾选，不应出现在智能工具页。',
+    experienceUrl: 'https://tools.example.com/hidden',
+    body: '普通作品版本记录。',
+  });
+
+  let publication = await fixture.publishService.publishAll();
+  assert.ok(publication.files.includes('tools.html'), '全量发布必须无条件包含 tools.html。');
+  const toolsPath = path.join(fixture.config.siteRoot, 'tools.html');
+  let toolsHtml = await fs.readFile(toolsPath, 'utf8');
+  assert.match(toolsHtml, /^<!-- 此文件由知了hub后台自动生成/);
+  assertFiveItemNavigation(toolsHtml, 'tools.html');
+  assert.match(toolsHtml, /已公开工具/);
+  assert.match(toolsHtml, /只在勾选后出现在智能工具页/);
+  assert.match(toolsHtml, /href="https:\/\/tools\.example\.com\/run"/);
+  assert.doesNotMatch(toolsHtml, /普通程序作品|tools\.example\.com\/hidden/);
+  await assertMode(toolsPath, 0o644);
+  await assertReadableByNginxWorker(toolsPath, toolsHtml);
+  assert.doesNotThrow(() => resolveSiteFile(fixture.config.siteRoot, 'tools.html'));
+  assert.throws(() => resolveSiteFile(fixture.config.siteRoot, 'tools-preview.html'), /不在允许范围内/);
+
+  await fixture.contentService.updateWork(visible.id, {
+    title: visible.title,
+    workDate: visible.work_date,
+    category: visible.category,
+    detailIntro: visible.detail_intro,
+    experienceUrl: visible.experience_url,
+    showOnTools: '0',
+    body: visible.body,
+  });
+  publication = await fixture.publishService.publishAll();
+  assert.ok(publication.files.includes('tools.html'), '零条勾选记录时仍必须生成 tools.html。');
+  toolsHtml = await fs.readFile(toolsPath, 'utf8');
+  assert.doesNotMatch(toolsHtml, /已公开工具|普通程序作品/);
+  assert.match(toolsHtml, /目前没有已公开的智能工具/);
+  assert.doesNotMatch(toolsHtml, /建设中|规划/);
+});
+
 test('发布失败回滚仍将HTML和媒体恢复为Nginx worker可读权限', async (t) => {
   const fixture = await createFixture();
   t.after(async () => {
@@ -299,14 +356,8 @@ test('一级页每组按更新时间只显示最新4条，二级页保留该分�
   assert.match(categoryHtml, /href="works\.html">← 返回作品展示/);
 });
 
-test('手写首页与智能工具页使用统一五项导航，工具页不伪装真实功能', async () => {
+test('手写首页使用统一五项导航', async () => {
   const siteRoot = path.resolve(__dirname, '..', '..');
   const indexHtml = await fs.readFile(path.join(siteRoot, 'index.html'), 'utf8');
-  const toolsHtml = await fs.readFile(path.join(siteRoot, 'tools.html'), 'utf8');
   assertFiveItemNavigation(indexHtml, 'index.html');
-  assertFiveItemNavigation(toolsHtml, 'tools.html');
-  assert.match(toolsHtml, /本站工具与账号集成仍在规划/);
-  assert.match(toolsHtml, /当前不设具体上线时间表/);
-  assert.match(toolsHtml, /href="works-zhitian\.html"/);
-  assert.doesNotMatch(toolsHtml, /<(?:form|input|textarea|select)\b/i);
 });

@@ -13,13 +13,14 @@ test('独立作品表单包含阶段二全部字段且日记旧字段不再混�
   const html = workFormPage({ csrfToken: 'csrf-test-token' });
   for (const name of [
     'title', 'workDate', 'category', 'detailIntro', 'coverImage', 'mainMediaType',
-    'mainMediaPath', 'gallery', 'isDownloadable', 'downloadFile', 'experienceUrl', 'versionLog',
+    'mainMediaPath', 'gallery', 'isDownloadable', 'downloadFile', 'experienceUrl', 'showOnTools', 'versionLog',
   ]) {
     assert.match(html, new RegExp(`name="${name}"`));
   }
   assert.match(html, /<option value="程序" selected>程序<\/option>/);
   assert.match(html, /data-cover-canvas/);
   assert.match(html, /multiple accept=/);
+  assert.match(html, /在智能工具页显示这条作品/);
   assert.match(html, /<script src="\/admin\/work-form\.js" defer><\/script>/);
   assert.doesNotMatch(html, /name="summary"/);
   assert.doesNotMatch(html, /name="body"/);

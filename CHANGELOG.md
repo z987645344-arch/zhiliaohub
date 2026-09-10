@@ -3,6 +3,26 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-10**
 
+## 2026-09-10 将智能工具页纳入作品数据与全量发布（实施方现场记录）
+
+- **数据与管理边界**：完成品仍作为作品记录管理，不新增链接字段；管理员通过既有登录与CSRF保护的作品表单勾选“在智能工具页显示这条作品”，体验入口复用 `works.experience_url`。勾选但未填写有效体验链接会被拒绝，避免生成无效入口。
+- `admin-server/data/schema.sql` **+1/-0**：`works` 新增默认关闭且带0/1检查约束的 `show_on_tools` 列。
+- `admin-server/src/db.js` **+26/-0**：新增独立 `content_migrations` 迁移；旧库在事务内补列并记录标记，重复启动不重复执行，既有作品默认值为0且不丢数据。
+- `admin-server/src/services/content-service.js` **+12/-2**：作品新增与编辑持久化展示开关，并校验勾选时必须有有效的HTTP(S)体验链接。
+- `admin-server/src/views.js` **+1/-0**：作品表单增加展示开关，继续使用原有认证、CSRF与保存发布路由。
+- `admin-server/src/templates/tools.js` **+25/-0**：新增智能工具静态模板，复用共享五项导航和页脚；只展示已勾选作品的标题、简介、作品详情与体验入口；零条记录时只给出一句空状态，不搬运旧“建设中/规划”文案。
+- `admin-server/src/services/publish-service.js` **+3/-1**：发布白名单只精确放行 `tools.html`，并在每次全量发布中无条件生成；写入继续沿用公开文件 `0644` 模式。
+- `admin-server/package.json` **+1/-1**：语法检查加入新的工具页模板，不删减既有门禁。
+- `admin-server/tests/admin-server.test.js` **+13/-3**：真实登录与CSRF管理API写入覆盖勾选、发布出现、取消勾选与发布消失。
+- `admin-server/tests/content-validation.test.js` **+15/-0**：锁定勾选展示时体验链接必填。
+- `admin-server/tests/publish-service.test.js` **+59/-8**：覆盖精确白名单、勾选筛选、入口输出、取消勾选、零条仍生成、空状态、统一导航、生成标记与公开权限。
+- `admin-server/tests/work-form.test.js` **+2/-1**：锁定作品表单展示开关及文案。
+- `admin-server/tests/work-schema-migration.test.js` **+22/-1**：真实旧库保留既有记录完成迁移，验证默认值、检查约束、迁移标记与第二次启动幂等。
+- `CHANGELOG.md` **+20/-0**：新增本条普通工作记录，不写版本号、不暗示已经推送、打标或部署。
+- **第三轮前置条件已具备**：`tools.html` 现在即使0条勾选作品也由发布服务无条件生成，因此后续独立轮次可以删除仓库中的手写副本；本轮按边界没有删除任何文件，也没有修改CI的HTML引用检查。
+- **本场验证**：完整 `npm test` 从基线 **112/112** 增至 **114/114**，0失败；`npm run check`、涉及文件逐项 `node --check`、`git diff --check`通过。隔离旧库迁移、勾选/取消与空状态均真实落盘；Docker Linux卷内产物实测为 `0644`，并由非特权 `uid=101 gid=101` 成功读取。真实浏览器在1440px与390px检查通过，390px下 `scrollWidth=clientWidth=375`、控制台错误/警告0条；19个受Git跟踪HTML的本地引用检查通过。
+- ⚠️ **未验证，不得当作已通过**：未连接服务器、未部署、未读取或迁移生产数据库，未使用生产Nginx或生产域名验证页面。`docs/claude_memory.md` 与 `docs/zhiliaohub_structure.md` 仍把 `tools.html` 描述为手写规划页；两份均属指挥师维护且本轮禁止修改，需由指挥师在存档或下一轮同步。
+
 ## 2026-09-10 为作品、日记与小作坊slug增加文件系统长度上界（实施方现场记录）
 
 - **范围边界**：本轮只给既有Unicode码点转写结果增加字节上界，不选择或改变“截断+哈希 / 拼音 / 百分号编码”等转写方案。slug仍只在作品、日记或小作坊项目首次创建时分配；修改标题不重算slug，已分享链接不会失效，这一性质已写入代码注释并由测试锁定。

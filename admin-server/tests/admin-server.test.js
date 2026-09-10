@@ -511,26 +511,36 @@ test('作品和日记的新增、编辑、删除会同步SQLite、Markdown与静
   let response = await client.request('/api/admin/works', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
-    body: JSON.stringify(workInput('A')),
+    body: JSON.stringify({
+      ...workInput('A'),
+      experienceUrl: 'https://tools.example.com/admin-flow',
+      showOnTools: 1,
+    }),
   });
   assert.equal(response.status, 201);
   const work = await response.json();
-  assert.equal(runtime.database.prepare('SELECT title FROM works WHERE id = ?').get(work.id).title, '本地验证作品A');
+  assert.deepEqual(
+    runtime.database.prepare('SELECT title, show_on_tools FROM works WHERE id = ?').get(work.id),
+    { title: '本地验证作品A', show_on_tools: 1 },
+  );
   const workPath = path.join(runtime.config.contentDir, ...work.markdown_path.split('/'));
   const workHtmlPath = path.join(runtime.config.siteRoot, `works-${work.slug}.html`);
   assert.match(await fs.readFile(workPath, 'utf8'), /作品正文A/);
   assert.match(await fs.readFile(path.join(runtime.config.siteRoot, 'works.html'), 'utf8'), /本地验证作品A/);
+  assert.match(await fs.readFile(path.join(runtime.config.siteRoot, 'tools.html'), 'utf8'), /tools\.example\.com\/admin-flow/);
   assert.match(await fs.readFile(workHtmlPath, 'utf8'), /^<!-- 此文件由知了hub后台自动生成/);
 
   response = await client.request(`/api/admin/works/${work.id}`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
-    body: JSON.stringify(workInput('B')),
+    body: JSON.stringify({ ...workInput('B'), showOnTools: 0 }),
   });
   assert.equal(response.status, 200);
   assert.equal(runtime.database.prepare('SELECT title FROM works WHERE id = ?').get(work.id).title, '本地验证作品B');
+  assert.equal(runtime.database.prepare('SELECT show_on_tools FROM works WHERE id = ?').get(work.id).show_on_tools, 0);
   assert.match(await fs.readFile(workPath, 'utf8'), /作品正文B/);
   assert.match(await fs.readFile(workHtmlPath, 'utf8'), /本地验证作品B/);
+  assert.doesNotMatch(await fs.readFile(path.join(runtime.config.siteRoot, 'tools.html'), 'utf8'), /本地验证作品B|admin-flow/);
 
   response = await client.request('/api/admin/notes', {
     method: 'POST',

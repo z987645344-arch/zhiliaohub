@@ -5,6 +5,7 @@ const Database = require('better-sqlite3');
 const { createUniqueSlug } = require('./lib/slug');
 
 const WORK_CATEGORY_MIGRATION_NAME = 'works-categories-program-film-life-v1';
+const WORK_TOOLS_VISIBILITY_MIGRATION_NAME = 'works-show-on-tools-v1';
 const WORK_CATEGORY_MAPPINGS = Object.freeze([
   Object.freeze({ from: '影像创作', to: '影视' }),
   Object.freeze({ from: 'AI音乐', to: '影视' }),
@@ -52,6 +53,28 @@ function migrateWorkCategories(database) {
   return { applied: true, changedRows: migrate() };
 }
 
+function migrateWorkToolsVisibility(database) {
+  const applied = database.prepare('SELECT 1 FROM content_migrations WHERE name = ?')
+    .get(WORK_TOOLS_VISIBILITY_MIGRATION_NAME);
+  if (applied) return { applied: false, columnAdded: false };
+
+  const migrate = database.transaction(() => {
+    const columns = new Set(database.prepare('PRAGMA table_info(works)').all().map((row) => row.name));
+    const columnAdded = !columns.has('show_on_tools');
+    if (columnAdded) {
+      database.exec(`
+        ALTER TABLE works ADD COLUMN show_on_tools
+        INTEGER NOT NULL DEFAULT 0 CHECK (show_on_tools IN (0, 1))
+      `);
+    }
+    database.prepare('INSERT INTO content_migrations (name, applied_at) VALUES (?, ?)')
+      .run(WORK_TOOLS_VISIBILITY_MIGRATION_NAME, new Date().toISOString());
+    return columnAdded;
+  });
+
+  return { applied: true, columnAdded: migrate() };
+}
+
 function initializeDatabase(config) {
   fs.mkdirSync(config.dataDir, { recursive: true });
   fs.mkdirSync(path.join(config.contentDir, 'works'), { recursive: true });
@@ -95,6 +118,7 @@ function initializeDatabase(config) {
   });
   migrateSlugs();
   migrateWorkCategories(database);
+  migrateWorkToolsVisibility(database);
   database.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_works_slug ON works(slug) WHERE slug IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_slug ON notes(slug) WHERE slug IS NOT NULL;
@@ -105,6 +129,8 @@ function initializeDatabase(config) {
 module.exports = {
   WORK_CATEGORY_MAPPINGS,
   WORK_CATEGORY_MIGRATION_NAME,
+  WORK_TOOLS_VISIBILITY_MIGRATION_NAME,
   initializeDatabase,
   migrateWorkCategories,
+  migrateWorkToolsVisibility,
 };

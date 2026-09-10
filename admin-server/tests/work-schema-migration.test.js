@@ -7,6 +7,7 @@ const Database = require('better-sqlite3');
 
 const {
   WORK_CATEGORY_MIGRATION_NAME,
+  WORK_TOOLS_VISIBILITY_MIGRATION_NAME,
   initializeDatabase,
 } = require('../src/db');
 const { MAX_SLUG_BYTES } = require('../src/lib/slug');
@@ -22,7 +23,7 @@ const expectedColumns = [
   'version_log',
 ];
 
-test('旧 works 表补齐8个可空字段并只执行一次真实分类映射', async () => {
+test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-work-schema-'));
   const dataDir = path.join(root, 'data');
   const databasePath = path.join(dataDir, 'legacy.sqlite3');
@@ -72,6 +73,17 @@ test('旧 works 表补齐8个可空字段并只执行一次真实分类映射', 
       assert.ok(columnInfo.has(column), `应补齐 ${column} 字段。`);
       assert.equal(columnInfo.get(column).notnull, 0, `${column} 应保持可空。`);
     }
+    assert.equal(columnInfo.get('show_on_tools').notnull, 1, '智能工具展示开关必须为非空布尔列。');
+    assert.equal(columnInfo.get('show_on_tools').dflt_value, '0');
+    assert.throws(
+      () => database.prepare("UPDATE works SET show_on_tools = 2 WHERE slug = 'work-0'").run(),
+      /CHECK constraint failed/,
+    );
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM works WHERE show_on_tools = 0').get().count,
+      categories.length + 2,
+      '迁移前已有作品必须完整保留并默认不展示在智能工具页。',
+    );
     assert.deepEqual(
       database.prepare('SELECT category, COUNT(*) AS count FROM works GROUP BY category ORDER BY category').all(),
       [{ category: '影视', count: 4 }, { category: '程序', count: 5 }],
@@ -85,14 +97,23 @@ test('旧 works 表补齐8个可空字段并只执行一次真实分类映射', 
       assert.match(row.slug, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
     }
     assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_CATEGORY_MIGRATION_NAME));
+    assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_TOOLS_VISIBILITY_MIGRATION_NAME));
 
     database.prepare("UPDATE works SET category = '软件' WHERE slug = 'work-5'").run();
+    database.prepare("UPDATE works SET show_on_tools = 1 WHERE slug = 'work-0'").run();
     database.close();
     database = initializeDatabase(config);
     assert.equal(
       database.prepare("SELECT category FROM works WHERE slug = 'work-5'").get().category,
       '软件',
       '迁移标记存在后不得重复改写数据。',
+    );
+    assert.equal(database.prepare("SELECT show_on_tools FROM works WHERE slug = 'work-0'").get().show_on_tools, 1);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?')
+        .get(WORK_TOOLS_VISIBILITY_MIGRATION_NAME).count,
+      1,
+      '重复启动不得重复记录或执行智能工具展示开关迁移。',
     );
     database.close();
   } finally {

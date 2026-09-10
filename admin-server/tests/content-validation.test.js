@@ -49,3 +49,18 @@ test('createWork 将详情页简介作为必填字段', async () => {
     /详情页简介不能为空/,
   );
 });
+
+test('勾选智能工具展示时必须同时提供有效体验链接', async () => {
+  const service = new ContentService(null, { contentMaxBytes: 1024 });
+  await assert.rejects(
+    service.createWork({
+      title: '缺少体验入口的工具',
+      workDate: '2026-09-10',
+      category: '程序',
+      detailIntro: '不能生成无效入口。',
+      showOnTools: 1,
+      body: '正文',
+    }),
+    /必须填写体验链接/,
+  );
+});

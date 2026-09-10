@@ -198,6 +198,7 @@ function workFormPage({ csrfToken, record = {}, error = '' }) {
           <input type="hidden" name="downloadFile" value="${escapeHtml(downloadFile)}" data-download-value>
           <div class="upload-preview" data-download-preview>${downloadFile ? `<span class="upload-filename">${escapeHtml(assetFilename(downloadFile))}</span><button type="button" class="button-danger compact-button" data-clear-download>移除</button>` : ''}</div>
           <label for="experienceUrl">体验链接</label><input id="experienceUrl" name="experienceUrl" type="url" value="${escapeHtml(record.experience_url || '')}" maxlength="2000" placeholder="https://example.com">
+          <input type="hidden" name="showOnTools" value="0"><label class="choice checkbox-choice"><input type="checkbox" name="showOnTools" value="1"${record.show_on_tools ? ' checked' : ''}> 在智能工具页显示这条作品</label>
         </fieldset>
 
         <fieldset class="form-section"><legend>版本日志</legend><label for="versionLog">Markdown内容</label><textarea id="versionLog" name="versionLog" required>${escapeHtml(record.versionLog || record.version_log || record.body || '')}</textarea></fieldset>
