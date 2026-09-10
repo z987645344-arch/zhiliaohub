@@ -6,7 +6,7 @@ const net = require('node:net');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 const { loadConfig } = require('../src/config');
-const { initializeDatabase } = require('../src/db');
+const { initializeDatabase, LEGACY_WORK_CATEGORIES } = require('../src/db');
 const { atomicWriteFile } = require('../src/lib/atomic-file');
 const { PublishService } = require('../src/services/publish-service');
 
@@ -109,6 +109,7 @@ async function applyMigration(config) {
       'works.html',
       'notes.html',
       'feedback.html',
+      ...LEGACY_WORK_CATEGORIES.map((category) => `works-category-${category.slug}.html`),
       ...works.map((item) => `works-${item.slug}.html`),
       ...notes.map((item) => `notes-${item.slug}.html`),
       ...existingSiteEntries
@@ -123,6 +124,11 @@ async function applyMigration(config) {
     database.exec('BEGIN IMMEDIATE');
     transactionOpen = true;
     const now = new Date().toISOString();
+    const insertCategory = database.prepare(`
+      INSERT INTO work_categories (
+        name, slug, kicker, intro, empty_text, display_order, is_visible, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `);
     const insertWork = database.prepare(`
       INSERT INTO works (title, slug, work_date, category, summary, detail_intro, special_status, is_placeholder, display_order, markdown_path, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
@@ -132,6 +138,18 @@ async function applyMigration(config) {
       VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
     `);
 
+    for (const [index, category] of LEGACY_WORK_CATEGORIES.entries()) {
+      insertCategory.run(
+        category.name,
+        category.slug,
+        category.kicker,
+        category.intro,
+        category.emptyText,
+        (index + 1) * 10,
+        now,
+        now,
+      );
+    }
     for (const item of works) {
       const relativePath = `works/${item.slug}.md`;
       const target = path.join(config.contentDir, 'works', `${item.slug}.md`);

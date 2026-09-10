@@ -12,6 +12,7 @@ const { ContentService } = require('../src/services/content-service');
 const { PublishService, resolveSiteFile } = require('../src/services/publish-service');
 const { GENERATED_MARKER } = require('../src/templates/shared');
 const { renderWorkCategory, renderWorksList } = require('../src/templates/works');
+const { LEGACY_CATEGORY_INPUTS, seedLegacyCategories } = require('./helpers/work-categories');
 
 const execFileAsync = promisify(execFile);
 
@@ -35,7 +36,7 @@ function assertFiveItemNavigation(html, currentHref) {
   assert.match(navigation, new RegExp(`<a href="${currentHref.replace('.', '\\.')}" aria-current="page">`));
 }
 
-async function createFixture() {
+async function createFixture({ seedCategories = true } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-publish-'));
   if (process.platform !== 'win32') await fs.chmod(root, 0o755);
   const config = {
@@ -50,6 +51,7 @@ async function createFixture() {
   };
   const database = initializeDatabase(config);
   const contentService = new ContentService(database, config);
+  if (seedCategories) seedLegacyCategories(contentService);
   const publishService = new PublishService(database, config);
   await fs.mkdir(path.join(config.siteRoot, 'css'), { recursive: true });
   await fs.mkdir(path.join(config.siteRoot, 'js'), { recursive: true });
@@ -344,14 +346,15 @@ test('一级页每组按更新时间只显示最新4条，二级页保留该分�
       updated_at: '2026-08-06T00:00:00.000Z',
     },
   ];
-  const listHtml = renderWorksList(works);
+  const categories = LEGACY_CATEGORY_INPUTS.map((item) => ({ ...item, empty_text: item.emptyText }));
+  const listHtml = renderWorksList(categories, works);
   assert.doesNotMatch(listHtml, /影视作品1/);
   for (const index of [2, 3, 4, 5]) assert.match(listHtml, new RegExp(`影视作品${index}`));
   assert.match(listHtml, /5 ITEMS \/ LATEST 4/);
   assert.match(listHtml, /data-card-count="4"/);
   assert.match(listHtml, /生活类作品还在路上/);
 
-  const categoryHtml = renderWorkCategory('影视', works);
+  const categoryHtml = renderWorkCategory(categories[1], works);
   for (const index of [1, 2, 3, 4, 5]) assert.match(categoryHtml, new RegExp(`影视作品${index}`));
   assert.match(categoryHtml, /href="works\.html">← 返回作品展示/);
 });

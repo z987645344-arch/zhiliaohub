@@ -1,7 +1,37 @@
 # 知了hub 改动记录
 > 每轮完成改动后在此追加记录（新条目追加在**最前**，本文件为新在前的倒序）。
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
-> **最后追加：2026-09-10**
+> **最后追加：2026-09-11**
+
+## 2026-09-11 将作品分组改为管理员自建的数据（实施方现场记录）
+
+- **行为变化**：作品分组不再由模板写死为“程序/影视/生活”，改为数据库中的独立记录，默认 0 个分组；管理员可维护名称、URL 标识、分类页副标题、导语、空状态文案、排序和可见性。一级作品页与 `works-category-<slug>.html` 二级页只按实际分组生成，0 个分组时不生成任何分类页。
+- **迁移边界**：生产库已有真实内容，本轮通过幂等 `content_migrations` 迁移而非重建数据库。迁移兼容既有中文分类名和 `program`/`film`/`life` 旧 slug，未知旧值也会建立兼容分组以保住作品归属；本地仓库数据库只读核对为“影视 4 条、程序 4 条”，未连接服务器，未把该结果冒充生产数据。
+- **破坏性操作**：删除分组前显示并要求确认实际作品数，应用层逐条复用作品删除语义，清理数据库行与 Markdown 正文，再全量发布清理分类页、详情页及受控媒体。⚠️ 该级联删除是用户于 2026-09-11 明确选择的行为，理由是当时作品价值低；将来作品价值提高后，该能力仍会删除内容。
+- `README.md` **+1/-1**：把固定三个分组的概述校准为默认 0 个、由管理员自建的数据驱动分组。
+- `admin-server/README.md` **+5/-5**：同步动态分类页、分组 slug 规则、级联删除语义与迁移/测试口径；另修补上一轮遗留的 `tools.html` 发布归属错误，明确其自 v3.2 起无条件生成。
+- `admin-server/data/schema.sql` **+16/-1**：新增分组表、排序索引、可见性与 0/1 检查约束，并让作品分类引用分组名称且禁止数据库层静默级联。
+- `admin-server/deploy/README.md` **+2/-0**：记录 WAL 模式热拷 SQLite 必须同时处理 `-wal`/`-shm`，或使用 `VACUUM INTO`；单拷主库会得到不完整快照。
+- `admin-server/package.json` **+1/-1**：把新增分组测试与测试辅助文件纳入语法检查，不删减既有门禁。
+- `admin-server/scripts/migrate-existing-content.js` **+19/-1**：一次性旧内容导入在写作品前显式建立对应分组，适配新的引用约束。
+- `admin-server/src/app.js` **+51/-2**：新增受登录与 CSRF 保护的分组管理路由，作品表单读取分组；增删改分组后触发全量发布。
+- `admin-server/src/db.js` **+153/-0**：实现幂等数据驱动分组迁移，事务内保留既有作品归属、重建带外键的作品表并执行外键完整性检查。
+- `admin-server/src/services/content-service.js` **+204/-59**：作品分类改为查询实际分组；新增严格 slug 校验、分组 CRUD/计数，以及带精确数量确认和 Markdown 失败回写的串行级联删除。
+- `admin-server/src/services/publish-service.js` **+8/-4**：查询实际可见分组并只生成对应分类页；白名单正则保持原范围，站点写入继续使用公开文件模式。
+- `admin-server/src/templates/works.js` **+10/-37**：删除三个分组常量，一级页和分类页改为渲染数据库分组及其全部文案。
+- `admin-server/src/views.js` **+29/-6**：新增分组管理界面；作品分类由自由文本改为下拉框，0 个分组时明确提示先创建分组并禁止保存。
+- `admin-server/tests/helpers/work-categories.js` **+30/-0**：新增显式建立历史三分组的测试辅助函数，避免测试依赖生产迁移副作用。
+- `admin-server/tests/work-categories.test.js` **+207/-0**：新增零分组、slug 校验与唯一性、改名保归属、隐藏分组、精确数量确认、级联删除及失败回滚测试。
+- `admin-server/tests/admin-server.test.js` **+53/-0**：覆盖分组管理登录、CSRF、创建和作品表单下拉入口。
+- `admin-server/tests/backup-automation.test.js` **+2/-0**、`admin-server/tests/backup.test.js` **+2/-0**、`admin-server/tests/media-publish.test.js` **+2/-0**、`admin-server/tests/orphan-uploads.test.js` **+5/-0**：现有场景显式建立所需分组，测试意图与新鲜数据库默认 0 分组兼容。
+- `admin-server/tests/content-validation.test.js` **+23/-6**：锁定作品只能引用已有分组，并覆盖分组 URL 标识的小写字母、数字及单连字符规则。
+- `admin-server/tests/publish-service.test.js` **+6/-3**：发布夹具改用分组数据，继续验证每组最新 4 条与分类页全部作品。
+- `admin-server/tests/work-form.test.js` **+19/-3**：验证分组下拉框、隐藏分组标识，以及零分组时的提示与禁用状态。
+- `admin-server/tests/work-schema-migration.test.js` **+33/-5**：从含真实作品的旧表迁移，覆盖中文名、旧 slug、默认值、外键约束、数据保留与重复启动幂等。
+- `docs/claude_memory.md` **+1/-1**、`docs/zhiliaohub_structure.md` **+5/-6**：由指挥师维护，实施方未改内容；两份文档把固定三分组校准为默认 0 个的数据驱动分组，并记录 slug 输入与级联删除风险，随本轮一并存档。
+- `CHANGELOG.md` **+31/-1**：新增本条普通工作记录并更新最后追加日期；不写版本号，不暗示已经推送、打标或部署。
+- **本场验证**：完整 `npm test` 从基线 **114/114** 增至 **123/123**，0 失败；`npm run check`、涉及文件 `node --check`、`git diff --check` 通过。19 个受 Git 跟踪 HTML 的本地引用全部存在。真实浏览器在 1440px 与 390px 检查一级页和分类页，无页面级横向溢出；Docker Linux 卷内实测 `works.html` 与动态分类页均为 `0644`，非 root 身份读取成功。
+- ⚠️ **未验证，不得当作已通过**：未连接服务器、未部署、未读取或迁移生产数据库，未在生产 Nginx 下验证动态分组。仓库外仍留有无害测试卷 `zhiliaohub-category-verify-20260911`，不影响 Git 工作区，交由统筹师顺手清理。
 
 ## Git标签 v3.2 - 2026-09-10
 

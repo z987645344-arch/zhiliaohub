@@ -29,6 +29,7 @@ const {
   scheduledBoundaryAtOrBefore,
 } = require('../src/services/backup-scheduler');
 const { BackupStatusService } = require('../src/services/backup-status-service');
+const { seedLegacyCategories } = require('./helpers/work-categories');
 
 function createConfig(runtimeRoot, overrides = {}) {
   const dataDir = path.join(runtimeRoot, 'data');
@@ -75,6 +76,7 @@ async function restoreWithStoppedService(config, archivePath) {
 async function seedStorage(config, title = '定时备份验证作品') {
   const database = initializeDatabase(config);
   const contentService = new ContentService(database, config);
+  seedLegacyCategories(contentService);
   const work = await contentService.createWork({
     title,
     workDate: '2026-08-11',

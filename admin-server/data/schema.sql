@@ -1,3 +1,16 @@
+CREATE TABLE IF NOT EXISTS work_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  slug TEXT NOT NULL UNIQUE,
+  kicker TEXT NOT NULL,
+  intro TEXT NOT NULL,
+  empty_text TEXT NOT NULL,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  is_visible INTEGER NOT NULL DEFAULT 1 CHECK (is_visible IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS works (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
@@ -20,7 +33,8 @@ CREATE TABLE IF NOT EXISTS works (
   version_log TEXT,
   markdown_path TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (category) REFERENCES work_categories(name) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS notes (
@@ -121,6 +135,7 @@ CREATE TABLE IF NOT EXISTS lab_projects (
 );
 
 CREATE INDEX IF NOT EXISTS idx_works_date ON works(work_date DESC);
+CREATE INDEX IF NOT EXISTS idx_work_categories_visible_order ON work_categories(is_visible, display_order, id);
 CREATE INDEX IF NOT EXISTS idx_notes_date ON notes(note_date DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_single_active ON devices(revoked) WHERE revoked = 0;

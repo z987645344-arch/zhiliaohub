@@ -8,6 +8,7 @@ const { initializeDatabase } = require('../src/db');
 const { validateAndFinalizeUpload } = require('../src/lib/upload-policy');
 const { ContentService } = require('../src/services/content-service');
 const { PublishService } = require('../src/services/publish-service');
+const { seedLegacyCategories } = require('./helpers/work-categories');
 
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -49,6 +50,7 @@ test('作品媒体完成上传、发布复制、编辑清理与删除清理完�
   };
   const database = initializeDatabase(config);
   const contentService = new ContentService(database, config);
+  seedLegacyCategories(contentService);
   const publishService = new PublishService(database, config);
   t.after(async () => {
     database.close();

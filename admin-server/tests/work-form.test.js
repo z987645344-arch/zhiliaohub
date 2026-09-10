@@ -9,21 +9,37 @@ const { workFormScript } = require('../src/lib/html');
 const { workFormPage } = require('../src/views');
 const { createApp } = require('../src/app');
 
-test('独立作品表单包含阶段二全部字段且日记旧字段不再混入作品表单', () => {
-  const html = workFormPage({ csrfToken: 'csrf-test-token' });
+test('独立作品表单用现有分组下拉选择且日记旧字段不再混入作品表单', () => {
+  const html = workFormPage({
+    csrfToken: 'csrf-test-token',
+    categories: [
+      { name: '自定义分组', is_visible: 1 },
+      { name: '隐藏分组', is_visible: 0 },
+    ],
+    record: { category: '隐藏分组' },
+  });
   for (const name of [
     'title', 'workDate', 'category', 'detailIntro', 'coverImage', 'mainMediaType',
     'mainMediaPath', 'gallery', 'isDownloadable', 'downloadFile', 'experienceUrl', 'showOnTools', 'versionLog',
   ]) {
     assert.match(html, new RegExp(`name="${name}"`));
   }
-  assert.match(html, /<option value="程序" selected>程序<\/option>/);
+  assert.match(html, /<option value="自定义分组">自定义分组<\/option>/);
+  assert.match(html, /<option value="隐藏分组" selected>隐藏分组（前台隐藏）<\/option>/);
   assert.match(html, /data-cover-canvas/);
   assert.match(html, /multiple accept=/);
   assert.match(html, /在智能工具页显示这条作品/);
   assert.match(html, /<script src="\/admin\/work-form\.js" defer><\/script>/);
   assert.doesNotMatch(html, /name="summary"/);
   assert.doesNotMatch(html, /name="body"/);
+});
+
+test('没有分组时作品表单明确提示先创建分组并禁止保存', () => {
+  const html = workFormPage({ csrfToken: 'csrf-test-token', categories: [] });
+  assert.match(html, /请先创建分组/);
+  assert.match(html, /href="\/admin\/categories"/);
+  assert.match(html, /<select id="category" name="category" required disabled>/);
+  assert.match(html, /data-save-work disabled/);
 });
 
 test('作品表单脚本使用原生Canvas、Fetch和受CSRF保护的现有上传接口', () => {

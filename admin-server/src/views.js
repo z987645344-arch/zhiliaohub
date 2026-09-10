@@ -58,7 +58,7 @@ function dashboardPage({
     title: '管理面板',
     authenticated: true,
     csrfToken,
-    content: `${noticeBlock(notice)}${backup}<section class="panel"><h1>内容管理</h1><p>元数据保存在SQLite，正文保存在Markdown文件；保存后立即全量生成静态前台页面。</p>${publication}<form method="post" action="/admin/publish"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit">重新全量发布</button></form><p><a class="button button-secondary" href="/admin/feedback">审核反馈${pendingFeedbackCount ? `（${pendingFeedbackCount} 条待审核）` : ''}</a> <a class="button button-secondary" href="/admin/lab">管理小作坊</a> <a class="button button-secondary" href="/admin/device">管理安卓App配对设备</a></p></section><div class="grid"><section class="panel"><h2>作品</h2><a class="button button-secondary" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>分类</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button button-secondary" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div>`,
+    content: `${noticeBlock(notice)}${backup}<section class="panel"><h1>内容管理</h1><p>元数据保存在SQLite，正文保存在Markdown文件；保存后立即全量生成静态前台页面。</p>${publication}<form method="post" action="/admin/publish"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit">重新全量发布</button></form><p><a class="button button-secondary" href="/admin/categories">管理作品分组</a> <a class="button button-secondary" href="/admin/feedback">审核反馈${pendingFeedbackCount ? `（${pendingFeedbackCount} 条待审核）` : ''}</a> <a class="button button-secondary" href="/admin/lab">管理小作坊</a> <a class="button button-secondary" href="/admin/device">管理安卓App配对设备</a></p></section><div class="grid"><section class="panel"><h2>作品</h2><a class="button button-secondary" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>分类</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button button-secondary" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div>`,
   });
 }
 
@@ -139,11 +139,17 @@ function mediaPreview(value, type, label) {
   return `${media}<span class="upload-filename">${filename}</span>`;
 }
 
-function workFormPage({ csrfToken, record = {}, error = '' }) {
+function workFormPage({ csrfToken, categories = [], record = {}, error = '' }) {
   const isEdit = Boolean(record.id);
   const title = `${isEdit ? '编辑' : '新增'}作品`;
   const action = isEdit ? `/admin/works/${record.id}` : '/admin/works';
-  const category = record.category || '程序';
+  const category = record.category || '';
+  const categoryOptions = categories.length
+    ? categories.map((item) => `<option value="${escapeHtml(item.name)}"${category === item.name ? ' selected' : ''}>${escapeHtml(item.name)}${item.is_visible ? '' : '（前台隐藏）'}</option>`).join('')
+    : '<option value="">请先创建分组</option>';
+  const categoryNotice = categories.length
+    ? ''
+    : '<p class="notice warning">当前没有作品分组，请先到“作品分组管理”创建分组后再新增作品。</p>';
   const mainType = record.main_media_type || 'image';
   const coverImage = record.cover_image || '';
   const mainMediaPath = record.main_media_path || '';
@@ -165,12 +171,12 @@ function workFormPage({ csrfToken, record = {}, error = '' }) {
     title,
     authenticated: true,
     csrfToken,
-    content: `<section class="panel work-form-panel"><h1>${title}</h1><p>保存后立即发布。媒体本阶段会复制到静态前台目录，下一阶段才接入前台展示模板。</p>${noticeBlock(error, 'notice error')}
+    content: `<section class="panel work-form-panel"><h1>${title}</h1><p>保存后立即发布。媒体会复制到静态前台目录并进入作品展示模板。</p>${noticeBlock(error, 'notice error')}${categoryNotice}
       <form method="post" action="${action}" data-work-form data-upload-api="/api/admin/uploads" data-csrf-token="${escapeHtml(csrfToken)}">
         <input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">
         <fieldset class="form-section"><legend>基础信息</legend>
           <div class="form-grid"><div><label for="title">标题</label><input id="title" name="title" value="${escapeHtml(record.title || '')}" required maxlength="200"></div><div><label for="workDate">日期</label><input id="workDate" name="workDate" type="date" value="${escapeHtml(record.work_date || '')}" required></div></div>
-          <label for="category">分类</label><select id="category" name="category" required><option value="程序"${category === '程序' ? ' selected' : ''}>程序</option><option value="影视"${category === '影视' ? ' selected' : ''}>影视</option><option value="生活"${category === '生活' ? ' selected' : ''}>生活</option></select>
+          <label for="category">分类</label><select id="category" name="category" required${categories.length ? '' : ' disabled'}>${categoryOptions}</select>${categories.length ? '' : '<a class="button button-secondary" href="/admin/categories">先创建作品分组</a>'}
           <label for="detailIntro">简介</label><textarea class="short-textarea" id="detailIntro" name="detailIntro" required maxlength="500">${escapeHtml(record.detail_intro || record.summary || '')}</textarea>
         </fieldset>
 
@@ -203,8 +209,24 @@ function workFormPage({ csrfToken, record = {}, error = '' }) {
 
         <fieldset class="form-section"><legend>版本日志</legend><label for="versionLog">Markdown内容</label><textarea id="versionLog" name="versionLog" required>${escapeHtml(record.versionLog || record.version_log || record.body || '')}</textarea></fieldset>
         <p class="upload-status" data-upload-status role="status" aria-live="polite"></p>
-        <button type="submit" data-save-work>保存并发布</button>
+        <button type="submit" data-save-work${categories.length ? '' : ' disabled'}>保存并发布</button>
       </form>${deleteForm}</section><script src="/admin/work-form.js" defer></script>`,
+  });
+}
+
+function categoryFields(category = {}) {
+  return `<div class="form-grid"><div><label for="category-name-${escapeHtml(category.id || 'new')}">分组名</label><input id="category-name-${escapeHtml(category.id || 'new')}" name="name" value="${escapeHtml(category.name || '')}" required maxlength="100"></div><div><label for="category-slug-${escapeHtml(category.id || 'new')}">URL标识</label><input id="category-slug-${escapeHtml(category.id || 'new')}" name="slug" value="${escapeHtml(category.slug || '')}" required maxlength="100" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" placeholder="software-tools"></div></div><label for="category-kicker-${escapeHtml(category.id || 'new')}">分类页副标题</label><input id="category-kicker-${escapeHtml(category.id || 'new')}" name="kicker" value="${escapeHtml(category.kicker || '')}" required maxlength="120" placeholder="PROGRAM / SOFTWARE"><label for="category-intro-${escapeHtml(category.id || 'new')}">分类页导语</label><textarea id="category-intro-${escapeHtml(category.id || 'new')}" name="intro" required maxlength="500">${escapeHtml(category.intro || '')}</textarea><label for="category-empty-${escapeHtml(category.id || 'new')}">空状态文案</label><textarea id="category-empty-${escapeHtml(category.id || 'new')}" name="emptyText" required maxlength="500">${escapeHtml(category.empty_text || '')}</textarea><div class="form-grid"><div><label for="category-order-${escapeHtml(category.id || 'new')}">排序值</label><input id="category-order-${escapeHtml(category.id || 'new')}" name="displayOrder" type="number" step="1" value="${escapeHtml(category.display_order ?? 0)}" required></div><div><input type="hidden" name="isVisible" value="0"><label class="choice checkbox-choice"><input type="checkbox" name="isVisible" value="1"${category.id && !category.is_visible ? '' : ' checked'}> 在作品页显示该分组</label></div></div>`;
+}
+
+function categoryManagementPage({ csrfToken, categories = [], notice = '' }) {
+  const categoriesMarkup = categories.length
+    ? categories.map((category) => `<section class="panel"><h2>${escapeHtml(category.name)}</h2><p><code>works-category-${escapeHtml(category.slug)}.html</code> · ${category.work_count} 条作品 · ${category.is_visible ? '前台显示' : '前台隐藏'}</p><form method="post" action="/admin/categories/${category.id}"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">${categoryFields(category)}<button type="submit">保存分组并发布</button></form><form method="post" action="/admin/categories/${category.id}/delete"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><input type="hidden" name="expectedWorkCount" value="${category.work_count}"><p class="notice warning"><strong>删除分组将连带删除 ${category.work_count} 条作品</strong>，包括作品的Markdown正文；重新发布后对应详情页、分类页与公开媒体副本也会被清理。</p><label class="choice checkbox-choice"><input type="checkbox" name="confirmDelete" value="1" required> 我确认连带删除 ${category.work_count} 条作品</label><button type="submit" class="button-danger">删除分组及其作品</button></form></section>`).join('')
+    : '<section class="panel"><p class="empty-state">目前没有作品分组。创建第一个分组后，作品表单才可保存。</p></section>';
+  return layout({
+    title: '作品分组管理',
+    authenticated: true,
+    csrfToken,
+    content: `${noticeBlock(notice)}<section class="panel"><h1>作品分组管理</h1><p>分组决定作品一级页区块与二级分类页；URL标识只能使用小写字母、数字和连字符。</p><form method="post" action="/admin/categories"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">${categoryFields()}<button type="submit">创建分组并发布</button></form></section>${categoriesMarkup}`,
   });
 }
 
@@ -269,6 +291,7 @@ module.exports = {
   dashboardPage,
   feedbackManagementPage,
   labManagementPage,
+  categoryManagementPage,
   deviceManagementPage,
   workFormPage,
   contentFormPage,

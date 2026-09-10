@@ -13,7 +13,6 @@ class ContentValidationError extends Error {
   }
 }
 
-const ALLOWED_CATEGORIES = Object.freeze(['程序', '影视', '生活']);
 const IMAGE_EXTENSIONS = Object.freeze(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif']);
 const VIDEO_EXTENSIONS = Object.freeze(['.mp4', '.webm']);
 const MEDIA_DIRECTORIES = Object.freeze({
@@ -30,12 +29,41 @@ function requiredText(value, label, maxLength) {
   return text;
 }
 
-function validateCategory(value) {
-  const text = String(value ?? '').trim();
-  if (!ALLOWED_CATEGORIES.includes(text)) {
-    throw new ContentValidationError('分类必须为：程序、影视、生活之一。');
+function validateCategory(value, database) {
+  const name = requiredText(value, '作品分组', 100);
+  if (!database?.prepare('SELECT 1 FROM work_categories WHERE name = ?').get(name)) {
+    throw new ContentValidationError('所选作品分组不存在，请先创建分组。');
   }
-  return text;
+  return name;
+}
+
+function validateCategorySlug(value) {
+  const slug = requiredText(value, 'URL标识', 100);
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+    throw new ContentValidationError('URL标识只能使用小写字母、数字和单个连字符，且不能以连字符开头或结尾。');
+  }
+  return slug;
+}
+
+function integerField(value, label, fallback = 0) {
+  const text = String(value ?? '').trim();
+  if (!text) return fallback;
+  if (!/^-?\d+$/.test(text)) throw new ContentValidationError(`${label}必须为整数。`);
+  const number = Number(text);
+  if (!Number.isSafeInteger(number)) throw new ContentValidationError(`${label}超出有效范围。`);
+  return number;
+}
+
+function categoryRecord(input, existing = null) {
+  return {
+    name: requiredText(input.name ?? existing?.name, '分组名', 100),
+    slug: validateCategorySlug(input.slug ?? existing?.slug),
+    kicker: requiredText(input.kicker ?? existing?.kicker, '分类页副标题', 120),
+    intro: requiredText(input.intro ?? existing?.intro, '分类页导语', 500),
+    emptyText: requiredText(input.emptyText ?? existing?.empty_text, '空状态文案', 500),
+    displayOrder: integerField(input.displayOrder ?? existing?.display_order, '排序值'),
+    isVisible: booleanFlag(input.isVisible, existing ? Boolean(existing.is_visible) : true),
+  };
 }
 
 function validateGallery(value) {
@@ -128,7 +156,7 @@ function validateWorkGallery(value) {
   return JSON.stringify(normalized);
 }
 
-function workRecord(input, maxBytes, existing = null) {
+function workRecord(input, maxBytes, database, existing = null) {
   const detailIntro = requiredText(input.detailIntro, '详情页简介', 500);
   const experienceUrl = validateExperienceUrl(input.experienceUrl ?? existing?.experience_url);
   const showOnTools = booleanFlag(input.showOnTools, Boolean(existing?.show_on_tools));
@@ -149,7 +177,7 @@ function workRecord(input, maxBytes, existing = null) {
   return {
     title: requiredText(input.title, '标题', 200),
     workDate: validDate(input.workDate, '作品日期'),
-    category: validateCategory(input.category),
+    category: validateCategory(input.category ?? existing?.category, database),
     summary: requiredText(input.summary ?? detailIntro, '摘要', 500),
     detailIntro,
     body: versionLog,
@@ -229,6 +257,86 @@ class ContentService {
     `).all();
   }
 
+  listCategories({ visibleOnly = false } = {}) {
+    return this.database.prepare(`
+      SELECT category.*, COUNT(works.id) AS work_count
+      FROM work_categories AS category
+      LEFT JOIN works ON works.category = category.name
+      ${visibleOnly ? 'WHERE category.is_visible = 1' : ''}
+      GROUP BY category.id
+      ORDER BY category.display_order ASC, category.id ASC
+    `).all();
+  }
+
+  getCategory(id) {
+    const category = this.database.prepare(`
+      SELECT category.*, COUNT(works.id) AS work_count
+      FROM work_categories AS category
+      LEFT JOIN works ON works.category = category.name
+      WHERE category.id = ?
+      GROUP BY category.id
+    `).get(Number(id));
+    if (!category) throw new ContentValidationError('作品分组不存在。', 404);
+    return category;
+  }
+
+  assertCategoryUnique(record, excludedId = null) {
+    const suffix = excludedId === null ? '' : ' AND id <> ?';
+    const parameters = excludedId === null ? [record.name] : [record.name, Number(excludedId)];
+    if (this.database.prepare(`SELECT 1 FROM work_categories WHERE name = ?${suffix}`).get(...parameters)) {
+      throw new ContentValidationError('分组名已存在，请使用其他名称。');
+    }
+    parameters[0] = record.slug;
+    if (this.database.prepare(`SELECT 1 FROM work_categories WHERE slug = ?${suffix}`).get(...parameters)) {
+      throw new ContentValidationError('URL标识已存在，请使用其他标识。');
+    }
+  }
+
+  createCategory(input) {
+    const record = categoryRecord(input);
+    this.assertCategoryUnique(record);
+    const now = new Date().toISOString();
+    const result = this.database.prepare(`
+      INSERT INTO work_categories (
+        name, slug, kicker, intro, empty_text, display_order, is_visible, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      record.name,
+      record.slug,
+      record.kicker,
+      record.intro,
+      record.emptyText,
+      record.displayOrder,
+      record.isVisible,
+      now,
+      now,
+    );
+    return this.getCategory(result.lastInsertRowid);
+  }
+
+  updateCategory(id, input) {
+    const existing = this.getCategory(id);
+    const record = categoryRecord(input, existing);
+    this.assertCategoryUnique(record, existing.id);
+    this.database.prepare(`
+      UPDATE work_categories SET
+        name = ?, slug = ?, kicker = ?, intro = ?, empty_text = ?,
+        display_order = ?, is_visible = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      record.name,
+      record.slug,
+      record.kicker,
+      record.intro,
+      record.emptyText,
+      record.displayOrder,
+      record.isVisible,
+      new Date().toISOString(),
+      existing.id,
+    );
+    return this.getCategory(existing.id);
+  }
+
   listNotes() {
     return this.database.prepare(`
       SELECT * FROM notes
@@ -256,47 +364,49 @@ class ContentService {
   }
 
   async createWork(input) {
-    const record = workRecord(input, this.config.contentMaxBytes);
-    record.slug = this.uniqueSlug('works', record.title);
-    const relativePath = `works/${randomUUID()}.md`;
-    const targetPath = safeContentPath(this.config.contentDir, relativePath, 'works');
-    const now = new Date().toISOString();
+    return this.runSerializedUpdate('works:all', async () => {
+      const record = workRecord(input, this.config.contentMaxBytes, this.database);
+      record.slug = this.uniqueSlug('works', record.title);
+      const relativePath = `works/${randomUUID()}.md`;
+      const targetPath = safeContentPath(this.config.contentDir, relativePath, 'works');
+      const now = new Date().toISOString();
 
-    await atomicWriteFile(targetPath, record.body);
-    try {
-      const result = this.database.prepare(`
-        INSERT INTO works (
-          title, slug, work_date, category, summary, detail_intro,
-          cover_image, is_downloadable, download_file, experience_url,
-          show_on_tools,
-          main_media_type, main_media_path, gallery, version_log,
-          markdown_path, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        record.title,
-        record.slug,
-        record.workDate,
-        record.category,
-        record.summary,
-        record.detailIntro,
-        record.coverImage,
-        record.isDownloadable,
-        record.downloadFile,
-        record.experienceUrl,
-        record.showOnTools,
-        record.mainMediaType,
-        record.mainMediaPath,
-        record.gallery,
-        record.versionLog,
-        relativePath,
-        now,
-        now,
-      );
-      return this.getWork(result.lastInsertRowid);
-    } catch (error) {
-      await fs.unlink(targetPath).catch(() => {});
-      throw error;
-    }
+      await atomicWriteFile(targetPath, record.body);
+      try {
+        const result = this.database.prepare(`
+          INSERT INTO works (
+            title, slug, work_date, category, summary, detail_intro,
+            cover_image, is_downloadable, download_file, experience_url,
+            show_on_tools,
+            main_media_type, main_media_path, gallery, version_log,
+            markdown_path, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          record.title,
+          record.slug,
+          record.workDate,
+          record.category,
+          record.summary,
+          record.detailIntro,
+          record.coverImage,
+          record.isDownloadable,
+          record.downloadFile,
+          record.experienceUrl,
+          record.showOnTools,
+          record.mainMediaType,
+          record.mainMediaPath,
+          record.gallery,
+          record.versionLog,
+          relativePath,
+          now,
+          now,
+        );
+        return this.getWork(result.lastInsertRowid);
+      } catch (error) {
+        await fs.unlink(targetPath).catch(() => {});
+        throw error;
+      }
+    });
   }
 
   async createNote(input) {
@@ -325,9 +435,9 @@ class ContentService {
   }
 
   async updateWork(id, input) {
-    return this.runSerializedUpdate(`work:${Number(id)}`, async () => {
+    return this.runSerializedUpdate('works:all', async () => {
       const existing = await this.getWork(id);
-      const record = workRecord(input, this.config.contentMaxBytes, existing);
+      const record = workRecord(input, this.config.contentMaxBytes, this.database, existing);
       const targetPath = safeContentPath(this.config.contentDir, existing.markdown_path, 'works');
       await atomicWriteFile(targetPath, record.body);
       try {
@@ -388,17 +498,51 @@ class ContentService {
   }
 
   async deleteWork(id) {
-    return this.runSerializedUpdate(`work:${Number(id)}`, async () => {
+    return this.runSerializedUpdate('works:all', async () => {
       const existing = await this.getWork(id);
-      const targetPath = safeContentPath(this.config.contentDir, existing.markdown_path, 'works');
-      await fs.unlink(targetPath);
-      try {
+      await this.deleteWorkRecords([existing], () => {
         this.database.prepare('DELETE FROM works WHERE id = ?').run(Number(id));
-      } catch (error) {
-        await atomicWriteFile(targetPath, existing.body);
-        throw error;
-      }
+      });
       return existing;
+    });
+  }
+
+  async deleteWorkRecords(records, deleteDatabaseRows) {
+    const removed = [];
+    try {
+      for (const record of records) {
+        const targetPath = safeContentPath(this.config.contentDir, record.markdown_path, 'works');
+        await fs.unlink(targetPath);
+        removed.push({ targetPath, body: record.body });
+      }
+      deleteDatabaseRows();
+    } catch (error) {
+      for (const snapshot of removed) await atomicWriteFile(snapshot.targetPath, snapshot.body);
+      throw error;
+    }
+  }
+
+  async deleteCategory(id, { confirmed = false, expectedWorkCount } = {}) {
+    return this.runSerializedUpdate('works:all', async () => {
+      const category = this.getCategory(id);
+      if (!confirmed) {
+        throw new ContentValidationError(`删除分组前必须确认将连带删除 ${category.work_count} 条作品。`);
+      }
+      const expected = integerField(expectedWorkCount, '确认时的作品数量', -1);
+      if (expected !== category.work_count) {
+        throw new ContentValidationError(`该分组现有 ${category.work_count} 条作品，与确认时数量不一致，请刷新页面后重新确认。`, 409);
+      }
+      const rows = this.database.prepare('SELECT id FROM works WHERE category = ? ORDER BY id').all(category.name);
+      const works = [];
+      for (const row of rows) works.push(await this.getWork(row.id));
+      const removeRows = this.database.transaction(() => {
+        const removeWork = this.database.prepare('DELETE FROM works WHERE id = ?');
+        for (const work of works) removeWork.run(work.id);
+        const result = this.database.prepare('DELETE FROM work_categories WHERE id = ?').run(category.id);
+        if (result.changes !== 1) throw new ContentValidationError('作品分组不存在。', 404);
+      });
+      await this.deleteWorkRecords(works, removeRows);
+      return { ...category, deletedWorks: works };
     });
   }
 
@@ -419,12 +563,13 @@ class ContentService {
 }
 
 module.exports = {
-  ALLOWED_CATEGORIES,
   MEDIA_DIRECTORIES,
   ContentService,
   ContentValidationError,
+  categoryRecord,
   safeParseGallery,
   validateCategory,
+  validateCategorySlug,
   validateGallery,
   validateMediaPath,
 };

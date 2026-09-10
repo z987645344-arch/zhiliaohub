@@ -11,6 +11,7 @@ const speakeasy = require('speakeasy');
 const { createApp } = require('../src/app');
 const { atomicWriteFile } = require('../src/lib/atomic-file');
 const { encryptTotpSecret, decryptTotpSecret } = require('../src/lib/totp-secret');
+const { seedLegacyCategories } = require('./helpers/work-categories');
 
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -505,6 +506,7 @@ test('已登录写接口会拒绝缺失或错误的 CSRF 令牌', async (t) => {
 test('作品和日记的新增、编辑、删除会同步SQLite、Markdown与静态前台', async (t) => {
   const runtime = await createRuntime();
   t.after(() => runtime.close());
+  seedLegacyCategories(runtime.contentService);
   const client = createClient(runtime.baseUrl);
   const { csrf } = await bindAndAuthenticate(client, runtime);
 
@@ -585,9 +587,60 @@ test('作品和日记的新增、编辑、删除会同步SQLite、Markdown与静
   await assert.rejects(fs.access(notePath), /ENOENT/);
 });
 
+test('作品分组管理要求登录与CSRF，创建后立即进入作品下拉框', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const anonymous = createClient(runtime.baseUrl);
+  let response = await anonymous.request('/admin/categories');
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get('location'), '/admin/login');
+
+  const client = createClient(runtime.baseUrl);
+  const { csrf } = await bindAndAuthenticate(client, runtime);
+  const categoryFields = {
+    name: '自定义分组',
+    slug: 'custom-group',
+    kicker: 'CUSTOM / GROUP',
+    intro: '后台路由验证。',
+    emptyText: '暂无作品。',
+    displayOrder: '10',
+    isVisible: '1',
+  };
+  response = await client.request('/admin/categories', {
+    method: 'POST',
+    body: form(categoryFields),
+  });
+  assert.equal(response.status, 403, '分组写操作缺少CSRF必须被拒绝。');
+
+  response = await client.request('/admin/categories', {
+    method: 'POST',
+    body: form({ _csrf: csrf, ...categoryFields }),
+  });
+  assert.equal(response.status, 302);
+  const category = runtime.contentService.listCategories()[0];
+  assert.equal(category.slug, 'custom-group');
+
+  response = await client.request('/admin/works/new');
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /<option value="自定义分组">自定义分组<\/option>/);
+
+  response = await client.request(`/admin/categories/${category.id}/delete`, {
+    method: 'POST',
+    body: form({ _csrf: csrf, expectedWorkCount: '0' }),
+  });
+  assert.equal(response.status, 400, '删除分组缺少显式确认必须被拒绝。');
+  response = await client.request(`/admin/categories/${category.id}/delete`, {
+    method: 'POST',
+    body: form({ _csrf: csrf, expectedWorkCount: '0', confirmDelete: '1' }),
+  });
+  assert.equal(response.status, 302);
+  assert.equal(runtime.contentService.listCategories().length, 0);
+});
+
 test('同一作品或日记的并发更新会保持数据库与 Markdown 属于同一次写入', async (t) => {
   const runtime = await createRuntime();
   t.after(() => runtime.close());
+  seedLegacyCategories(runtime.contentService);
 
   await t.test('作品并发更新', async () => {
     const created = await runtime.contentService.createWork(workInput('初始'));

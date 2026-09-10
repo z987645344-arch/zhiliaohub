@@ -41,6 +41,11 @@ async function seedEveryReferenceClass(config, filenames) {
   const database = initializeDatabase(config);
   const now = '2026-09-04T00:00:00.000Z';
   database.prepare(`
+    INSERT INTO work_categories (
+      name, slug, kicker, intro, empty_text, display_order, is_visible, created_at, updated_at
+    ) VALUES ('程序', 'program', 'PROGRAM', '程序作品。', '暂无程序作品。', 10, 1, ?, ?)
+  `).run(now, now);
+  database.prepare(`
     INSERT INTO works (
       title, slug, work_date, category, summary, detail_intro,
       cover_image, download_file, main_media_type, main_media_path, gallery, version_log,

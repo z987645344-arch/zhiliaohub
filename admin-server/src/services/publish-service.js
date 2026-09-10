@@ -7,7 +7,6 @@ const { MEDIA_DIRECTORIES, safeParseGallery } = require('./content-service');
 const { buildProjectUrl } = require('./lab-service');
 const { GENERATED_MARKER } = require('../templates/shared');
 const {
-  WORK_CATEGORIES,
   renderWorkCategory,
   renderWorkDetail,
   renderWorksList,
@@ -145,6 +144,11 @@ class PublishService {
       SELECT * FROM works
       ORDER BY CASE WHEN display_order IS NULL THEN 1 ELSE 0 END, display_order ASC, work_date DESC, id DESC
     `).all();
+    const categories = this.database.prepare(`
+      SELECT * FROM work_categories
+      WHERE is_visible = 1
+      ORDER BY display_order ASC, id ASC
+    `).all();
     const notes = this.database.prepare(`
       SELECT * FROM notes
       ORDER BY CASE WHEN display_order IS NULL THEN 1 ELSE 0 END, display_order ASC, note_date DESC, id DESC
@@ -177,10 +181,10 @@ class PublishService {
     }
     feedbackTopics.sort((left, right) => right.created_at.localeCompare(left.created_at) || right.id - left.id);
     const files = new Map([
-      ['works.html', renderWorksList(works, labProjects)],
-      ...WORK_CATEGORIES.map((category) => [
+      ['works.html', renderWorksList(categories, works, labProjects)],
+      ...categories.map((category) => [
         `works-category-${category.slug}.html`,
-        renderWorkCategory(category.name, works),
+        renderWorkCategory(category, works),
       ]),
       ['notes.html', renderNotesList(notes)],
       ['tools.html', renderToolsPage(works)],

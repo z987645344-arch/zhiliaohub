@@ -19,6 +19,7 @@ const { createApp } = require('../src/app');
 const { initializeDatabase } = require('../src/db');
 const { loadBackupConfig } = require('../src/backup-config');
 const { ContentService } = require('../src/services/content-service');
+const { seedLegacyCategories } = require('./helpers/work-categories');
 const {
   DEFAULT_RESTORE_PROBE_TIMEOUT_MS,
   PRE_RESTORE_PREFIX,
@@ -175,6 +176,7 @@ async function openLabPage(config, slug) {
 async function seedStorage(config) {
   const database = initializeDatabase(config);
   const contentService = new ContentService(database, config);
+  seedLegacyCategories(contentService);
   const work = await contentService.createWork({
     title: '待恢复作品',
     workDate: '2026-08-04',

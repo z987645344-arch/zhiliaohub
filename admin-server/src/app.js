@@ -33,6 +33,7 @@ const {
   totpSetupPage,
   totpVerifyPage,
   dashboardPage,
+  categoryManagementPage,
   feedbackManagementPage,
   labManagementPage,
   deviceManagementPage,
@@ -468,6 +469,47 @@ function createApp(overrides = {}) {
     }));
   });
 
+  app.get('/admin/categories', requireAdmin, (request, response) => {
+    response.send(categoryManagementPage({
+      csrfToken: response.locals.csrfToken,
+      categories: contentService.listCategories(),
+      notice: request.query.notice || '',
+    }));
+  });
+
+  app.post('/admin/categories', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      contentService.createCategory(request.body);
+      await publishService.publishAll();
+      response.redirect('/admin/categories?notice=作品分组已创建并发布。');
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/categories/:id', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      contentService.updateCategory(request.params.id, request.body);
+      await publishService.publishAll();
+      response.redirect('/admin/categories?notice=作品分组已更新并发布。');
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/categories/:id/delete', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      const result = await contentService.deleteCategory(request.params.id, {
+        confirmed: request.body.confirmDelete === '1',
+        expectedWorkCount: request.body.expectedWorkCount,
+      });
+      await publishService.publishAll();
+      response.redirect(`/admin/categories?notice=${encodeURIComponent(`分组及 ${result.work_count} 条作品已删除并发布。`)}`);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   async function createLabProject(request, response, next, asJson) {
     try {
       if (!request.file) throw new LabValidationError('请选择一个ZIP文件。');
@@ -570,7 +612,10 @@ function createApp(overrides = {}) {
   });
 
   app.get('/admin/works/new', requireAdmin, (_request, response) => {
-    response.send(workFormPage({ csrfToken: response.locals.csrfToken }));
+    response.send(workFormPage({
+      csrfToken: response.locals.csrfToken,
+      categories: contentService.listCategories(),
+    }));
   });
 
   app.get('/admin/notes/new', requireAdmin, (_request, response) => {
@@ -580,7 +625,11 @@ function createApp(overrides = {}) {
   app.get('/admin/works/:id/edit', requireAdmin, async (request, response, next) => {
     try {
       const record = await contentService.getWork(request.params.id);
-      response.send(workFormPage({ csrfToken: response.locals.csrfToken, record }));
+      response.send(workFormPage({
+        csrfToken: response.locals.csrfToken,
+        categories: contentService.listCategories(),
+        record,
+      }));
     } catch (error) {
       next(error);
     }

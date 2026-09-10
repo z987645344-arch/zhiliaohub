@@ -7,6 +7,7 @@ const Database = require('better-sqlite3');
 
 const {
   WORK_CATEGORY_MIGRATION_NAME,
+  WORK_CATEGORY_RECORDS_MIGRATION_NAME,
   WORK_TOOLS_VISIBILITY_MIGRATION_NAME,
   initializeDatabase,
 } = require('../src/db');
@@ -36,6 +37,7 @@ test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移'
     uploadsDir: path.join(root, 'uploads'),
   };
 
+  let database;
   try {
     await fs.mkdir(dataDir, { recursive: true });
     const legacy = new Database(databasePath);
@@ -65,9 +67,10 @@ test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移'
     const longPrefix = '旧'.repeat(100);
     insert.run(`${longPrefix}甲`, null, '程序', 'works/long-1.md');
     insert.run(`${longPrefix}乙`, null, '程序', 'works/long-2.md');
+    insert.run('既有slug分类作品', 'work-slug-film', 'film', 'works/slug-film.md');
     legacy.close();
 
-    let database = initializeDatabase(config);
+    database = initializeDatabase(config);
     const columnInfo = new Map(database.prepare('PRAGMA table_info(works)').all().map((column) => [column.name, column]));
     for (const column of expectedColumns) {
       assert.ok(columnInfo.has(column), `应补齐 ${column} 字段。`);
@@ -81,13 +84,29 @@ test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移'
     );
     assert.equal(
       database.prepare('SELECT COUNT(*) AS count FROM works WHERE show_on_tools = 0').get().count,
-      categories.length + 2,
+      categories.length + 3,
       '迁移前已有作品必须完整保留并默认不展示在智能工具页。',
     );
     assert.deepEqual(
       database.prepare('SELECT category, COUNT(*) AS count FROM works GROUP BY category ORDER BY category').all(),
-      [{ category: '影视', count: 4 }, { category: '程序', count: 5 }],
+      [{ category: '影视', count: 5 }, { category: '程序', count: 5 }],
     );
+    assert.deepEqual(
+      database.prepare('SELECT name, slug FROM work_categories ORDER BY display_order, id').all(),
+      [
+        { name: '程序', slug: 'program' },
+        { name: '影视', slug: 'film' },
+        { name: '生活', slug: 'life' },
+      ],
+      '有既有作品的旧库必须补齐原三分组并保住作品归属。',
+    );
+    assert.ok(database.prepare('PRAGMA foreign_key_list(works)').all().some((row) => (
+      row.table === 'work_categories'
+        && row.from === 'category'
+        && row.to === 'name'
+        && row.on_update === 'CASCADE'
+        && row.on_delete === 'RESTRICT'
+    )), '迁移后的作品必须引用作品分组。');
     const backfilled = database.prepare("SELECT slug FROM works WHERE markdown_path LIKE 'works/long-%' ORDER BY id").all();
     assert.equal(backfilled.length, 2);
     assert.notEqual(backfilled[0].slug, backfilled[1].slug);
@@ -98,14 +117,15 @@ test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移'
     }
     assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_CATEGORY_MIGRATION_NAME));
     assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_TOOLS_VISIBILITY_MIGRATION_NAME));
+    assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_CATEGORY_RECORDS_MIGRATION_NAME));
 
-    database.prepare("UPDATE works SET category = '软件' WHERE slug = 'work-5'").run();
+    database.prepare("UPDATE works SET category = '生活' WHERE slug = 'work-5'").run();
     database.prepare("UPDATE works SET show_on_tools = 1 WHERE slug = 'work-0'").run();
     database.close();
     database = initializeDatabase(config);
     assert.equal(
       database.prepare("SELECT category FROM works WHERE slug = 'work-5'").get().category,
-      '软件',
+      '生活',
       '迁移标记存在后不得重复改写数据。',
     );
     assert.equal(database.prepare("SELECT show_on_tools FROM works WHERE slug = 'work-0'").get().show_on_tools, 1);
@@ -115,8 +135,16 @@ test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移'
       1,
       '重复启动不得重复记录或执行智能工具展示开关迁移。',
     );
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?')
+        .get(WORK_CATEGORY_RECORDS_MIGRATION_NAME).count,
+      1,
+      '重复启动不得重复记录或执行数据驱动分组迁移。',
+    );
     database.close();
+    database = null;
   } finally {
+    database?.close();
     await fs.rm(root, { recursive: true, force: true });
   }
 });

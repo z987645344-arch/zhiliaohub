@@ -349,6 +349,8 @@ cp -r assets css js <站点根>/
 
 以下流程用于新服务器、服务器迁移或灾难恢复，不是每次小代码更新都要重做：
 
+⚠️ **WAL 模式下不得在数据库运行时只热拷 `admin.sqlite3` 主文件。** 最近写入可能仍在同目录的 `admin.sqlite3-wal`，单拷主库会得到时间点不一致的不完整快照，并可能制造“库里没有刚写入数据”的假告警。临时人工取证必须把主库、`-wal`、`-shm` 作为同一组处理，或通过 SQLite `VACUUM INTO` 生成一致副本；正式灾难恢复仍以本项目备份/恢复命令为准。2026-09-10 的一次部署排查曾因只看主库得到“作品 0 行”，而完整 WAL 状态实际为 1 行。
+
 1. 在服务器检出已确认版本，安装受支持的Docker Engine与Compose插件。
 2. 从两个 `.env.example` 分别创建根目录 `.env` 和 `admin-server/.env`，填写现场值，并确认两者均未被Git跟踪。
 3. 创建单一 `RUNTIME_ROOT_PATH`，在其中建立 `public/{site,lab-storage}` 与 `private/{data,content,uploads,backups}`，执行 `chown -R 1000:1000 <runtime-root>`。`public/`、`private/` 自身也必须是普通目录且属主正确；既有平铺部署按上文“已有平铺运行目录的原地迁移”停服移动。TLS证书只由独立gateway管理，hub Compose不挂载证书。

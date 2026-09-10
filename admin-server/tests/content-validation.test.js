@@ -2,19 +2,36 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
-  ALLOWED_CATEGORIES,
   ContentService,
   ContentValidationError,
+  categoryRecord,
   safeParseGallery,
   validateCategory,
+  validateCategorySlug,
   validateGallery,
 } = require('../src/services/content-service');
 
-test('作品分类只接受程序、影视、生活', () => {
-  assert.deepEqual(ALLOWED_CATEGORIES, ['程序', '影视', '生活']);
-  assert.equal(validateCategory(' 影视 '), '影视');
-  assert.throws(() => validateCategory('软件'), ContentValidationError);
-  assert.throws(() => validateCategory(''), /分类必须为/);
+test('作品分类必须引用数据库中的现有分组', () => {
+  const database = {
+    prepare() {
+      return { get: (name) => (name === '自定义分组' ? { found: 1 } : undefined) };
+    },
+  };
+  assert.equal(validateCategory(' 自定义分组 ', database), '自定义分组');
+  assert.throws(() => validateCategory('程序', database), /所选作品分组不存在/);
+  assert.throws(() => validateCategory('', database), /作品分组不能为空/);
+});
+
+test('分组URL标识严格限制为小写字母、数字和单个连字符', () => {
+  assert.equal(validateCategorySlug('custom-tools'), 'custom-tools');
+  for (const invalid of ['中文', 'Uppercase', 'tail-', '-head', 'two--dashes']) {
+    assert.throws(() => validateCategorySlug(invalid), ContentValidationError);
+  }
+  const record = categoryRecord({
+    name: '自定义', slug: 'custom', kicker: 'CUSTOM', intro: '导语', emptyText: '暂无作品',
+  });
+  assert.equal(record.isVisible, 1);
+  assert.equal(record.displayOrder, 0);
 });
 
 test('辅图列表校验会规范化合法路径并拒绝损坏结构', () => {
