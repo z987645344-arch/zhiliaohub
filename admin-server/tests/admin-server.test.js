@@ -279,6 +279,7 @@ test('聚合备份状态只经认证通道返回，知天失败不影响知了hu
   assert.match(dashboard, /backup-status-danger/);
   assert.match(dashboard, /已超期/);
   assert.match(dashboard, /无法读取知天备份状态/);
+  assert.doesNotMatch(dashboard, /精确时间|<time\b/, '诊断时间保留在认证API中，不渲染到仪表盘。');
 
   response = await client.request('/api/admin/backup-status');
   const status = await response.json();

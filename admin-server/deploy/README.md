@@ -269,6 +269,11 @@ curl -s -D- -o /dev/null -H 'Host: lab.localhost' http://127.0.0.1:8080/
 `docker compose up -d` 不因挂载内容变化而重建容器，2026-08-17 部署 real_ip 时就踩过：
 `nginx -t` 通过、入口全 200、容器 healthy，但渲染结果里 `set_real_ip_from` 是 0 条。
 
+同一类陷阱也适用于 `env_file`：**`docker compose restart` 不会重新读取 `.env`**。
+修改根目录 `.env` 或 `admin-server/.env` 后，必须对受影响服务执行
+`docker compose up -d --force-recreate <service>`；只执行 `restart` 时，容器仍可能 healthy、
+日志仍可能干净，但进程继续使用创建容器时注入的旧值（包括旧令牌）。
+
 用完清理：
 
 ```bash

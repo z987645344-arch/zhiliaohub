@@ -53,9 +53,6 @@ function dashboardPage({
     const danger = ['stale', 'unknown', 'unreachable'].includes(state)
       ? ' backup-status-danger'
       : '';
-    const exact = status.lastSuccessfulAt
-      ? `<small>精确时间：<time datetime="${escapeHtml(status.lastSuccessfulAt)}">${escapeHtml(status.lastSuccessfulAt)}</time></small>`
-      : '';
     const fallbackLabel = {
       ok: '正常',
       stale: '已超期',
@@ -63,7 +60,7 @@ function dashboardPage({
       unknown: '未知',
       unreachable: '不可达',
     }[state] || '未知';
-    return `<section class="panel backup-status backup-status-${escapeHtml(state)}${danger}" data-backup-project="${escapeHtml(project)}" data-backup-status="${escapeHtml(state)}"><div><p class="backup-status-kicker">${escapeHtml(title)} · 调度备份</p><h2>${escapeHtml(status.label || fallbackLabel)}</h2><p>${escapeHtml(status.hint || '当前无法判断备份状态。')}</p>${exact}</div></section>`;
+    return `<section class="panel backup-status backup-status-${escapeHtml(state)}${danger}" data-backup-project="${escapeHtml(project)}" data-backup-status="${escapeHtml(state)}"><div><p class="backup-status-kicker">${escapeHtml(title)} · 调度备份</p><h2>${escapeHtml(status.label || fallbackLabel)}</h2><p>${escapeHtml(status.hint || '当前无法判断备份状态。')}</p></div></section>`;
   };
   const backup = `<div class="backup-status-grid">${backupCard('zhiliaohub', '知了hub', backupStatus?.zhiliaohub)}${backupCard('zhitian', '知天', backupStatus?.zhitian)}</div>`;
   return layout({
