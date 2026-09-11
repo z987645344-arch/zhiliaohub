@@ -28,7 +28,10 @@ const {
   parseArchiveTimestamp,
   scheduledBoundaryAtOrBefore,
 } = require('../src/services/backup-scheduler');
-const { BackupStatusService } = require('../src/services/backup-status-service');
+const {
+  BACKUP_STATUS_GRACE_SECONDS,
+  BackupStatusService,
+} = require('../src/services/backup-status-service');
 const { seedLegacyCategories } = require('./helpers/work-categories');
 
 function createConfig(runtimeRoot, overrides = {}) {
@@ -455,42 +458,138 @@ test('进程错过调度边界后启动仍会立即补做当日备份', async ()
   }
 });
 
-test('调度备份状态区分正常、已超期与从未成功，且阈值可配置', async () => {
+test('调度备份状态与UTC+8边界同构并区分宽限、超期、停用与未知', async (t) => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-status-'));
   const backupDir = path.join(runtimeRoot, 'backups');
-  const now = new Date('2026-09-04T12:00:00.000Z');
   try {
     await fs.mkdir(backupDir, { recursive: true });
-    const never = await new BackupStatusService({
-      backupDir,
-      backupStatusOverdueMs: 30 * 60 * 60 * 1000,
-    }, { now: () => now }).getStatus();
-    assert.deepEqual(never, {
-      status: 'never',
-      label: '从未成功过',
-      description: '尚未发现成功的调度备份。',
-      lastSuccessfulAt: null,
+    assert.equal(BACKUP_STATUS_GRACE_SECONDS, 7200);
+
+    await t.test('目录为空时为stale/no_archive_at_all', async () => {
+      const result = await new BackupStatusService({
+        backupDir,
+        backupScheduleEnabled: true,
+        backupScheduleLocalTime: '00:00',
+      }, { now: () => new Date('2026-09-04T19:00:00.000Z') }).getStatus();
+      assert.equal(result.status, 'stale');
+      assert.equal(result.reason, 'no_archive_at_all');
     });
 
     await fs.writeFile(
-      path.join(backupDir, 'scheduled-backup-20260904T100000000Z.tar.gz'),
+      path.join(backupDir, 'scheduled-backup-20260904T150000000Z.tar.gz'),
       'status-proof',
     );
-    const normal = await new BackupStatusService({
-      backupDir,
-      backupStatusOverdueMs: 30 * 60 * 60 * 1000,
-    }, { now: () => now }).getStatus();
-    assert.equal(normal.status, 'normal');
-    assert.equal(normal.label, '正常');
-    assert.equal(normal.description, '最近一次调度备份成功于2小时前。');
 
-    const overdue = await new BackupStatusService({
-      backupDir,
-      backupStatusOverdueMs: 60 * 60 * 1000,
-    }, { now: () => now }).getStatus();
-    assert.equal(overdue.status, 'overdue', '缩短配置阈值后，同一归档应变为超期。');
-    assert.equal(overdue.label, '已超期');
-    assert.equal(overdue.lastSuccessfulAt, '2026-09-04T10:00:00.000Z');
+    await t.test('边界后1小时仍为within_grace/ok', async () => {
+      const result = await new BackupStatusService({
+        backupDir,
+        backupScheduleEnabled: true,
+        backupScheduleLocalTime: '00:00',
+      }, { now: () => new Date('2026-09-04T17:00:00.000Z') }).getStatus();
+      assert.equal(result.status, 'ok');
+      assert.equal(result.reason, 'within_grace');
+    });
+
+    await fs.rm(path.join(backupDir, 'scheduled-backup-20260904T150000000Z.tar.gz'));
+    await fs.writeFile(
+      path.join(backupDir, 'scheduled-backup-20260904T130000000Z.tar.gz'),
+      'three-hours-before-boundary',
+    );
+
+    await t.test('边界后3小时仍无窗口归档时为stale', async () => {
+      const result = await new BackupStatusService({
+        backupDir,
+        backupScheduleEnabled: true,
+        backupScheduleLocalTime: '00:00',
+      }, { now: () => new Date('2026-09-04T19:00:00.000Z') }).getStatus();
+      assert.equal(result.status, 'stale');
+      assert.equal(result.reason, 'no_archive_in_window');
+    });
+
+    await t.test('当前窗口已有归档时为ok', async () => {
+      await fs.writeFile(
+        path.join(backupDir, 'scheduled-backup-20260904T180000000Z.tar.gz'),
+        'current-window-proof',
+      );
+      const result = await new BackupStatusService({
+        backupDir,
+        backupScheduleEnabled: true,
+        backupScheduleLocalTime: '00:00',
+      }, { now: () => new Date('2026-09-04T19:00:00.000Z') }).getStatus();
+      assert.equal(result.status, 'ok');
+      assert.equal(result.reason, 'current_window_archived');
+    });
+
+    await t.test('调度关闭是disabled而不是故障', async () => {
+      const result = await new BackupStatusService({
+        backupDir,
+        backupScheduleEnabled: false,
+        backupScheduleLocalTime: '00:00',
+      }).getStatus();
+      assert.equal(result.status, 'disabled');
+      assert.equal(result.reason, 'scheduler_disabled');
+    });
+
+    await t.test('目录不可读是unknown且不伪装成空目录', async () => {
+      const unreadable = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      const result = await new BackupStatusService({
+        backupDir,
+        backupScheduleEnabled: true,
+        backupScheduleLocalTime: '00:00',
+      }, {
+        now: () => new Date('2026-09-04T19:00:00.000Z'),
+        lastBackupAt: async () => { throw unreadable; },
+      }).getStatus();
+      assert.equal(result.status, 'unknown');
+      assert.equal(result.reason, 'backup_dir_unreadable');
+    });
+
+    await t.test('非目录读取异常是unknown/internal_error', async () => {
+      const result = await new BackupStatusService({
+        backupDir,
+        backupScheduleEnabled: true,
+        backupScheduleLocalTime: '00:00',
+      }, {
+        now: () => new Date('2026-09-04T19:00:00.000Z'),
+        lastBackupAt: async () => { throw new Error('simulated calculation failure'); },
+      }).getStatus();
+      assert.equal(result.status, 'unknown');
+      assert.equal(result.reason, 'internal_error');
+    });
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('状态服务与调度器对同一目录共享边界判据，宽限期是唯一刻意例外', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-drift-'));
+  const backupDir = path.join(runtimeRoot, 'backups');
+  const now = new Date('2026-09-04T19:00:00.000Z');
+  const config = createConfig(runtimeRoot, { backupDir, backupScheduleEnabled: true });
+  try {
+    await fs.mkdir(backupDir, { recursive: true });
+    await fs.writeFile(
+      path.join(backupDir, 'scheduled-backup-20260904T150000000Z.tar.gz'),
+      'old-window',
+    );
+    const scheduler = new BackupScheduler(config, {
+      now: () => now,
+      createBackup: async () => ({ archivePath: 'simulated-scheduled-archive' }),
+      logger: { log() {}, error() {} },
+    });
+    const due = await scheduler.tick();
+    const stale = await new BackupStatusService(config, { now: () => now }).getStatus();
+    assert.equal(due.created, true);
+    assert.equal(stale.status, 'stale');
+
+    await fs.writeFile(
+      path.join(backupDir, 'scheduled-backup-20260904T180000000Z.tar.gz'),
+      'current-window',
+    );
+    const notDue = await scheduler.tick();
+    const ok = await new BackupStatusService(config, { now: () => now }).getStatus();
+    assert.equal(notDue.skipped, true);
+    assert.equal(ok.status, 'ok');
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
   }

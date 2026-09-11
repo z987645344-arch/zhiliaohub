@@ -48,12 +48,24 @@ function dashboardPage({
   const publication = publishStatus
     ? `<p class="notice"><strong>已发布</strong> · 最近发布时间：${escapeHtml(publishStatus.last_published_at)} · ${publishStatus.works_count} 个作品 / ${publishStatus.notes_count} 篇日记</p>`
     : '<p class="notice warning"><strong>尚未发布</strong> · 保存第一条内容或手动执行全量发布后，静态前台才会由数据库生成。</p>';
-  const backupState = backupStatus?.status || 'never';
-  const backupDanger = backupState === 'normal' ? '' : ' backup-status-danger';
-  const backupExact = backupStatus?.lastSuccessfulAt
-    ? `<small>精确时间：<time datetime="${escapeHtml(backupStatus.lastSuccessfulAt)}">${escapeHtml(backupStatus.lastSuccessfulAt)}</time></small>`
-    : '<small>当前备份目录中没有调度归档记录。</small>';
-  const backup = `<section class="panel backup-status backup-status-${escapeHtml(backupState)}${backupDanger}" data-backup-status="${escapeHtml(backupState)}"><div><p class="backup-status-kicker">调度备份</p><h2>${escapeHtml(backupStatus?.label || '从未成功过')}</h2><p>${escapeHtml(backupStatus?.description || '尚未发现成功的调度备份。')}</p>${backupExact}</div></section>`;
+  const backupCard = (project, title, status = {}) => {
+    const state = status.status || 'unknown';
+    const danger = ['stale', 'unknown', 'unreachable'].includes(state)
+      ? ' backup-status-danger'
+      : '';
+    const exact = status.lastSuccessfulAt
+      ? `<small>精确时间：<time datetime="${escapeHtml(status.lastSuccessfulAt)}">${escapeHtml(status.lastSuccessfulAt)}</time></small>`
+      : '';
+    const fallbackLabel = {
+      ok: '正常',
+      stale: '已超期',
+      disabled: '已停用',
+      unknown: '未知',
+      unreachable: '不可达',
+    }[state] || '未知';
+    return `<section class="panel backup-status backup-status-${escapeHtml(state)}${danger}" data-backup-project="${escapeHtml(project)}" data-backup-status="${escapeHtml(state)}"><div><p class="backup-status-kicker">${escapeHtml(title)} · 调度备份</p><h2>${escapeHtml(status.label || fallbackLabel)}</h2><p>${escapeHtml(status.hint || '当前无法判断备份状态。')}</p>${exact}</div></section>`;
+  };
+  const backup = `<div class="backup-status-grid">${backupCard('zhiliaohub', '知了hub', backupStatus?.zhiliaohub)}${backupCard('zhitian', '知天', backupStatus?.zhitian)}</div>`;
   return layout({
     title: '管理面板',
     authenticated: true,

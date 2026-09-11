@@ -395,6 +395,7 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     .admin-reply-form { padding-top: 0.25rem; }
     .admin-reply-form textarea { min-height: 6rem; }
     .empty-state { margin: 0; color: var(--ink-soft); }
+    .backup-status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
     .backup-status {
       border-left: 5px solid #4a6f52;
       background: #e2eee3;
@@ -410,6 +411,7 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
       box-shadow: 0 3px 12px rgba(159, 47, 47, 0.18);
     }
     .backup-status-danger h2 { color: #8c2424; }
+    @media (max-width: 680px) { .backup-status-grid { grid-template-columns: 1fr; } }
     .lab-list { display: grid; gap: 1rem; }
     .lab-project { display: grid; gap: 0.8rem; }
     .lab-project-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.75rem; }

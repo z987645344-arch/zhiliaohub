@@ -39,7 +39,9 @@ async function createRuntime(overrides = {}) {
     uploadsDir: path.join(runtimeRoot, 'uploads'),
     backupDir: path.join(runtimeRoot, 'backups'),
     siteRoot: path.join(runtimeRoot, 'site'),
-    backupStatusOverdueMs: overrides.backupStatusOverdueMs,
+    backupScheduleEnabled: overrides.backupScheduleEnabled,
+    backupScheduleLocalTime: overrides.backupScheduleLocalTime,
+    zhitianOpsToken: overrides.zhitianOpsToken,
     uploadMaxBytes: 1024,
     contentMaxBytes: 64 * 1024,
     authRateLimitWindowMs: 60 * 1000,
@@ -50,7 +52,7 @@ async function createRuntime(overrides = {}) {
     deviceChallengeTtlMs: overrides.deviceChallengeTtlMs,
     deviceAuthRateLimitWindowMs: overrides.deviceAuthRateLimitWindowMs,
     deviceAuthRateLimitMax: overrides.deviceAuthRateLimitMax,
-  });
+  }, overrides.dependencies || {});
 
   const server = await new Promise((resolve) => {
     const instance = context.app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -204,7 +206,9 @@ test('/health根据运行环境准确区分本地与生产部署', async (t) => 
   const localRuntime = await createRuntime();
   const productionRuntime = await createRuntime({ nodeEnv: 'production' });
   t.after(() => Promise.all([localRuntime.close(), productionRuntime.close()]));
-  assert.equal(localRuntime.config.backupStatusOverdueMs, 30 * 60 * 60 * 1000);
+  assert.equal(localRuntime.config.backupScheduleEnabled, true);
+  assert.equal(localRuntime.config.backupScheduleLocalTime, '00:00');
+  assert.equal('backupStatusOverdueMs' in localRuntime.config, false);
 
   let response = await fetch(`${localRuntime.baseUrl}/health`);
   assert.equal(response.status, 200);
@@ -237,8 +241,16 @@ test('/health无Cookie请求不创建会话也不下发Cookie', async (t) => {
   assert.equal(sessionsAfter, sessionsBefore);
 });
 
-test('备份状态只经认证通道返回，超期在仪表盘显眼展示且登录后管理写入仍成功', async (t) => {
-  const runtime = await createRuntime({ backupStatusOverdueMs: 60 * 60 * 1000 });
+test('聚合备份状态只经认证通道返回，知天失败不影响知了hub与管理写入', async (t) => {
+  const runtime = await createRuntime({
+    dependencies: {
+      zhitianBackupStatusClient: {
+        async getStatus() {
+          throw new Error('simulated Zhitian outage');
+        },
+      },
+    },
+  });
   t.after(() => runtime.close());
   const anonymousClient = createClient(runtime.baseUrl);
 
@@ -252,10 +264,8 @@ test('备份状态只经认证通道返回，超期在仪表盘显眼展示且�
   assert.doesNotMatch(JSON.stringify(health), /备份|backup/i, '公开健康端点不得泄露备份状态。');
 
   await fs.mkdir(runtime.config.backupDir, { recursive: true });
-  const twoHoursAgo = new Date(Date.now() - (2 * 60 * 60 * 1000));
-  const archiveTimestamp = twoHoursAgo.toISOString().replace(/[-:.]/g, '');
   await fs.writeFile(
-    path.join(runtime.config.backupDir, `scheduled-backup-${archiveTimestamp}.tar.gz`),
+    path.join(runtime.config.backupDir, 'scheduled-backup-20200101T000000000Z.tar.gz'),
     'authenticated-status-proof',
   );
 
@@ -264,17 +274,20 @@ test('备份状态只经认证通道返回，超期在仪表盘显眼展示且�
   response = await client.request('/admin');
   const dashboard = await response.text();
   assert.equal(response.status, 200);
-  assert.match(dashboard, /data-backup-status="overdue"/);
+  assert.match(dashboard, /data-backup-project="zhiliaohub" data-backup-status="stale"/);
+  assert.match(dashboard, /data-backup-project="zhitian" data-backup-status="unreachable"/);
   assert.match(dashboard, /backup-status-danger/);
   assert.match(dashboard, /已超期/);
-  assert.match(dashboard, /最近一次调度备份成功于2小时前/);
+  assert.match(dashboard, /无法读取知天备份状态/);
 
   response = await client.request('/api/admin/backup-status');
   const status = await response.json();
   assert.equal(response.status, 200);
-  assert.equal(status.status, 'overdue');
-  assert.equal(status.label, '已超期');
-  assert.ok(status.lastSuccessfulAt, '认证API可提供次要精确时间供App复用。');
+  assert.equal(status.zhiliaohub.status, 'stale');
+  assert.equal(status.zhiliaohub.reason, 'no_archive_in_window');
+  assert.equal(status.zhitian.status, 'unreachable');
+  assert.ok(status.zhiliaohub.lastSuccessfulAt, '认证API可提供次要精确时间供App复用。');
+  assert.doesNotMatch(JSON.stringify(status), /(?:file(?:name)?|directory|path|archiveCount|count)\s*["']?\s*:/i);
 
   response = await client.request('/api/admin/notes', {
     method: 'POST',
@@ -282,6 +295,38 @@ test('备份状态只经认证通道返回，超期在仪表盘显眼展示且�
     body: JSON.stringify(noteInput('备份状态验收')),
   });
   assert.equal(response.status, 201, '密码+TOTP登录后的真实管理写操作必须继续成功。');
+});
+
+test('备份目录不可读时认证API仍返回200与unknown', async (t) => {
+  const runtime = await createRuntime({
+    dependencies: {
+      backupStatusService: {
+        async getStatus() {
+          return {
+            status: 'unknown',
+            reason: 'backup_dir_unreadable',
+            label: '未知',
+            hint: '备份目录无法读取，当前不能判断调度备份是否正常。',
+          };
+        },
+      },
+      zhitianBackupStatusClient: {
+        async getStatus() {
+          return { status: 'ok', reason: 'current_window_archived', hint: '知天正常。' };
+        },
+      },
+    },
+  });
+  t.after(() => runtime.close());
+  const client = createClient(runtime.baseUrl);
+  await bindAndAuthenticate(client, runtime);
+
+  const response = await client.request('/api/admin/backup-status');
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.zhiliaohub.status, 'unknown');
+  assert.equal(payload.zhiliaohub.reason, 'backup_dir_unreadable');
+  assert.equal(payload.zhitian.status, 'ok');
 });
 
 test('无Cookie匿名扫描不存在路径不会创建会话', async (t) => {

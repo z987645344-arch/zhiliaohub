@@ -3,6 +3,29 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-11**
 
+## 2026-09-11 聚合知了hub与知天备份状态（实施方现场记录）
+
+- **首次跨项目运行期依赖**：知了hub首次在运行期读取知天，但边界固定为三条——知天不可达时只降级知天卡片、HTTP调用有2秒连接/3秒总计硬上界、方向只能由知了hub主动拉取；没有新增向知天推送的路径，也没有把状态放进公开 `/health`。
+- **状态模型改为调度边界 + 固定宽限**：知了hub状态由旧的 `never / overdue / normal` 年龄模型改为 `ok / stale / disabled / unknown`，判定直接复用调度器的 `lastBackupAt` 与UTC+8活动边界；固定宽限 `G=7200` 秒。删除 `BACKUP_STATUS_OVERDUE_MS` 这个旋钮，是因为G吸收的是容器不在的窗口、不是备份耗时；两项目各自可配会让凌晨同一时刻的两张卡片发生语义漂移。
+- **失败语义不混淆**：连接失败、超时及5xx显示“不可达”；HTTP 200但知天返回 `unknown` 显示“未知”；知了hub调度关闭显示 `disabled`，属于合法配置。目录不可读与内部判定错误都以HTTP 200返回 `unknown`，不伪装成“没有归档”。
+- `docker-compose.yml` **+7/-1**：只给 `admin-server` 接入外部 `zhiliao-ops-bridge`，并将 `app-network` / `ops-bridge` 优先级固定为100/10；Nginx仍只在应用网络。
+- `admin-server/.env.example` **+2/-2**：删除30小时状态阈值，新增不含真实值的 `ZHITIAN_OPS_TOKEN` 模板。
+- `admin-server/src/config.js` **+13/-5**：移除 `backupStatusOverdueMs`，加载调度开关、调度时刻与知天运维令牌。
+- `admin-server/src/services/backup-scheduler.js` **+11/-2**：`lastBackupAt` 增加状态服务专用的严格读取选项；调度器默认行为不变，缺目录时仍会补做首次备份。
+- `admin-server/src/services/backup-status-service.js` **+95/-21**：实现四状态、七原因、7200秒宽限与服务端相对提示，并复用现有UTC+8调度边界。
+- `admin-server/src/services/zhitian-backup-status-client.js` **+177/-0**：新增内置HTTP单向拉取客户端，区分200/401/404/5xx、连接失败与超时，限制响应体，透传 `diagnostic` 但剔除文件名、目录路径及归档数量字段。
+- `admin-server/src/services/backup-status-aggregator.js` **+32/-0**：并行聚合两项目状态，并用 `Promise.allSettled` 把任一项目的异常限制在对应结果格内。
+- `admin-server/src/app.js` **+16/-4**：认证后的管理首页与 `/api/admin/backup-status` 改用聚合结果；公开 `/health` 未改。
+- `admin-server/src/views.js` **+18/-6**、`admin-server/src/lib/html.js` **+2/-0**：管理首页改为两格响应式状态卡；`stale / unknown / unreachable` 显眼显示，且不渲染知天 `diagnostic`。
+- `admin-server/tests/backup-automation.test.js` **+127/-28**：覆盖空目录、宽限内、宽限外、当前窗口、停用、目录不可读、内部错误，以及状态服务与调度器共用边界的反漂移断言。
+- `admin-server/tests/zhitian-backup-status.test.js` **+131/-0**：用真实本地HTTP假上游覆盖200/401/404/503/超时/unknown、令牌头、字段克制与卡片差异。
+- `admin-server/tests/admin-server.test.js` **+58/-13**：覆盖认证聚合API、知天失败时本地卡片与管理写入不受影响、目录不可读仍HTTP 200，以及公开健康端点不泄露。
+- `admin-server/package.json` **+1/-1**：把新增服务与测试纳入既有 `npm run check`，不改变测试命令或依赖。
+- `admin-server/README.md` **+6/-4**、`admin-server/deploy/README.md` **+12/-3**：说明聚合契约、固定宽限、单向与超时边界、外部网络、默认路由验收及令牌所在的 `.env` 层。
+- `CHANGELOG.md` **+23/-0**：新增本条普通工作记录，不写版本号，不暗示已经推送、打标或部署。
+- **本场验证**：完整 `npm test` 从基线 **123/123** 增至 **138/138**，0失败；`npm run check` 与 `git diff --check` 通过。`docker compose --env-file .env.local.example config --quiet` 通过；本机Docker实测后台同时取得运维网 `172.21.0.2` 与应用网 `172.20.0.2`，默认路由仍走应用网网关 `172.20.0.1`（`/proc/net/route` 为 `Iface=eth0, Destination=00000000, Gateway=010014AC`），容器访问 `https://example.com` 返回200；Nginx只连接应用网。
+- ⚠️ **未验证，不得当作已通过**：未连接服务器、未部署，未读取生产令牌；真实 `zhiliao-ops-bridge` 上的知天服务名解析与真实端点响应均未验证。Docker Hub认证端点网络超时使无缓存重建未完成；双网络验证使用了本机既有后台镜像，只证明本轮Compose接网、默认路由与出站行为，不证明新代码镜像已构建。
+
 ## Git标签 v3.4 - 2026-09-11
 
 - **覆盖 1 条工作条目、2 个提交**，其中 1 个属本轮存档动作本身：2026-09-11 删除仓库静态生成页并校准 CI 引用边界（`afe1fab`），以及本条存档提交。远程 `origin/main`，CI `34504842185` success。

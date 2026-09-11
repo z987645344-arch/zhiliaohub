@@ -42,7 +42,10 @@ services:
     security_opt:
       - no-new-privileges:true
     networks:
-      - app-network
+      app-network:
+        priority: 100
+      ops-bridge:
+        priority: 10
 
   nginx:
     image: nginx:stable-alpine
@@ -81,3 +84,6 @@ services:
 networks:
   app-network:
     driver: bridge
+  ops-bridge:
+    name: zhiliao-ops-bridge
+    external: true

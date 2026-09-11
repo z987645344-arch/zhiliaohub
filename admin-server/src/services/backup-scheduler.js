@@ -56,8 +56,17 @@ function parseArchiveTimestamp(name) {
   return Number.isNaN(value.getTime()) ? null : value;
 }
 
-async function lastBackupAt(backupDir) {
-  const entries = await fs.readdir(backupDir).catch(() => []);
+async function lastBackupAt(backupDir, options = {}) {
+  let entries;
+  try {
+    entries = await fs.readdir(backupDir);
+  } catch (error) {
+    // The scheduler keeps its long-standing best-effort behaviour so a missing directory
+    // still triggers initial protection. Authenticated status reporting opts into strict
+    // reads, because "cannot inspect" must be shown as unknown rather than as an empty set.
+    if (options.strict) throw error;
+    entries = [];
+  }
   let newest = null;
   for (const name of entries) {
     const at = parseArchiveTimestamp(name);

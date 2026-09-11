@@ -27,6 +27,8 @@ const { DeviceAuthError, DeviceAuthService } = require('./services/device-auth-s
 const { FeedbackService, FeedbackValidationError } = require('./services/feedback-service');
 const { LabService, LabValidationError } = require('./services/lab-service');
 const { BackupStatusService } = require('./services/backup-status-service');
+const { BackupStatusAggregator } = require('./services/backup-status-aggregator');
+const { ZhitianBackupStatusClient } = require('./services/zhitian-backup-status-client');
 const { PublishError, PublishService } = require('./services/publish-service');
 const {
   loginPage,
@@ -87,7 +89,7 @@ function verifyTotpStep(secret, token) {
   return Math.floor(Date.now() / 1000 / 30) + delta.delta;
 }
 
-function createApp(overrides = {}) {
+function createApp(overrides = {}, dependencies = {}) {
   const config = loadConfig(overrides);
   const database = initializeDatabase(config);
   const contentService = new ContentService(database, config);
@@ -95,7 +97,13 @@ function createApp(overrides = {}) {
   const deviceAuthService = new DeviceAuthService(database, config);
   const feedbackService = new FeedbackService(database);
   const labService = new LabService(database, config);
-  const backupStatusService = new BackupStatusService(config);
+  const backupStatusService = dependencies.backupStatusService || new BackupStatusService(config);
+  const zhitianBackupStatusClient = dependencies.zhitianBackupStatusClient
+    || new ZhitianBackupStatusClient(config);
+  const backupStatusAggregator = new BackupStatusAggregator(
+    backupStatusService,
+    zhitianBackupStatusClient,
+  );
   const sessionStore = new SQLiteSessionStore({
     database,
     defaultTtlMs: config.sessionMaxAgeMs,
@@ -439,7 +447,7 @@ function createApp(overrides = {}) {
       notes: contentService.listNotes(),
       publishStatus: publishService.getStatus(),
       pendingFeedbackCount: feedbackService.countPending(),
-      backupStatus: await backupStatusService.getStatus(),
+      backupStatus: await backupStatusAggregator.getStatus(),
       notice: request.query.notice || '',
     }));
   });
@@ -726,7 +734,7 @@ function createApp(overrides = {}) {
   });
 
   app.get('/api/admin/backup-status', requireAdmin, async (_request, response) => {
-    response.json(await backupStatusService.getStatus());
+    response.json(await backupStatusAggregator.getStatus());
   });
 
   app.post('/api/admin/lab/:id/visibility', requireAdmin, requireCsrf, async (request, response, next) => {
@@ -926,6 +934,8 @@ function createApp(overrides = {}) {
   app.locals.feedbackService = feedbackService;
   app.locals.labService = labService;
   app.locals.backupStatusService = backupStatusService;
+  app.locals.zhitianBackupStatusClient = zhitianBackupStatusClient;
+  app.locals.backupStatusAggregator = backupStatusAggregator;
   app.locals.sessionStore = sessionStore;
   return {
     app,
@@ -937,6 +947,8 @@ function createApp(overrides = {}) {
     feedbackService,
     labService,
     backupStatusService,
+    zhitianBackupStatusClient,
+    backupStatusAggregator,
     sessionStore,
   };
 }

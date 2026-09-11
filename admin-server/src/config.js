@@ -21,6 +21,11 @@ function nonNegativeInteger(value, name, fallback) {
   return candidate;
 }
 
+function booleanFlag(value, fallback) {
+  if (value === undefined || value === '') return fallback;
+  return !['false', '0', 'no', 'off'].includes(String(value).trim().toLowerCase());
+}
+
 function resolveLocalPath(value, fallback) {
   return path.resolve(serverRoot, value || fallback);
 }
@@ -151,11 +156,14 @@ function loadConfig(overrides = {}) {
     uploadsDir,
     labStorageDir,
     backupDir,
-    backupStatusOverdueMs: positiveInteger(
-      overrides.backupStatusOverdueMs ?? process.env.BACKUP_STATUS_OVERDUE_MS,
-      'BACKUP_STATUS_OVERDUE_MS',
-      30 * 60 * 60 * 1000,
-    ),
+    backupScheduleEnabled: overrides.backupScheduleEnabled
+      ?? booleanFlag(process.env.BACKUP_SCHEDULE_ENABLED, true),
+    backupScheduleLocalTime: String(
+      overrides.backupScheduleLocalTime ?? process.env.BACKUP_SCHEDULE_LOCAL_TIME ?? '00:00',
+    ).trim(),
+    zhitianOpsToken: String(
+      overrides.zhitianOpsToken ?? process.env.ZHITIAN_OPS_TOKEN ?? '',
+    ).trim(),
     labBaseUrl: String(
       overrides.labBaseUrl || process.env.LAB_BASE_URL || `http://localhost:${port}/lab`,
     ).replace(/\/+$/, ''),
