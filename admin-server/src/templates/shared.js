@@ -19,12 +19,12 @@ function page({ title, description, current, bodyClass = '', content }) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="${escapeHtml(description)}">
-    <meta name="theme-color" content="#d9dde0">
+    <meta name="theme-color" content="#2a333a">
     <title>${escapeHtml(title)}｜知了hub</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=archive-ui-20260912">
     <script src="js/site.js" defer></script>
   </head>
-  <body${bodyClass ? ` class="${escapeHtml(bodyClass)}"` : ''}>
+  <body class="archive-page${bodyClass ? ` ${escapeHtml(bodyClass)}` : ''}">
     <a class="skip-link" href="#main-content">跳到主要内容</a>
     ${navigation(current)}
     ${content}

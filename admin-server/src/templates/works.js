@@ -53,7 +53,7 @@ function renderCategorySection(category, works) {
             </div><button class="work-slider-arrow work-slider-arrow-next" type="button" data-scroll-next aria-label="向右浏览${category.name}作品" aria-disabled="true">→</button></div>`
     : `<div class="work-category-empty"><p>${escapeHtml(category.empty_text)}</p></div>`;
   return `<section class="work-category-block" data-work-slider aria-labelledby="${headingId}">
-          <div class="work-category-head"><div><p class="work-category-kicker">${escapeHtml(category.kicker)}</p><h2 id="${headingId}">${escapeHtml(category.name)}</h2><span>${archiveLabel}</span></div><a class="work-category-access" href="works-category-${category.slug}.html">访问<span aria-hidden="true">↗</span></a></div>
+          <div class="work-category-head"><div><p class="work-category-kicker">${escapeHtml(category.kicker)}</p><h2 id="${headingId}">${escapeHtml(category.name)}</h2><span>${archiveLabel}</span></div><a class="work-category-access" href="works-category-${category.slug}.html">查看全部<span aria-hidden="true">↗</span></a></div>
           ${body}
         </section>`;
 }
@@ -67,7 +67,7 @@ function renderLabSection(projects) {
 function renderWorksList(categories, works, labProjects = []) {
   const sections = categories.length
     ? categories.map((category) => renderCategorySection(category, works)).join('\n        ')
-    : '<div class="work-category-empty"><p>目前还没有作品分组，请稍后再来看看。</p></div>';
+    : '<div class="work-category-empty"><p>作品还在整理中。这里会按主题收录影像、声音和软件创作，公开后就能逐一浏览。</p></div>';
   const visibleWorks = works.filter((work) => categories.some((category) => category.name === work.category));
 
   return page({
@@ -75,7 +75,7 @@ function renderWorksList(categories, works, labProjects = []) {
     description: '知了hub 的作品展示，收录视频、音乐、建模、网页与软件作品。',
     current: 'works',
     content: `<main class="page-main" id="main-content">
-      <section class="page-hero" aria-labelledby="page-title"><div class="page-hero-grid"><div><p class="page-kicker">Selected works / 01</p><h1 class="page-title" id="page-title">作品<span class="outline">展示</span></h1><p class="page-index">ZHILIAO.HUB — ARCHIVE 01</p></div><p class="page-intro">从影像、声音到软件，把做过的尝试放在同一条安静的街道上。每个分类都有自己的入口，也为后续内容继续留出空间。</p></div><figure class="page-visual"><img src="assets/works-oc-creative-passage.webp" width="1729" height="910" alt="雨后的水泥灰都市廊道中，黑发男孩站在相机、耳机、电脑和建筑模型组成的创作台前" decoding="async"></figure></section>
+      <section class="page-hero" aria-labelledby="page-title"><div class="page-hero-grid"><div><p class="page-kicker">Selected works / 02</p><h1 class="page-title" id="page-title">作品<span class="outline">展示</span></h1><p class="page-index">ZHILIAO — ARCHIVE 02</p></div><p class="page-intro">从影像、声音到软件，把做过的尝试放在同一条安静的街道上。按分组浏览，或打开一件作品看看它的来路。</p></div><figure class="page-visual"><img src="assets/works-oc-creative-passage.webp" width="1729" height="910" alt="雨后的水泥灰都市廊道中，黑发男孩站在相机、耳机、电脑和建筑模型组成的创作台前" decoding="async"></figure></section>
       <section class="works-section" aria-labelledby="works-list-title"><div class="section-bar"><h2 id="works-list-title">分组索引</h2><span>${visibleWorks.length} WORKS / ${categories.length} CATEGORIES</span></div><div class="work-category-stack">
         ${sections}
         </div></section>
@@ -126,17 +126,17 @@ function renderWorkDetail(work, htmlBody, index) {
     return `<button class="showcase-thumb" type="button" data-src="${escapeHtml(item)}" data-type="${video ? 'video' : 'image'}" aria-label="${label}" aria-pressed="false">${preview}</button>`;
   }).join('');
   const downloadButton = work.is_downloadable && work.download_file
-    ? `<a class="button" href="${escapeHtml(work.download_file)}" download>下载</a>`
+    ? `<a class="button" href="${escapeHtml(work.download_file)}" download>下载作品</a>`
     : '';
   const experienceButton = work.experience_url
-    ? `<a class="button button-outline" href="${escapeHtml(work.experience_url)}" target="_blank" rel="noopener noreferrer">体验</a>`
+    ? `<a class="button button-outline" href="${escapeHtml(work.experience_url)}" target="_blank" rel="noopener noreferrer">前往体验</a>`
     : '';
   const actions = downloadButton || experienceButton
     ? `<div class="showcase-actions">${downloadButton}${experienceButton}</div>`
     : '';
   const versionLog = work.version_log
     ? htmlBody
-    : '<p class="version-log-empty">暂无版本日志，后续更新将在这里记录。</p>';
+    : '<p class="version-log-empty">还没有更新记录。之后的调整与新进展会记在这里。</p>';
   return page({
     title: work.title,
     description: work.detail_intro || '',
@@ -144,7 +144,7 @@ function renderWorkDetail(work, htmlBody, index) {
     bodyClass: 'detail-page',
     content: `<main class="detail-main" id="main-content">
       <div class="showcase-shell"><a class="back-link" href="works.html">← 返回作品列表</a><section class="showcase" aria-labelledby="detail-title"><div class="showcase-left"><div class="showcase-stage" data-showcase-stage aria-live="polite">${mainMedia}</div>${thumbs ? `<div class="showcase-thumbs" data-showcase-thumbs aria-label="作品辅助媒体">${thumbs}</div>` : ''}</div><div class="showcase-right"><p class="page-kicker">${escapeHtml(work.category)} / WORK ${number}</p><h1 id="detail-title">${escapeHtml(work.title)}</h1><p class="showcase-intro">${escapeHtml(work.detail_intro || '')}</p>${actions}<div class="showcase-meta"><span>状态 / ${status}</span></div></div></section></div>
-      <section class="detail-content" aria-labelledby="version-log-title"><div class="section-bar"><h2 id="version-log-title">版本日志</h2><span>${work.version_log ? 'PUBLISHED' : 'NO ENTRIES'}</span></div><div class="version-log">${versionLog}</div></section>
+      <section class="detail-content" aria-labelledby="version-log-title"><div class="section-bar"><h2 id="version-log-title">更新记录</h2><span>${work.version_log ? 'PUBLISHED' : 'NO ENTRIES'}</span></div><div class="version-log">${versionLog}</div></section>
     </main>`,
   });
 }

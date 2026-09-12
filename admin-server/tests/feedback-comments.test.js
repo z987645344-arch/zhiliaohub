@@ -312,7 +312,7 @@ test('反馈后台按主题审核、隐藏和回复，且不触发静态发布',
   assert.match(pendingHtml, /等待通过的顶层留言/);
   assert.doesNotMatch(pendingHtml, /没有待审内容的主题/);
   assert.match(pendingHtml, /待审核/);
-  assert.match(pendingHtml, /查看提交信息/);
+  assert.match(pendingHtml, /联系与来源信息/);
 
   response = await client.request(`/admin/feedback/${pendingRoot}/approve`, {
     method: 'POST',

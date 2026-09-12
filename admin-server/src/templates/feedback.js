@@ -1,15 +1,14 @@
 const { escapeHtml, page } = require('./shared');
+const { formatDateTime } = require('../lib/html');
 
 function formatCommentTime(value) {
-  const normalized = String(value || '');
-  const visible = normalized.replace('T', ' ').slice(0, 16).replaceAll('-', '.');
-  return visible ? `${visible} UTC` : '';
+  return formatDateTime(value);
 }
 
 function formFields(prefix, { parentId = null } = {}) {
   const id = (name) => `${prefix}-${name}`;
   return `${parentId === null ? '' : `<input type="hidden" name="parent_id" value="${parentId}">`}
-    <div class="form-row"><div class="field"><label for="${id('name')}">称呼 / NAME</label><input id="${id('name')}" name="author_name" type="text" autocomplete="name" placeholder="怎么称呼你" required maxlength="80"></div><div class="field"><label for="${id('email')}">邮箱 / EMAIL（可选）</label><input id="${id('email')}" name="email" type="email" autocomplete="email" placeholder="name@example.com" maxlength="254"><small class="field-hint">仅供站长私下联系，永不公开展示。</small></div></div>
+    <div class="form-row"><div class="field"><label for="${id('name')}">称呼 / NAME</label><input id="${id('name')}" name="author_name" type="text" autocomplete="name" placeholder="怎么称呼你" required maxlength="80"></div><div class="field"><label for="${id('email')}">邮箱 / EMAIL（可选）</label><input id="${id('email')}" name="email" type="email" autocomplete="email" placeholder="填写常用邮箱" maxlength="254"><small class="field-hint">仅供站长私下联系，永不公开展示。</small></div></div>
     <div class="field"><label for="${id('message')}">留言 / MESSAGE</label><textarea id="${id('message')}" name="body" placeholder="写下你的想法" required minlength="2" maxlength="2000"></textarea></div>
     <div class="feedback-honeypot" aria-hidden="true"><label for="${id('website')}">网站</label><input id="${id('website')}" name="website" type="text" tabindex="-1" autocomplete="off"></div>`;
 }
@@ -39,7 +38,7 @@ function renderFeedbackPage(topics) {
     current: 'feedback',
     content: `<main class="page-main" id="main-content">
       <section class="page-hero" aria-labelledby="page-title">
-        <div class="page-hero-grid"><div><p class="page-kicker">Feedback signal / 03</p><h1 class="page-title" id="page-title">反馈<span class="outline">中心</span></h1><p class="page-index">ZHILIAO.HUB — SIGNAL 03</p></div><p class="page-intro">这里接收真实留言。所有新内容都会先进入审核队列，通过后才会出现在公开评论区。</p></div>
+        <div class="page-hero-grid"><div><p class="page-kicker">Feedback signal / 05</p><h1 class="page-title" id="page-title">反馈<span class="outline">中心</span></h1><p class="page-index">ZHILIAO — SIGNAL 05</p></div><p class="page-intro">有建议，有疑问，或只是想打个招呼，都可以写在这里。留言审核通过后会公开显示。</p></div>
         <figure class="page-visual"><img src="assets/feedback-oc-message-slot.webp" width="1724" height="912" alt="雨中的水泥灰城市廊下，黑发男孩手持空白卡片站在墙面留言槽前" loading="lazy" decoding="async"></figure>
       </section>
 
@@ -51,8 +50,8 @@ function renderFeedbackPage(topics) {
       </section>
 
       <section class="comments-section" aria-labelledby="comments-title">
-        <div class="section-bar"><h2 id="comments-title">已通过留言</h2><span>REVIEWED / PUBLIC</span></div>
-        <div class="truth-notice" role="note"><strong>先审后发</strong><p>这里仅显示已通过审核的内容。待审核与已隐藏留言不会进入静态页面，邮箱和IP也永不公开。</p></div>
+        <div class="section-bar"><h2 id="comments-title">大家的留言</h2><span>REVIEWED / PUBLIC</span></div>
+        <div class="truth-notice" role="note"><strong>先审后发</strong><p>这里展示审核通过的留言与回复。你刚提交的内容需要等待审核和页面更新；邮箱与 IP 不会公开。</p></div>
         <div class="comment-list" aria-label="已通过审核的留言">${comments}</div>
       </section>
     </main>`,

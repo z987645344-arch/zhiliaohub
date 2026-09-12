@@ -19,9 +19,9 @@ function renderNotesList(notes) {
     description: allPlaceholders ? '知了hub 的学习心得与占位日记列表。' : '知了hub 的学习心得与日记列表。',
     current: 'notes',
     content: `<main class="page-main" id="main-content">
-      <section class="page-hero" aria-labelledby="page-title"><div class="page-hero-grid"><div><p class="page-kicker">Learning notes / 02</p><h1 class="page-title" id="page-title">学习<span class="outline">心得</span></h1><p class="page-index">ZHILIAO.HUB — NOTES 02</p></div><p class="page-intro">${intro}</p></div><figure class="page-visual page-visual-notes"><img src="assets/notes-oc-rain-writing.webp" width="1731" height="909" alt="黑发男孩坐在雨幕映照的水泥灰窗边，低头在空白笔记本上安静书写" loading="lazy" decoding="async"></figure></section>
+      <section class="page-hero" aria-labelledby="page-title"><div class="page-hero-grid"><div><p class="page-kicker">Learning notes / 03</p><h1 class="page-title" id="page-title">学习<span class="outline">心得</span></h1><p class="page-index">ZHILIAO — NOTES 03</p></div><p class="page-intro">${intro}</p></div><figure class="page-visual page-visual-notes"><img src="assets/notes-oc-rain-writing.webp" width="1731" height="909" alt="黑发男孩坐在雨幕映照的水泥灰窗边，低头在空白笔记本上安静书写" loading="lazy" decoding="async"></figure></section>
       <section class="notes-section" aria-labelledby="diary-list-title"><div class="section-bar"><h2 id="diary-list-title">日记索引</h2><span>${status}</span></div>${notice}<div class="diary-list">
-${cards}
+${cards || '<div class="archive-empty"><span class="archive-number">03 / NOTES</span><h3>笔记还在积累中</h3><p>这里会按日期收录学习中的尝试与心得，目前还没有公开的文章。先去作品里逛逛吧。</p><a class="back-link" href="works.html">浏览作品 ↗</a></div>'}
         </div></section>
     </main>`,
   });
@@ -36,7 +36,7 @@ function renderNoteDetail(note, htmlBody, index) {
     description: placeholder ? `占位日记《${note.title}》的详情模板。` : `${note.title}的日记详情。`,
     current: 'notes',
     bodyClass: 'detail-page note-detail-page',
-    content: `<main class="detail-main" id="main-content"><article class="note-detail" aria-labelledby="note-title"><a class="back-link" href="notes.html">← 返回日记列表</a><header class="note-detail-header"><p class="page-kicker">${placeholder ? 'PLACEHOLDER DIARY' : 'LEARNING NOTE'} / ${number}</p>${pill}<h1 id="note-title">${escapeHtml(note.title)}</h1><div class="detail-meta"><time datetime="${escapeHtml(note.note_date)}">${formatDate(note.note_date)}</time><span>状态 / ${placeholder ? '正文筹备中' : '已发布'}</span></div></header><section class="detail-actions note-actions" aria-label="日记操作" data-action-scope><div><button class="button button-outline" type="button" data-unavailable-action data-unavailable-message="登录后可编辑，该功能暂未开放。">编辑日记</button></div><p class="action-status" data-action-status role="status" tabindex="-1"></p></section><section class="note-placeholder" aria-label="日记正文">${htmlBody}</section></article></main>`,
+    content: `<main class="detail-main" id="main-content"><article class="note-detail" aria-labelledby="note-title"><a class="back-link" href="notes.html">← 返回日记列表</a><header class="note-detail-header"><p class="page-kicker">${placeholder ? 'PLACEHOLDER DIARY' : 'LEARNING NOTE'} / ${number}</p>${pill}<h1 id="note-title">${escapeHtml(note.title)}</h1><div class="detail-meta"><time datetime="${escapeHtml(note.note_date)}">${formatDate(note.note_date)}</time><span>状态 / ${placeholder ? '正文筹备中' : '已发布'}</span></div></header><section class="detail-actions note-actions" aria-label="日记操作" data-action-scope><div><button class="button button-outline" type="button" data-unavailable-action data-unavailable-message="此处只供阅读。站长可从管理后台编辑这篇心得。">关于编辑</button></div><p class="action-status" data-action-status role="status" tabindex="-1"></p></section><section class="note-placeholder" aria-label="日记正文">${htmlBody}</section></article></main>`,
   });
 }
 

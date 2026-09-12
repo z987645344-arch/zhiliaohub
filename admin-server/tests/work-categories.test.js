@@ -58,7 +58,7 @@ test('全新数据库默认零分组且发布不生成任何分类页', async (t
   const result = await fixture.publishService.publishAll();
   assert.equal(result.files.some((filename) => filename.startsWith('works-category-')), false);
   const worksHtml = await fs.readFile(path.join(fixture.config.siteRoot, 'works.html'), 'utf8');
-  assert.match(worksHtml, /目前还没有作品分组/);
+  assert.match(worksHtml, /作品还在整理中/);
 });
 
 test('分组slug严格校验且分组名与slug都保持唯一', async (t) => {

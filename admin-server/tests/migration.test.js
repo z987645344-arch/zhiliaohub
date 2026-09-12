@@ -63,7 +63,7 @@ test('一次性迁移在隔离目录导入11条内容、生成静态页面并拒
     assert.match(zhitianHtml, /状态 \/ 展示入口待开放/);
     assert.match(zhitianHtml, /showcase-placeholder portfolio-cover cover-orbit/);
     assert.match(zhitianHtml, /SYSTEM \/ 08/);
-    assert.match(zhitianHtml, /暂无版本日志/);
+    assert.match(zhitianHtml, /还没有更新记录/);
     assert.doesNotMatch(zhitianHtml, /登录入口|下载作品|>下载<|>体验</);
     const aiMusicHtml = await fs.readFile(path.join(config.siteRoot, 'works-ai-music.html'), 'utf8');
     assert.match(aiMusicHtml, /content="记录从旋律构思到生成编曲的声音实验。当前详情页已建立，试听内容与制作记录仍在整理。"/);

@@ -175,7 +175,7 @@ test('全量发布生成安全静态页、解决slug重名并只清理带标记�
   const lifeCategoryHtml = await fs.readFile(path.join(fixture.config.siteRoot, 'works-category-life.html'), 'utf8');
   assert.match(listHtml, /^<!-- 此文件由知了hub后台自动生成/);
   assert.match(listHtml, /data-work-slider/);
-  assert.match(listHtml, /href="works-category-film\.html">访问/);
+  assert.match(listHtml, /href="works-category-film\.html">查看全部/);
   assert.match(listHtml, /生活类作品还在路上/);
   assert.match(listHtml, /同名作品 &lt;script&gt;/);
   assert.doesNotMatch(listHtml, /<script>[^<]*<\/script>/);
@@ -270,7 +270,7 @@ test('智能工具页只展示勾选作品且在空状态下仍无条件生成',
   assert.ok(publication.files.includes('tools.html'), '零条勾选记录时仍必须生成 tools.html。');
   toolsHtml = await fs.readFile(toolsPath, 'utf8');
   assert.doesNotMatch(toolsHtml, /已公开工具|普通程序作品/);
-  assert.match(toolsHtml, /目前没有已公开的智能工具/);
+  assert.match(toolsHtml, /还没有公开的工具/);
   assert.doesNotMatch(toolsHtml, /建设中|规划/);
 });
 

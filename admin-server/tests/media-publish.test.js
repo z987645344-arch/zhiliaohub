@@ -119,7 +119,7 @@ test('作品媒体完成上传、发布复制、编辑清理与删除清理完�
   assert.match(detailHtml, new RegExp(galleryOne.storedName));
   assert.match(detailHtml, new RegExp(galleryTwo.storedName));
   assert.match(detailHtml, new RegExp(`href="${paths.download}" download`));
-  assert.match(detailHtml, /href="https:\/\/example\.com\/demo" target="_blank" rel="noopener noreferrer">体验<\/a>/);
+  assert.match(detailHtml, /href="https:\/\/example\.com\/demo" target="_blank" rel="noopener noreferrer">前往体验<\/a>/);
   assert.match(detailHtml, /<h2>v0\.1<\/h2>/);
   assert.doesNotMatch(detailHtml, /登录入口/);
 
