@@ -21,9 +21,47 @@ function formatDateTime(value) {
   return `${part('year')}.${part('month')}.${part('day')} ${part('hour')}:${part('minute')} UTC+8`;
 }
 
+function adminNavigationScript() {
+  return `'use strict';
+(() => {
+  document.documentElement.classList.add('js');
+  const navToggle = document.querySelector('.nav-toggle');
+  const adminNav = document.querySelector('.admin-nav');
+  if (!navToggle || !adminNav) return;
+
+  const closeNavigation = () => {
+    navToggle.setAttribute('aria-expanded', 'false');
+    adminNav.classList.remove('is-open');
+  };
+
+  navToggle.addEventListener('click', () => {
+    const willOpen = navToggle.getAttribute('aria-expanded') !== 'true';
+    navToggle.setAttribute('aria-expanded', String(willOpen));
+    adminNav.classList.toggle('is-open', willOpen);
+  });
+
+  adminNav.addEventListener('click', (event) => {
+    if (event.target.closest('a')) closeNavigation();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeNavigation();
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!adminNav.classList.contains('is-open')) return;
+    if (!adminNav.contains(event.target) && !navToggle.contains(event.target)) closeNavigation();
+  });
+
+  window.matchMedia('(min-width: 721px)').addEventListener('change', (event) => {
+    if (event.matches) closeNavigation();
+  });
+})();`;
+}
+
 function layout({ title, content, authenticated = false, csrfToken = '' }) {
   const navigation = authenticated
-    ? `<nav aria-label="管理导航"><a href="/admin"><span>01</span>管理面板</a><a href="/admin/feedback"><span>02</span>反馈审核</a><a href="/admin/lab"><span>03</span>小作坊</a><a href="/admin/device"><span>04</span>设备管理</a><form method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="link-button">退出登录</button></form></nav>`
+    ? `<button type="button" class="nav-toggle" aria-expanded="false" aria-controls="admin-navigation" aria-label="展开或收起管理导航"><span aria-hidden="true"></span><span aria-hidden="true"></span></button><nav id="admin-navigation" class="admin-nav" aria-label="管理导航"><a href="/admin"><span>01</span>管理面板</a><a href="/admin/feedback"><span>02</span>反馈审核</a><a href="/admin/lab"><span>03</span>小作坊</a><a href="/admin/device"><span>04</span>设备管理</a><form method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="link-button">退出登录</button></form></nav>`
     : '';
 
   return `<!doctype html>
@@ -479,7 +517,7 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     /* Archive language, with denser controls for editing. */
     body { font-family: var(--font-sans); }
     body::before { display: none; }
-    body > header { min-height: 88px; background: var(--paper); border-bottom: 1px solid var(--line); padding-inline: max(24px, calc((100% - 1180px) / 2)); }
+    body > header { position: sticky; top: 0; z-index: 20; min-height: 88px; background: var(--paper); background: color-mix(in srgb, var(--paper) 88%, transparent); border-bottom: 1px solid var(--line); padding-inline: max(24px, calc((100% - 1180px) / 2)); backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2); }
     .admin-brand { display: flex; align-items: center; gap: 12px; }
     .admin-brand .brand-mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--acid); color: var(--button-ink); font-weight: 700; }
     .admin-brand strong { display: block; }
@@ -488,6 +526,11 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     .admin-brand small { display: block; font-size: 9px; }
     nav a { display: flex; align-items: center; gap: 7px; }
     nav a span { font-family: var(--font-mono); font-size: 10px; color: var(--acid); }
+    .nav-toggle { display: none; width: 44px; height: 44px; min-height: 44px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: var(--ink); }
+    .nav-toggle:hover { background: var(--surface-raised); border-color: var(--ink-soft); }
+    .nav-toggle span { display: block; width: 17px; height: 1.5px; margin: 5px auto; background: currentColor; transition: transform 250ms var(--ease); }
+    .nav-toggle[aria-expanded="true"] span:first-child { transform: translateY(3.25px) rotate(45deg); }
+    .nav-toggle[aria-expanded="true"] span:last-child { transform: translateY(-3.25px) rotate(-45deg); }
     main { width: min(1180px, calc(100% - 48px)); margin: var(--space-5) auto; }
     h1 { font-size: clamp(32px, 4.2vw, 54px); font-weight: 650; line-height: 1.18; margin-bottom: var(--space-3); }
     h2 { font-size: 22px; font-weight: 600; }
@@ -534,7 +577,7 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     .section-number { color: var(--acid); margin-right: 12px; }
     .form-index { display: flex; flex-wrap: wrap; gap: 12px 24px; padding-block: 16px; border-block: 1px solid var(--line); }
     .form-index a { font-size: 13px; text-decoration: none; }
-    .form-section { scroll-margin-top: 24px; }
+    .form-section, :target, input:invalid, textarea:invalid, select:invalid { scroll-margin-top: 112px; }
     .form-media-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); align-items: start; }
     .form-media-grid > .form-section { min-width: 0; margin-top: 0; }
     .form-section .hint { line-height: 1.8; }
@@ -560,9 +603,12 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     dt { color: var(--ink-soft); font-size: 13px; }
     dd { margin: 0; overflow-wrap: anywhere; }
     @media (max-width: 720px) {
-      body > header { padding: 20px 18px; gap: 20px; }
-      nav { gap: 12px 20px; }
-      nav a { min-height: 32px; }
+      body > header { flex-direction: row; align-items: center; padding: 14px 18px; gap: 14px; }
+      .nav-toggle { display: block; margin-left: auto; flex: 0 0 auto; }
+      .js .admin-nav { position: absolute; top: calc(100% + 8px); right: 18px; left: 18px; visibility: hidden; opacity: 0; transform: translateY(-8px); padding: 12px; flex-direction: column; align-items: stretch; gap: 2px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); box-shadow: 0 22px 60px rgba(0, 0, 0, .3); transition: opacity 200ms var(--ease), transform 200ms var(--ease), visibility 200ms; }
+      .js .admin-nav.is-open { visibility: visible; opacity: 1; transform: translateY(0); }
+      .js .admin-nav a, .js .admin-nav form, .js .admin-nav .link-button { width: 100%; }
+      .js .admin-nav a, .js .admin-nav .link-button { min-height: 44px; padding: 10px 12px; justify-content: flex-start; }
       main { width: calc(100% - 36px); margin-block: 36px; }
       .narrow { margin-top: 24px; }
       .panel { padding: 22px; }
@@ -583,6 +629,7 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
 <body>
   <header><a class="admin-brand" href="/admin" aria-label="知了hub 管理后台"><span class="brand-mark" aria-hidden="true">知</span><span><strong>知了hub</strong><small>PERSONAL ARCHIVE / 编辑室</small></span></a>${navigation}</header>
   <main>${content}</main>
+  ${authenticated ? '<script src="/admin/navigation.js" defer></script>' : ''}
 </body>
 </html>`;
 }
@@ -1019,4 +1066,4 @@ document.querySelectorAll('[data-copy-lab-link]').forEach((button) => {
 });`;
 }
 
-module.exports = { formatDateTime, escapeHtml, labManagementScript, layout, workFormScript };
+module.exports = { adminNavigationScript, formatDateTime, escapeHtml, labManagementScript, layout, workFormScript };

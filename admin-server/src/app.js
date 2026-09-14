@@ -14,7 +14,7 @@ const speakeasy = require('speakeasy');
 const { loadConfig } = require('./config');
 const { initializeDatabase } = require('./db');
 const { encryptTotpSecret, decryptTotpSecret } = require('./lib/totp-secret');
-const { labManagementScript, workFormScript } = require('./lib/html');
+const { adminNavigationScript, labManagementScript, workFormScript } = require('./lib/html');
 const { SQLiteSessionStore } = require('./lib/sqlite-session-store');
 const {
   UploadPolicyError,
@@ -304,6 +304,10 @@ function createApp(overrides = {}, dependencies = {}) {
   app.get('/admin/work-form.js', requireAdmin, (_request, response) => {
     response.set('Cache-Control', 'no-store');
     response.type('application/javascript').send(workFormScript());
+  });
+  app.get('/admin/navigation.js', requireAdmin, (_request, response) => {
+    response.set('Cache-Control', 'no-store');
+    response.type('application/javascript').send(adminNavigationScript());
   });
   app.get('/admin/lab.js', requireAdmin, (_request, response) => {
     response.set('Cache-Control', 'no-store');

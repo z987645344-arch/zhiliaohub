@@ -3,6 +3,15 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-14**
 
+## Git标签 v3.9 - 2026-09-14
+
+- **后台导航吸顶并在窄屏折叠**：`body > header` 改为 `position: sticky` + 半透明底 + 模糊 + 底边线，视觉对齐前台 `.site-header`；720px 以下五个导航项收纳进 `.nav-toggle` 折叠菜单（`aria-expanded` / `aria-controls="admin-navigation"`），桌面端保持展开。退出登录仍是 `<nav>` 内带 CSRF 隐藏域的 POST 表单。
+- **CSP 未放宽**：折叠逻辑经同源 `/admin/navigation.js`（`requireAdmin`、`no-store`）加载，与既有 `/admin/work-form.js` 同一模式，`script-src 'self'` 不变。
+- **吸顶遮挡锚点的对策**：`.form-section`、`:target`、`input:invalid`、`textarea:invalid`、`select:invalid` 加 `scroll-margin-top: 112px`，作品表单 `form-index` 分区跳转与校验失败聚焦不再被压在导航下。
+- **证据**：`npm test` 143/143（指挥师本机复跑同数）；`presentation.test.js` +2 条。
+- **逐文件改动**：`admin-server/src/app.js` +5/-1；`admin-server/src/lib/html.js` +55/-6；`admin-server/tests/presentation.test.js` +23/-2；`CHANGELOG.md` 本条。
+- 代码由 Codex 程序员完成，未建立本地提交；提交、推送、CI 与打标由指挥师执行。**未真机验证**折叠菜单与吸顶效果。
+
 ## Git标签 v3.8 - 2026-09-14
 
 - **上传提示不再读作"已保存"**：作品表单共用的 `uploadFile()` 成功提示由「已上传：xxx」改为「已上传 xxx · 保存作品后才会生效」，覆盖封面、主媒体、辅图与下载 ZIP 四类。起因是用户实测 4 次 `POST /api/admin/uploads` 全 201、零次保存作品——上传只存文件返回路径、路径随表单保存才落库的设计不变，错的只是把中间态写成了终态。小作坊 ZIP 上传成功即落库，不在本轮。
