@@ -641,6 +641,7 @@ function createApp(overrides = {}, dependencies = {}) {
         csrfToken: response.locals.csrfToken,
         categories: contentService.listCategories(),
         record,
+        notice: request.query.notice || '',
       }));
     } catch (error) {
       next(error);
@@ -681,6 +682,26 @@ function createApp(overrides = {}, dependencies = {}) {
       await contentService.updateWork(request.params.id, request.body);
       await publishService.publishAll();
       response.redirect('/admin?notice=作品已更新并发布。');
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/works/:id/updates', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      await contentService.createWorkUpdate(request.params.id, request.body);
+      await publishService.publishAll();
+      response.redirect(`/admin/works/${request.params.id}/edit?notice=${encodeURIComponent('更新记录已添加并发布。')}`);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/works/:id/updates/:updateId/delete', requireAdmin, requireCsrf, async (request, response, next) => {
+    try {
+      await contentService.deleteWorkUpdate(request.params.id, request.params.updateId);
+      await publishService.publishAll();
+      response.redirect(`/admin/works/${request.params.id}/edit?notice=${encodeURIComponent('更新记录已删除，公开页面已同步。')}`);
     } catch (error) {
       next(error);
     }

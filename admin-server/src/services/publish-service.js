@@ -144,6 +144,16 @@ class PublishService {
       SELECT * FROM works
       ORDER BY CASE WHEN display_order IS NULL THEN 1 ELSE 0 END, display_order ASC, work_date DESC, id DESC
     `).all();
+    const updatesByWorkId = new Map();
+    for (const update of this.database.prepare(`
+      SELECT id, work_id, recorded_at, body, created_at
+      FROM work_updates
+      ORDER BY recorded_at DESC, id DESC
+    `).all()) {
+      const updates = updatesByWorkId.get(update.work_id) || [];
+      updates.push(update);
+      updatesByWorkId.set(update.work_id, updates);
+    }
     const categories = this.database.prepare(`
       SELECT * FROM work_categories
       WHERE is_visible = 1
@@ -201,9 +211,11 @@ class PublishService {
 
     for (const [index, work] of works.entries()) {
       const slug = assertSlug(work.slug);
-      const markdown = await this.loadMarkdown(work.markdown_path, 'works');
-      const prefix = work.is_placeholder ? '<small>WORK LOG / PLACEHOLDER</small>' : '';
-      files.set(`works-${slug}.html`, renderWorkDetail(work, `${prefix}${renderMarkdown(markdown)}`, index));
+      const updates = (updatesByWorkId.get(work.id) || []).map((update) => ({
+        ...update,
+        htmlBody: renderMarkdown(update.body),
+      }));
+      files.set(`works-${slug}.html`, renderWorkDetail(work, updates, index));
       addMedia(work.cover_image, MEDIA_DIRECTORIES.cover);
       addMedia(work.main_media_path, MEDIA_DIRECTORIES.main);
       addMedia(work.download_file, MEDIA_DIRECTORIES.download);

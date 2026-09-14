@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS works (
   FOREIGN KEY (category) REFERENCES work_categories(name) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS work_updates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_id INTEGER NOT NULL,
+  recorded_at TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (work_id) REFERENCES works(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
@@ -135,6 +144,7 @@ CREATE TABLE IF NOT EXISTS lab_projects (
 );
 
 CREATE INDEX IF NOT EXISTS idx_works_date ON works(work_date DESC);
+CREATE INDEX IF NOT EXISTS idx_work_updates_work_time ON work_updates(work_id, recorded_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_work_categories_visible_order ON work_categories(is_visible, display_order, id);
 CREATE INDEX IF NOT EXISTS idx_notes_date ON notes(note_date DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);

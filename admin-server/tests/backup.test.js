@@ -185,6 +185,10 @@ async function seedStorage(config) {
     detailIntro: '验证作品元数据与正文恢复。',
     body: '# 待恢复作品\n\n作品正文必须完整恢复。',
   });
+  await contentService.createWorkUpdate(work.id, {
+    recordedAt: '2026-08-04T12:00',
+    body: '# 待恢复作品\n\n作品正文必须完整恢复。',
+  });
   const note = await contentService.createNote({
     title: '待恢复日记',
     noteDate: '2026-08-04',
@@ -1037,6 +1041,10 @@ test('恢复前自动创建快照，误选旧归档后仍能退回恢复前的�
       category: '程序',
       summary: '恢复前的最新摘要。',
       detailIntro: '恢复前的最新摘要。',
+      body: '# 最新\n\nCURRENT_MARKER 最新正文。',
+    });
+    await contentService.createWorkUpdate(seeded.work.id, {
+      recordedAt: '2026-08-11T12:00',
       body: '# 最新\n\nCURRENT_MARKER 最新正文。',
     });
     database.close();

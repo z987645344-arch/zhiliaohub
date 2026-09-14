@@ -9,6 +9,7 @@ const {
   WORK_CATEGORY_MIGRATION_NAME,
   WORK_CATEGORY_RECORDS_MIGRATION_NAME,
   WORK_TOOLS_VISIBILITY_MIGRATION_NAME,
+  WORK_UPDATES_MIGRATION_NAME,
   initializeDatabase,
 } = require('../src/db');
 const { MAX_SLUG_BYTES } = require('../src/lib/slug');
@@ -141,6 +142,76 @@ test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移'
       1,
       '重复启动不得重复记录或执行数据驱动分组迁移。',
     );
+    database.close();
+    database = null;
+  } finally {
+    database?.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('旧版version_log迁移为时间线且不改作品时间、重复启动不重复插入', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-work-updates-migration-'));
+  const dataDir = path.join(root, 'data');
+  const databasePath = path.join(dataDir, 'legacy.sqlite3');
+  const config = {
+    serverRoot: path.resolve(__dirname, '..'),
+    dataDir,
+    databasePath,
+    schemaPath: path.resolve(__dirname, '..', 'data', 'schema.sql'),
+    contentDir: path.join(root, 'content'),
+    uploadsDir: path.join(root, 'uploads'),
+  };
+  let database;
+  try {
+    await fs.mkdir(dataDir, { recursive: true });
+    const legacy = new Database(databasePath);
+    legacy.exec(`
+      CREATE TABLE works (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        slug TEXT,
+        work_date TEXT NOT NULL,
+        category TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        version_log TEXT,
+        markdown_path TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    const insert = legacy.prepare(`
+      INSERT INTO works (
+        title, slug, work_date, category, summary, version_log,
+        markdown_path, created_at, updated_at
+      ) VALUES (?, ?, '2026-09-10', '程序', '旧摘要', ?, ?, ?, ?)
+    `);
+    insert.run('旧作品甲', 'legacy-a', '# 甲\n\n原文不改。', 'works/a.md', '2026-09-01T01:00:00.000Z', '2026-09-10T02:00:00.000Z');
+    insert.run('旧作品乙', 'legacy-b', '  乙原文保留空白\n', 'works/b.md', '2026-09-02T01:00:00.000Z', '2026-09-10T03:00:00.000Z');
+    insert.run('旧作品空', 'legacy-empty', '   ', 'works/empty.md', '2026-09-03T01:00:00.000Z', '2026-09-10T04:00:00.000Z');
+    const before = legacy.prepare('SELECT id, updated_at FROM works ORDER BY id').all();
+    legacy.close();
+
+    database = initializeDatabase(config);
+    assert.deepEqual(database.prepare(`
+      SELECT works.slug, work_updates.recorded_at, work_updates.body
+      FROM work_updates JOIN works ON works.id = work_updates.work_id
+      ORDER BY works.slug
+    `).all(), [
+      { slug: 'legacy-a', recorded_at: '2026-09-10T02:00:00.000Z', body: '# 甲\n\n原文不改。' },
+      { slug: 'legacy-b', recorded_at: '2026-09-10T03:00:00.000Z', body: '  乙原文保留空白\n' },
+    ]);
+    assert.deepEqual(database.prepare('SELECT id, updated_at FROM works ORDER BY id').all(), before);
+    assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_UPDATES_MIGRATION_NAME));
+    database.close();
+
+    database = initializeDatabase(config);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM work_updates').get().count, 2);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?').get(WORK_UPDATES_MIGRATION_NAME).count,
+      1,
+    );
+    assert.deepEqual(database.prepare('SELECT id, updated_at FROM works ORDER BY id').all(), before);
     database.close();
     database = null;
   } finally {

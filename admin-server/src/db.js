@@ -7,6 +7,7 @@ const { createUniqueSlug } = require('./lib/slug');
 const WORK_CATEGORY_MIGRATION_NAME = 'works-categories-program-film-life-v1';
 const WORK_TOOLS_VISIBILITY_MIGRATION_NAME = 'works-show-on-tools-v1';
 const WORK_CATEGORY_RECORDS_MIGRATION_NAME = 'works-data-driven-categories-v1';
+const WORK_UPDATES_MIGRATION_NAME = 'works-update-timeline-v1';
 const WORK_CATEGORY_MAPPINGS = Object.freeze([
   Object.freeze({ from: '影像创作', to: '影视' }),
   Object.freeze({ from: 'AI音乐', to: '影视' }),
@@ -222,6 +223,30 @@ function migrateWorkCategoryRecords(database) {
   return { applied: true, ...migrate() };
 }
 
+function migrateWorkUpdates(database) {
+  const applied = database.prepare('SELECT 1 FROM content_migrations WHERE name = ?')
+    .get(WORK_UPDATES_MIGRATION_NAME);
+  if (applied) return { applied: false, migratedRows: 0 };
+
+  const migrate = database.transaction(() => {
+    const now = new Date().toISOString();
+    const migratedRows = database.prepare(`
+      INSERT INTO work_updates (work_id, recorded_at, body, created_at)
+      SELECT works.id, works.updated_at, works.version_log, ?
+      FROM works
+      WHERE TRIM(COALESCE(works.version_log, '')) <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM work_updates WHERE work_updates.work_id = works.id
+        )
+    `).run(now).changes;
+    database.prepare('INSERT INTO content_migrations (name, applied_at) VALUES (?, ?)')
+      .run(WORK_UPDATES_MIGRATION_NAME, now);
+    return migratedRows;
+  });
+
+  return { applied: true, migratedRows: migrate() };
+}
+
 function initializeDatabase(config) {
   fs.mkdirSync(config.dataDir, { recursive: true });
   fs.mkdirSync(path.join(config.contentDir, 'works'), { recursive: true });
@@ -267,11 +292,13 @@ function initializeDatabase(config) {
   migrateWorkCategories(database);
   migrateWorkToolsVisibility(database);
   migrateWorkCategoryRecords(database);
+  migrateWorkUpdates(database);
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_works_date ON works(work_date DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_works_slug ON works(slug) WHERE slug IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_slug ON notes(slug) WHERE slug IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_work_categories_visible_order ON work_categories(is_visible, display_order, id);
+    CREATE INDEX IF NOT EXISTS idx_work_updates_work_time ON work_updates(work_id, recorded_at DESC, id DESC);
   `);
   return database;
 }
@@ -282,8 +309,10 @@ module.exports = {
   WORK_CATEGORY_MIGRATION_NAME,
   WORK_CATEGORY_RECORDS_MIGRATION_NAME,
   WORK_TOOLS_VISIBILITY_MIGRATION_NAME,
+  WORK_UPDATES_MIGRATION_NAME,
   initializeDatabase,
   migrateWorkCategories,
   migrateWorkCategoryRecords,
   migrateWorkToolsVisibility,
+  migrateWorkUpdates,
 };

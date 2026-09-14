@@ -88,6 +88,10 @@ async function seedStorage(config, title = '定时备份验证作品') {
     detailIntro: '用于自动化备份验证。',
     body: `# ${title}\n\nSCHEDULED_BACKUP_MARKER`,
   });
+  await contentService.createWorkUpdate(work.id, {
+    recordedAt: '2026-08-11T12:00',
+    body: `# ${title}\n\nSCHEDULED_BACKUP_MARKER`,
+  });
   await fs.writeFile(path.join(config.uploadsDir, 'proof.txt'), 'scheduled-upload\n', 'utf8');
   database.close();
   return work;

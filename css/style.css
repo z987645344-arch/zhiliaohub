@@ -1877,6 +1877,45 @@ canvas {
   margin-bottom: 0;
 }
 
+.version-timeline {
+  display: grid;
+  gap: clamp(28px, 5vw, 52px);
+}
+
+.version-entry {
+  position: relative;
+  padding-left: clamp(24px, 4vw, 42px);
+  border-left: 1px solid var(--line);
+}
+
+.version-entry::before {
+  position: absolute;
+  top: 0.45em;
+  left: -5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--acid-strong);
+  content: "";
+}
+
+.version-entry time {
+  display: block;
+  margin-bottom: 14px;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.version-entry-body > :first-child {
+  margin-top: 0;
+}
+
+.version-entry-body > :last-child {
+  margin-bottom: 0;
+}
+
 .version-log h1,
 .version-log h2,
 .version-log h3 {
@@ -3059,6 +3098,9 @@ html:has(.archive-page) { color-scheme: dark; scrollbar-color: var(--archive-mut
 .archive-page .showcase-meta span, .archive-page .detail-meta span, .archive-page .detail-meta time { background: transparent; border-color: var(--line); color: var(--archive-muted); }
 .archive-page .note-detail { max-width: 920px; padding-block: 56px; }
 .archive-page .note-placeholder, .archive-page .version-log { max-width: 72ch; font-size: 17px; line-height: 1.95; color: var(--archive-muted); }
+.archive-page .version-entry { border-left-color: var(--line); }
+.archive-page .version-entry::before { background: var(--acid); }
+.archive-page .version-entry time { color: var(--archive-muted); }
 .archive-page .note-placeholder h2, .archive-page .version-log h2,
 .archive-page .note-placeholder h3, .archive-page .version-log h3 { color: var(--white); }
 .archive-page .version-log pre, .archive-page .note-placeholder pre { background: var(--archive-surface); border: 1px solid var(--line); max-width: 100%; overflow-x: auto; }

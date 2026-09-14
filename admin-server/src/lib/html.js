@@ -581,11 +581,17 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     .form-media-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); align-items: start; }
     .form-media-grid > .form-section { min-width: 0; margin-top: 0; }
     .form-section .hint { line-height: 1.8; }
+    .work-update-list { display: grid; gap: var(--space-2); margin-block: var(--space-3); }
+    .work-update-admin { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); }
+    .work-update-admin time { color: var(--acid); font-family: var(--font-mono); font-size: 12px; }
+    .work-update-admin p { margin: 8px 0 0; color: var(--ink-soft); }
+    .work-update-admin form { margin: 0; flex: 0 0 auto; }
+    .work-updates-admin textarea { min-height: 180px; font-family: var(--font-mono); }
     .save-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding-block: var(--space-3); border-top: 1px solid var(--line); }
     .save-bar button { margin: 0; }
     .save-bar p { color: var(--ink-soft); font-size: 13px; }
     .short-textarea { min-height: 110px; }
-    #versionLog, #body { font-family: var(--font-mono); min-height: 300px; }
+    #body { font-family: var(--font-mono); min-height: 300px; }
     .upload-preview { min-width: 0; }
     .upload-preview img { max-width: 100%; }
     .gallery-grid { grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); }
@@ -616,6 +622,8 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
       .form-media-grid { grid-template-columns: 1fr; gap: 0; }
       .form-grid { grid-template-columns: 1fr; }
       .form-section { margin-block: 24px; }
+      .work-update-admin { flex-direction: column; }
+      .work-update-admin form, .work-update-admin button { width: 100%; }
       .backup-status-grid { grid-template-columns: 1fr; }
       table { display: table; font-size: 12px; }
       th, td { padding: 12px 4px; font-size: 12px; }
@@ -644,6 +652,14 @@ function workFormScript() {
   const status = form.querySelector('[data-upload-status]');
   const saveButton = form.querySelector('[data-save-work]');
   let pendingUploads = 0;
+
+  document.querySelectorAll('[data-delete-work-update]').forEach((deleteForm) => {
+    deleteForm.addEventListener('submit', (event) => {
+      if (!window.confirm('确定删除这条更新记录吗？删除后将立即更新公开页面。')) {
+        event.preventDefault();
+      }
+    });
+  });
 
   function setStatus(message, error = false) {
     status.textContent = message;

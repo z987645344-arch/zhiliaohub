@@ -159,6 +159,10 @@ test('全量发布生成安全静态页、解决slug重名并只清理带标记�
     detailIntro: '第二条摘要',
     body: '第二条正文',
   });
+  await fixture.contentService.createWorkUpdate(first.id, {
+    recordedAt: '2026-08-06T12:00',
+    body: '## Markdown 标题\n\n正文内容\n\n<script>alert(1)</script>\n\n[危险链接](javascript:alert(2))',
+  });
   assert.notEqual(first.slug, second.slug);
   assert.equal(second.slug, `${first.slug}-2`);
 
@@ -214,6 +218,80 @@ test('全量发布生成安全静态页、解决slug重名并只清理带标记�
   await assertReadableByNginxWorker(
     path.join(fixture.config.siteRoot, 'works.html'),
     listHtml,
+  );
+});
+
+test('作品无需旧正文即可保存，更新时间线按记录时间与id倒序发布', async (t) => {
+  const fixture = await createFixture();
+  t.after(async () => {
+    fixture.database.close();
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  });
+
+  const work = await fixture.contentService.createWork({
+    title: '长期更新作品',
+    workDate: '2026-09-10',
+    category: '程序',
+    detailIntro: '不填写旧版整段正文也能保存。',
+  });
+  assert.equal(work.version_log, null);
+  assert.match(work.body, /暂无更新记录/);
+
+  await fixture.contentService.createWorkUpdate(work.id, {
+    recordedAt: '2026-09-09T08:00',
+    body: '较早记录',
+  });
+  await fixture.contentService.createWorkUpdate(work.id, {
+    recordedAt: '2026-09-10T09:00',
+    body: '同时间先添加',
+  });
+  await fixture.contentService.createWorkUpdate(work.id, {
+    recordedAt: '2026-09-10T09:00',
+    body: '同时间后添加',
+  });
+  await fixture.publishService.publishAll();
+
+  const detailHtml = await fs.readFile(path.join(fixture.config.siteRoot, `works-${work.slug}.html`), 'utf8');
+  const laterAdded = detailHtml.indexOf('同时间后添加');
+  const earlierAdded = detailHtml.indexOf('同时间先添加');
+  const older = detailHtml.indexOf('较早记录');
+  assert.ok(laterAdded >= 0 && laterAdded < earlierAdded && earlierAdded < older);
+  assert.match(detailHtml, /2026\.09\.10 09:00 UTC\+8/);
+
+  const snapshot = await fs.readFile(path.join(fixture.config.contentDir, ...work.markdown_path.split('/')), 'utf8');
+  assert.ok(snapshot.indexOf('同时间后添加') < snapshot.indexOf('同时间先添加'));
+  assert.ok(snapshot.indexOf('同时间先添加') < snapshot.indexOf('较早记录'));
+
+  const newestUpdate = fixture.contentService.listWorkUpdates(work.id)[0];
+  await fixture.contentService.deleteWorkUpdate(work.id, newestUpdate.id);
+  const snapshotAfterDelete = await fs.readFile(
+    path.join(fixture.config.contentDir, ...work.markdown_path.split('/')),
+    'utf8',
+  );
+  assert.doesNotMatch(snapshotAfterDelete, /同时间后添加/);
+  assert.match(snapshotAfterDelete, /同时间先添加/);
+  await fixture.publishService.publishAll();
+  assert.doesNotMatch(
+    await fs.readFile(path.join(fixture.config.siteRoot, `works-${work.slug}.html`), 'utf8'),
+    /同时间后添加/,
+  );
+
+  fixture.database.prepare('UPDATE works SET version_log = ? WHERE id = ?').run('冻结的旧列原文', work.id);
+  await fixture.contentService.updateWork(work.id, {
+    title: '长期更新作品（改名）',
+    workDate: '2026-09-10',
+    category: '程序',
+    detailIntro: '只更新元数据。',
+    versionLog: '不得写回旧列',
+    body: '不得覆盖派生快照',
+  });
+  assert.equal(
+    fixture.database.prepare('SELECT version_log FROM works WHERE id = ?').get(work.id).version_log,
+    '冻结的旧列原文',
+  );
+  assert.equal(
+    await fs.readFile(path.join(fixture.config.contentDir, ...work.markdown_path.split('/')), 'utf8'),
+    snapshotAfterDelete,
   );
 });
 

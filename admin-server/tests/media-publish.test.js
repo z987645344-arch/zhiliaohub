@@ -86,11 +86,14 @@ test('作品媒体完成上传、发布复制、编辑清理与删除清理完�
     mainMediaType: 'image',
     mainMediaPath: paths.main,
     gallery: JSON.stringify([paths.galleryOne, paths.galleryTwo]),
-    versionLog: '## v0.1\n\n阶段二媒体发布测试。',
+  });
+  await contentService.createWorkUpdate(created.id, {
+    recordedAt: '2026-08-08T10:00',
+    body: '## v0.1\n\n阶段二媒体发布测试。',
   });
   assert.equal(created.cover_image, paths.cover);
   assert.equal(created.is_downloadable, 1);
-  assert.equal(created.version_log, '## v0.1\n\n阶段二媒体发布测试。\n');
+  assert.equal(created.version_log, null);
   assert.deepEqual(JSON.parse(created.gallery), [paths.galleryOne, paths.galleryTwo]);
 
   const orphan = path.join(config.siteRoot, 'assets', 'works', 'gallery', 'orphan.png');
@@ -137,7 +140,10 @@ test('作品媒体完成上传、发布复制、编辑清理与删除清理完�
     mainMediaType: 'image',
     mainMediaPath: replacementMainPath,
     gallery: JSON.stringify([paths.galleryTwo]),
-    versionLog: '## v0.2\n\n替换主图并移除一张辅图。',
+  });
+  await contentService.createWorkUpdate(created.id, {
+    recordedAt: '2026-08-09T10:00',
+    body: '## v0.2\n\n替换主图并移除一张辅图。',
   });
   await publishService.publishAll();
   assert.equal(updated.category, '生活');

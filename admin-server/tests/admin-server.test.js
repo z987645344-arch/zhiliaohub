@@ -573,10 +573,19 @@ test('作品和日记的新增、编辑、删除会同步SQLite、Markdown与静
   );
   const workPath = path.join(runtime.config.contentDir, ...work.markdown_path.split('/'));
   const workHtmlPath = path.join(runtime.config.siteRoot, `works-${work.slug}.html`);
-  assert.match(await fs.readFile(workPath, 'utf8'), /作品正文A/);
+  assert.equal(runtime.database.prepare('SELECT version_log FROM works WHERE id = ?').get(work.id).version_log, null);
+  assert.match(await fs.readFile(workPath, 'utf8'), /暂无更新记录/);
   assert.match(await fs.readFile(path.join(runtime.config.siteRoot, 'works.html'), 'utf8'), /本地验证作品A/);
   assert.match(await fs.readFile(path.join(runtime.config.siteRoot, 'tools.html'), 'utf8'), /tools\.example\.com\/admin-flow/);
   assert.match(await fs.readFile(workHtmlPath, 'utf8'), /^<!-- 此文件由知了hub后台自动生成/);
+
+  response = await client.request(`/admin/works/${work.id}/updates`, {
+    method: 'POST',
+    body: form({ _csrf: csrf, recordedAt: '2026-08-04T12:30', body: '## 作品正文A\n\n第一条长期更新。' }),
+  });
+  assert.equal(response.status, 302);
+  assert.match(await fs.readFile(workPath, 'utf8'), /作品正文A/);
+  assert.match(await fs.readFile(workHtmlPath, 'utf8'), /作品正文A/);
 
   response = await client.request(`/api/admin/works/${work.id}`, {
     method: 'PUT',
@@ -586,7 +595,8 @@ test('作品和日记的新增、编辑、删除会同步SQLite、Markdown与静
   assert.equal(response.status, 200);
   assert.equal(runtime.database.prepare('SELECT title FROM works WHERE id = ?').get(work.id).title, '本地验证作品B');
   assert.equal(runtime.database.prepare('SELECT show_on_tools FROM works WHERE id = ?').get(work.id).show_on_tools, 0);
-  assert.match(await fs.readFile(workPath, 'utf8'), /作品正文B/);
+  assert.match(await fs.readFile(workPath, 'utf8'), /作品正文A/);
+  assert.doesNotMatch(await fs.readFile(workPath, 'utf8'), /作品正文B/);
   assert.match(await fs.readFile(workHtmlPath, 'utf8'), /本地验证作品B/);
   assert.doesNotMatch(await fs.readFile(path.join(runtime.config.siteRoot, 'tools.html'), 'utf8'), /本地验证作品B|admin-flow/);
 
@@ -631,6 +641,45 @@ test('作品和日记的新增、编辑、删除会同步SQLite、Markdown与静
   assert.doesNotMatch(await fs.readFile(path.join(runtime.config.siteRoot, 'notes.html'), 'utf8'), /本地验证日记B/);
   await assert.rejects(fs.access(noteHtmlPath), /ENOENT/);
   await assert.rejects(fs.access(notePath), /ENOENT/);
+});
+
+test('作品更新记录路由拒绝跨作品删除且删除作品会级联清理记录', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  seedLegacyCategories(runtime.contentService);
+  const client = createClient(runtime.baseUrl);
+  const { csrf } = await bindAndAuthenticate(client, runtime);
+  const first = await runtime.contentService.createWork(workInput('时间线甲'));
+  const second = await runtime.contentService.createWork(workInput('时间线乙'));
+
+  let response = await client.request(`/admin/works/${first.id}/updates`, {
+    method: 'POST',
+    body: form({ recordedAt: '2026-08-04T09:15', body: '第一条记录' }),
+  });
+  assert.equal(response.status, 403);
+  assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM work_updates').get().count, 0);
+
+  response = await client.request(`/admin/works/${first.id}/updates`, {
+    method: 'POST',
+    body: form({ _csrf: csrf, recordedAt: '2026-08-04T09:15', body: '第一条记录' }),
+  });
+  assert.equal(response.status, 302);
+  const update = runtime.database.prepare('SELECT * FROM work_updates WHERE work_id = ?').get(first.id);
+  assert.ok(update);
+
+  response = await client.request(`/admin/works/${second.id}/updates/${update.id}/delete`, {
+    method: 'POST',
+    body: form({ _csrf: csrf }),
+  });
+  assert.equal(response.status, 404);
+  assert.ok(runtime.database.prepare('SELECT 1 FROM work_updates WHERE id = ?').get(update.id));
+
+  response = await client.request(`/api/admin/works/${first.id}`, {
+    method: 'DELETE',
+    headers: { 'x-csrf-token': csrf },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM work_updates WHERE work_id = ?').get(first.id).count, 0);
 });
 
 test('作品分组管理要求登录与CSRF，创建后立即进入作品下拉框', async (t) => {
@@ -697,7 +746,8 @@ test('同一作品或日记的并发更新会保持数据库与 Markdown 属于�
     const final = await runtime.contentService.getWork(created.id);
     const suffix = final.title.endsWith('并发甲') ? '并发甲' : '并发乙';
     assert.equal(final.summary, `作品摘要${suffix}`);
-    assert.match(final.body, new RegExp(`作品正文${suffix}`));
+    assert.match(final.body, /暂无更新记录/);
+    assert.equal(final.version_log, null);
   });
 
   await t.test('日记并发更新', async () => {

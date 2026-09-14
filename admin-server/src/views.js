@@ -148,7 +148,19 @@ function mediaPreview(value, type, label) {
   return `${media}<span class="upload-filename">${filename}</span>`;
 }
 
-function workFormPage({ csrfToken, categories = [], record = {}, error = '' }) {
+function currentUtc8DateTimeLocal(now = new Date()) {
+  return new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16);
+}
+
+function updateSummary(body) {
+  const plain = String(body || '')
+    .replace(/[#>*_`~\[\]()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return plain.length > 180 ? `${plain.slice(0, 180)}…` : plain;
+}
+
+function workFormPage({ csrfToken, categories = [], record = {}, error = '', notice = '' }) {
   const isEdit = Boolean(record.id);
   const title = `${isEdit ? '编辑' : '新增'}作品`;
   const action = isEdit ? `/admin/works/${record.id}` : '/admin/works';
@@ -172,6 +184,13 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '' }) {
       : `<img src="${escapeHtml(uploadPreviewUrl(item))}" alt="辅图 ${escapeHtml(filename)}">`;
     return `<div class="gallery-item" data-gallery-item data-gallery-path="${escapeHtml(item)}">${preview}<span>${escapeHtml(filename)}</span><button type="button" class="button-danger compact-button" data-remove-gallery>移除</button></div>`;
   }).join('');
+  const updates = Array.isArray(record.updates) ? record.updates : [];
+  const updateItems = updates.length
+    ? updates.map((update) => `<article class="work-update-admin"><div><time datetime="${escapeHtml(update.recorded_at)}">${escapeHtml(formatDateTime(update.recorded_at))}</time><p>${escapeHtml(updateSummary(update.body))}</p></div><form method="post" action="/admin/works/${record.id}/updates/${update.id}/delete" data-delete-work-update><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="button-danger compact-button">删除这条记录</button></form></article>`).join('')
+    : '<p class="empty-state">还没有更新记录。保存作品后，可以从这里逐条补充进展。</p>';
+  const updatesSection = isEdit
+    ? `<section class="form-section work-updates-admin" id="work-updates" aria-labelledby="work-updates-title"><h2 id="work-updates-title"><span class="section-number">04</span>更新记录</h2><p class="hint">记录会按时间倒序展示给访客。历史记录可删除；需要修改时，请删除后重新添加。</p><div class="work-update-list">${updateItems}</div><form method="post" action="/admin/works/${record.id}/updates"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><div class="form-grid"><div><label for="updateRecordedAt">记录时间</label><input id="updateRecordedAt" name="recordedAt" type="datetime-local" value="${currentUtc8DateTimeLocal()}" required></div></div><label for="updateBody">记录正文</label><textarea id="updateBody" name="body" required></textarea><button type="submit">添加记录并发布</button></form></section>`
+    : '<section class="form-section work-updates-admin" id="work-updates"><h2><span class="section-number">04</span>更新记录</h2><p class="empty-state">先保存作品，再回来逐条添加带时间的更新记录。</p></section>';
   const deleteForm = isEdit
     ? `<form class="danger-zone" method="post" action="/admin/works/${record.id}/delete"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><p class="notice warning">删除会同时移除这件作品、正文、详情页和公开媒体，无法在此撤销。请先确认已保留需要的内容。</p><button type="submit" class="button-danger">删除作品</button></form>`
     : '';
@@ -180,7 +199,7 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '' }) {
     title,
     authenticated: true,
     csrfToken,
-    content: `<section class="panel work-form-panel"><p class="admin-kicker">作品 / 编辑档案</p><h1>${title}</h1><p>先写清作品是什么，再补上图片与访问方式。保存后访客就能看到本次内容；上传图片本身不会发布作品。</p>${noticeBlock(error, 'notice error')}${categoryNotice}<nav class="form-index" aria-label="作品编辑分区"><a href="#work-basics">01 介绍</a><a href="#work-cover">02 媒体</a><a href="#work-access">03 访问与下载</a><a href="#work-updates">04 更新记录</a></nav>
+    content: `<section class="panel work-form-panel"><p class="admin-kicker">作品 / 编辑档案</p><h1>${title}</h1><p>先写清作品是什么，再补上图片与访问方式。保存后访客就能看到本次内容；上传图片本身不会发布作品。</p>${noticeBlock(notice)}${noticeBlock(error, 'notice error')}${categoryNotice}<nav class="form-index" aria-label="作品编辑分区"><a href="#work-basics">01 介绍</a><a href="#work-cover">02 媒体</a><a href="#work-access">03 访问与下载</a><a href="#work-updates">04 更新记录</a></nav>
       <form method="post" action="${action}" data-work-form data-upload-api="/api/admin/uploads" data-csrf-token="${escapeHtml(csrfToken)}">
         <input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">
         <fieldset class="form-section" id="work-basics"><legend><span class="section-number">01</span>介绍这件作品</legend><p class="hint">标题与简介会展示给访客，用几句话说明它解决什么问题。</p>
@@ -216,10 +235,9 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '' }) {
           <input type="hidden" name="showOnTools" value="0"><label class="choice checkbox-choice"><input type="checkbox" name="showOnTools" value="1"${record.show_on_tools ? ' checked' : ''}> 在智能工具页显示这条作品</label>
         </fieldset>
 
-        <fieldset class="form-section" id="work-updates"><legend><span class="section-number">04</span>更新记录</legend><p class="hint">写下本次做了什么、有什么变化。这部分会出现在作品详情页下方，支持 Markdown 排版。</p><label for="versionLog">记录正文</label><textarea id="versionLog" name="versionLog" required>${escapeHtml(record.versionLog || record.version_log || record.body || '')}</textarea></fieldset>
         <p class="upload-status" data-upload-status role="status" aria-live="polite"></p>
         <div class="save-bar"><button type="submit" data-save-work${categories.length ? '' : ' disabled'}>保存并发布</button><p>保存后会立即更新公开页面。</p></div>
-      </form>${deleteForm}</section><script src="/admin/work-form.js" defer></script>`,
+      </form>${updatesSection}${deleteForm}</section><script src="/admin/work-form.js" defer></script>`,
   });
 }
 

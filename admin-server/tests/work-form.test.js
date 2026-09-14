@@ -20,7 +20,7 @@ test('独立作品表单用现有分组下拉选择且日记旧字段不再混�
   });
   for (const name of [
     'title', 'workDate', 'category', 'detailIntro', 'coverImage', 'mainMediaType',
-    'mainMediaPath', 'gallery', 'isDownloadable', 'downloadFile', 'experienceUrl', 'showOnTools', 'versionLog',
+    'mainMediaPath', 'gallery', 'isDownloadable', 'downloadFile', 'experienceUrl', 'showOnTools',
   ]) {
     assert.match(html, new RegExp(`name="${name}"`));
   }
@@ -32,6 +32,29 @@ test('独立作品表单用现有分组下拉选择且日记旧字段不再混�
   assert.match(html, /<script src="\/admin\/work-form\.js" defer><\/script>/);
   assert.doesNotMatch(html, /name="summary"/);
   assert.doesNotMatch(html, /name="body"/);
+  assert.doesNotMatch(html, /name="versionLog"/);
+  assert.match(html, /先保存作品，再回来逐条添加带时间的更新记录/);
+});
+
+test('编辑作品表单列出更新记录并为删除动作提供确认钩子', () => {
+  const html = workFormPage({
+    csrfToken: 'csrf-test-token',
+    categories: [{ name: '程序', is_visible: 1 }],
+    record: {
+      id: 7,
+      title: '时间线作品',
+      work_date: '2026-09-10',
+      category: '程序',
+      detail_intro: '时间线简介',
+      updates: [{ id: 11, recorded_at: '2026-09-10T04:30:00.000Z', body: '# 新进展\n\n正文' }],
+    },
+  });
+  assert.match(html, /2026\.09\.10 12:30 UTC\+8/);
+  assert.match(html, /新进展 正文/);
+  assert.match(html, /action="\/admin\/works\/7\/updates"/);
+  assert.match(html, /name="recordedAt" type="datetime-local"/);
+  assert.match(html, /action="\/admin\/works\/7\/updates\/11\/delete" data-delete-work-update/);
+  assert.match(workFormScript(), /确定删除这条更新记录吗/);
 });
 
 test('没有分组时作品表单明确提示先创建分组并禁止保存', () => {

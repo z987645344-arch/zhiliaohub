@@ -156,17 +156,13 @@ function validateWorkGallery(value) {
   return JSON.stringify(normalized);
 }
 
-function workRecord(input, maxBytes, database, existing = null) {
+function workRecord(input, database, existing = null) {
   const detailIntro = requiredText(input.detailIntro, '详情页简介', 500);
   const experienceUrl = validateExperienceUrl(input.experienceUrl ?? existing?.experience_url);
   const showOnTools = booleanFlag(input.showOnTools, Boolean(existing?.show_on_tools));
   if (showOnTools && !experienceUrl) {
     throw new ContentValidationError('在智能工具页显示作品时必须填写体验链接。');
   }
-  const versionLog = markdownBody(
-    input.versionLog ?? input.body ?? existing?.version_log ?? existing?.body,
-    maxBytes,
-  );
   const mainMediaType = validateMainMediaType(input.mainMediaType ?? existing?.main_media_type);
   const mainMediaPath = validateMediaPath(
     input.mainMediaPath ?? existing?.main_media_path,
@@ -180,8 +176,6 @@ function workRecord(input, maxBytes, database, existing = null) {
     category: validateCategory(input.category ?? existing?.category, database),
     summary: requiredText(input.summary ?? detailIntro, '摘要', 500),
     detailIntro,
-    body: versionLog,
-    versionLog,
     coverImage: validateMediaPath(
       input.coverImage ?? existing?.cover_image,
       '封面图',
@@ -201,6 +195,37 @@ function workRecord(input, maxBytes, database, existing = null) {
     mainMediaPath,
     gallery: validateWorkGallery(input.gallery ?? existing?.gallery),
   };
+}
+
+function workUpdateRecord(input, maxBytes) {
+  const localValue = requiredText(input.recordedAt, '记录时间', 40);
+  const match = localValue.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) throw new ContentValidationError('记录时间必须使用有效的日期和时间。');
+  const [, year, month, day, hour, minute, second = '00'] = match;
+  const utcMs = Date.UTC(
+    Number(year), Number(month) - 1, Number(day), Number(hour) - 8, Number(minute), Number(second),
+  );
+  const recordedAt = new Date(utcMs);
+  const roundTrip = new Date(recordedAt.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 19);
+  if (Number.isNaN(recordedAt.getTime())
+    || roundTrip !== `${year}-${month}-${day}T${hour}:${minute}:${second}`) {
+    throw new ContentValidationError('记录时间必须使用有效的日期和时间。');
+  }
+  return {
+    recordedAt: recordedAt.toISOString(),
+    body: markdownBody(input.body, maxBytes),
+  };
+}
+
+function workUpdatesMarkdown(updates) {
+  if (updates.length === 0) return '# 更新记录\n\n暂无更新记录。\n';
+  return updates.map((update) => {
+    const recordedAt = new Date(update.recorded_at);
+    const localTime = Number.isNaN(recordedAt.getTime())
+      ? String(update.recorded_at)
+      : `${new Date(recordedAt.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC+8`;
+    return `## ${localTime}\n\n${String(update.body).trimEnd()}\n`;
+  }).join('\n');
 }
 
 function validDate(value, label) {
@@ -255,6 +280,15 @@ class ContentService {
       SELECT * FROM works
       ORDER BY CASE WHEN display_order IS NULL THEN 1 ELSE 0 END, display_order ASC, work_date DESC, id DESC
     `).all();
+  }
+
+  listWorkUpdates(workId) {
+    return this.database.prepare(`
+      SELECT id, work_id, recorded_at, body, created_at
+      FROM work_updates
+      WHERE work_id = ?
+      ORDER BY recorded_at DESC, id DESC
+    `).all(Number(workId));
   }
 
   listCategories({ visibleOnly = false } = {}) {
@@ -353,7 +387,11 @@ class ContentService {
     const record = this.database.prepare('SELECT * FROM works WHERE id = ?').get(Number(id));
     if (!record) throw new ContentValidationError('作品不存在。', 404);
     const body = await fs.readFile(safeContentPath(this.config.contentDir, record.markdown_path, 'works'), 'utf8');
-    return { ...record, body, versionLog: record.version_log || body };
+    return {
+      ...record,
+      body,
+      updates: this.listWorkUpdates(record.id),
+    };
   }
 
   async getNote(id) {
@@ -365,22 +403,22 @@ class ContentService {
 
   async createWork(input) {
     return this.runSerializedUpdate('works:all', async () => {
-      const record = workRecord(input, this.config.contentMaxBytes, this.database);
+      const record = workRecord(input, this.database);
       record.slug = this.uniqueSlug('works', record.title);
       const relativePath = `works/${randomUUID()}.md`;
       const targetPath = safeContentPath(this.config.contentDir, relativePath, 'works');
       const now = new Date().toISOString();
 
-      await atomicWriteFile(targetPath, record.body);
+      await atomicWriteFile(targetPath, workUpdatesMarkdown([]));
       try {
         const result = this.database.prepare(`
           INSERT INTO works (
             title, slug, work_date, category, summary, detail_intro,
             cover_image, is_downloadable, download_file, experience_url,
             show_on_tools,
-            main_media_type, main_media_path, gallery, version_log,
+            main_media_type, main_media_path, gallery,
             markdown_path, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           record.title,
           record.slug,
@@ -396,7 +434,6 @@ class ContentService {
           record.mainMediaType,
           record.mainMediaPath,
           record.gallery,
-          record.versionLog,
           relativePath,
           now,
           now,
@@ -437,16 +474,14 @@ class ContentService {
   async updateWork(id, input) {
     return this.runSerializedUpdate('works:all', async () => {
       const existing = await this.getWork(id);
-      const record = workRecord(input, this.config.contentMaxBytes, this.database, existing);
-      const targetPath = safeContentPath(this.config.contentDir, existing.markdown_path, 'works');
-      await atomicWriteFile(targetPath, record.body);
+      const record = workRecord(input, this.database, existing);
       try {
         this.database.prepare(`
           UPDATE works SET
             title = ?, work_date = ?, category = ?, summary = ?, detail_intro = ?,
             cover_image = ?, is_downloadable = ?, download_file = ?, experience_url = ?,
             show_on_tools = ?,
-            main_media_type = ?, main_media_path = ?, gallery = ?, version_log = ?, updated_at = ?
+            main_media_type = ?, main_media_path = ?, gallery = ?, updated_at = ?
           WHERE id = ?
         `).run(
           record.title,
@@ -462,12 +497,10 @@ class ContentService {
           record.mainMediaType,
           record.mainMediaPath,
           record.gallery,
-          record.versionLog,
           new Date().toISOString(),
           Number(id),
         );
       } catch (error) {
-        await atomicWriteFile(targetPath, existing.body);
         throw error;
       }
       return this.getWork(id);
@@ -494,6 +527,65 @@ class ContentService {
         throw error;
       }
       return this.getNote(id);
+    });
+  }
+
+  async createWorkUpdate(workId, input) {
+    return this.runSerializedUpdate('works:all', async () => {
+      const work = await this.getWork(workId);
+      const record = workUpdateRecord(input, this.config.contentMaxBytes);
+      const now = new Date().toISOString();
+      const writeDatabase = this.database.transaction(() => {
+        const result = this.database.prepare(`
+          INSERT INTO work_updates (work_id, recorded_at, body, created_at)
+          VALUES (?, ?, ?, ?)
+        `).run(work.id, record.recordedAt, record.body, now);
+        this.database.prepare('UPDATE works SET updated_at = ? WHERE id = ?').run(now, work.id);
+        return result.lastInsertRowid;
+      });
+      const updateId = writeDatabase();
+      const targetPath = safeContentPath(this.config.contentDir, work.markdown_path, 'works');
+      try {
+        await atomicWriteFile(targetPath, workUpdatesMarkdown(this.listWorkUpdates(work.id)));
+      } catch (error) {
+        this.database.transaction(() => {
+          this.database.prepare('DELETE FROM work_updates WHERE id = ?').run(updateId);
+          this.database.prepare('UPDATE works SET updated_at = ? WHERE id = ?').run(work.updated_at, work.id);
+        })();
+        await atomicWriteFile(targetPath, work.body);
+        throw error;
+      }
+      return this.database.prepare('SELECT * FROM work_updates WHERE id = ?').get(updateId);
+    });
+  }
+
+  async deleteWorkUpdate(workId, updateId) {
+    return this.runSerializedUpdate('works:all', async () => {
+      const work = await this.getWork(workId);
+      const update = this.database.prepare(`
+        SELECT * FROM work_updates WHERE id = ? AND work_id = ?
+      `).get(Number(updateId), work.id);
+      if (!update) throw new ContentValidationError('更新记录不存在或不属于该作品。', 404);
+      const now = new Date().toISOString();
+      this.database.transaction(() => {
+        this.database.prepare('DELETE FROM work_updates WHERE id = ?').run(update.id);
+        this.database.prepare('UPDATE works SET updated_at = ? WHERE id = ?').run(now, work.id);
+      })();
+      const targetPath = safeContentPath(this.config.contentDir, work.markdown_path, 'works');
+      try {
+        await atomicWriteFile(targetPath, workUpdatesMarkdown(this.listWorkUpdates(work.id)));
+      } catch (error) {
+        this.database.transaction(() => {
+          this.database.prepare(`
+            INSERT INTO work_updates (id, work_id, recorded_at, body, created_at)
+            VALUES (?, ?, ?, ?, ?)
+          `).run(update.id, update.work_id, update.recorded_at, update.body, update.created_at);
+          this.database.prepare('UPDATE works SET updated_at = ? WHERE id = ?').run(work.updated_at, work.id);
+        })();
+        await atomicWriteFile(targetPath, work.body);
+        throw error;
+      }
+      return update;
     });
   }
 
@@ -572,4 +664,6 @@ module.exports = {
   validateCategorySlug,
   validateGallery,
   validateMediaPath,
+  workUpdateRecord,
+  workUpdatesMarkdown,
 };
