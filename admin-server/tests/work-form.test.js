@@ -53,7 +53,7 @@ test('编辑作品表单列出更新记录并为删除动作提供确认钩子',
   assert.match(html, /新进展 正文/);
   assert.match(html, /action="\/admin\/works\/7\/updates"/);
   assert.match(html, /name="recordedAt" type="datetime-local"/);
-  assert.match(html, /action="\/admin\/works\/7\/updates\/11\/delete" data-delete-work-update/);
+  assert.match(html, /action="\/admin\/works\/7\/updates\/11\/delete" data-work-update-action data-delete-work-update/);
   assert.match(workFormScript(), /确定删除这条更新记录吗/);
 });
 
@@ -75,6 +75,10 @@ test('作品表单脚本使用原生Canvas、Fetch和受CSRF保护的现有上�
   assert.match(script, /fetch\(uploadApi/);
   assert.match(script, /'X-CSRF-Token': csrfToken/);
   assert.match(script, /new FormData\(\)/);
+  assert.match(script, /mainFormDirty \|\| hasUnsavedUpload \|\| pendingUploads > 0/);
+  assert.match(script, /window\.addEventListener\('beforeunload'/);
+  assert.match(script, /form\.addEventListener\('invalid'/);
+  assert.match(script, /请先点上方“保存并发布”/);
   assert.doesNotMatch(script, /new\s+Cropper|jQuery|React/);
 });
 

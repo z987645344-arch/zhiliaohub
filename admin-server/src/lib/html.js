@@ -652,18 +652,19 @@ function workFormScript() {
   const status = form.querySelector('[data-upload-status]');
   const saveButton = form.querySelector('[data-save-work]');
   let pendingUploads = 0;
+  let mainFormDirty = false;
+  let hasUnsavedUpload = false;
+  let allowUnload = false;
 
-  document.querySelectorAll('[data-delete-work-update]').forEach((deleteForm) => {
-    deleteForm.addEventListener('submit', (event) => {
-      if (!window.confirm('确定删除这条更新记录吗？删除后将立即更新公开页面。')) {
-        event.preventDefault();
-      }
-    });
-  });
+  function localUploadStatus(name) {
+    return form.querySelector('[data-upload-local-status="' + name + '"]');
+  }
 
-  function setStatus(message, error = false) {
-    status.textContent = message;
-    status.classList.toggle('error', error);
+  function setStatus(message, error = false, localStatus = null) {
+    for (const target of new Set([status, localStatus].filter(Boolean))) {
+      target.textContent = message;
+      target.classList.toggle('error', error);
+    }
   }
 
   function setPending(delta) {
@@ -671,11 +672,59 @@ function workFormScript() {
     saveButton.disabled = pendingUploads > 0;
   }
 
-  async function uploadFile(file, directory) {
+  function mainFormHasUnsavedChanges() {
+    return mainFormDirty || hasUnsavedUpload || pendingUploads > 0;
+  }
+
+  function markMainFormDirty() {
+    mainFormDirty = true;
+  }
+
+  function setUpdateActionStatus(actionForm, message) {
+    const actionStatus = actionForm.querySelector('[data-work-update-status]');
+    if (!actionStatus) return;
+    actionStatus.textContent = message;
+    actionStatus.classList.add('error');
+  }
+
+  document.querySelectorAll('[data-work-update-action]').forEach((actionForm) => {
+    actionForm.addEventListener('submit', (event) => {
+      if (mainFormHasUnsavedChanges()) {
+        event.preventDefault();
+        setUpdateActionStatus(actionForm, '上方作品表单还有未保存的改动，请先点上方“保存并发布”。');
+        return;
+      }
+      if (actionForm.matches('[data-delete-work-update]')
+        && !window.confirm('确定删除这条更新记录吗？删除后将立即更新公开页面。')) {
+        event.preventDefault();
+      }
+    });
+  });
+
+  form.addEventListener('input', markMainFormDirty);
+  form.addEventListener('change', markMainFormDirty);
+
+  window.addEventListener('beforeunload', (event) => {
+    if (allowUnload || (!hasUnsavedUpload && pendingUploads === 0)) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
+  form.addEventListener('invalid', (event) => {
+    const field = event.target;
+    const label = field.labels && field.labels[0]
+      ? field.labels[0].textContent.trim()
+      : field.name || '表单字段';
+    const detail = field.validationMessage || '内容不符合要求';
+    setStatus('请检查“' + label + '”：' + detail + '。', true);
+    field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, true);
+
+  async function uploadFile(file, directory, localStatus) {
     const body = new FormData();
     body.append('file', file, file.name);
     setPending(1);
-    setStatus('正在上传 ' + file.name + '…');
+    setStatus('正在上传 ' + file.name + '…', false, localStatus);
     try {
       const response = await fetch(uploadApi, {
         method: 'POST',
@@ -685,7 +734,9 @@ function workFormScript() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || '上传失败（HTTP ' + response.status + '）。');
-      setStatus('已上传 ' + payload.originalName + ' · 保存作品后才会生效');
+      hasUnsavedUpload = true;
+      markMainFormDirty();
+      setStatus('已上传 ' + payload.originalName + ' · 保存作品后才会生效', false, localStatus);
       return {
         path: 'assets/works/' + directory + '/' + payload.storedName,
         previewUrl: '/uploads/' + encodeURIComponent(payload.storedName),
@@ -737,6 +788,7 @@ function workFormScript() {
   const cropUpload = form.querySelector('[data-upload-crop]');
   const coverValue = form.querySelector('[data-cover-value]');
   const coverPreview = form.querySelector('[data-cover-preview]');
+  const coverStatus = localUploadStatus('cover');
   const context = canvas.getContext('2d');
   const cropState = {
     image: null,
@@ -816,7 +868,7 @@ function workFormScript() {
   coverFile.addEventListener('change', () => {
     const file = coverFile.files[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) return setStatus('封面必须选择图片文件。', true);
+    if (!file.type.startsWith('image/')) return setStatus('封面必须选择图片文件。', true, coverStatus);
     if (cropState.objectUrl) URL.revokeObjectURL(cropState.objectUrl);
     cropState.objectUrl = URL.createObjectURL(file);
     const image = new Image();
@@ -839,9 +891,9 @@ function workFormScript() {
       };
       cropper.hidden = false;
       drawCropper();
-      setStatus('拖动选区内部调整位置，拖动四角按16:9缩放。');
+      setStatus('拖动选区内部调整位置，拖动四角按16:9缩放。', false, coverStatus);
     };
-    image.onerror = () => setStatus('无法读取所选封面图片。', true);
+    image.onerror = () => setStatus('无法读取所选封面图片。', true, coverStatus);
     image.src = cropState.objectUrl;
   });
 
@@ -905,7 +957,7 @@ function workFormScript() {
   canvas.addEventListener('pointercancel', stopDragging);
 
   cropUpload.addEventListener('click', async () => {
-    if (!cropState.image || !cropState.box) return setStatus('请先选择封面图片。', true);
+    if (!cropState.image || !cropState.box) return setStatus('请先选择封面图片。', true, coverStatus);
     const output = document.createElement('canvas');
     output.width = 1280;
     output.height = 720;
@@ -922,31 +974,32 @@ function workFormScript() {
       output.height,
     );
     const blob = await new Promise((resolve) => output.toBlob(resolve, 'image/webp', 0.9));
-    if (!blob) return setStatus('浏览器无法生成裁剪后的封面。', true);
+    if (!blob) return setStatus('浏览器无法生成裁剪后的封面。', true, coverStatus);
     try {
-      const result = await uploadFile(new File([blob], 'cover.webp', { type: 'image/webp' }), 'covers');
+      const result = await uploadFile(new File([blob], 'cover.webp', { type: 'image/webp' }), 'covers', coverStatus);
       coverValue.value = result.path;
       renderPreview(coverPreview, result, 'image', '当前作品封面', 'data-clear-cover');
     } catch (error) {
-      setStatus(error.message, true);
+      setStatus(error.message, true, coverStatus);
     }
   });
 
   const mainFile = form.querySelector('#mainMediaFile');
   const mainValue = form.querySelector('[data-main-value]');
   const mainPreview = form.querySelector('[data-main-preview]');
+  const mainStatus = localUploadStatus('main');
   mainFile.addEventListener('change', async () => {
     const file = mainFile.files[0];
     if (!file) return;
     const type = currentMainType();
-    if (type === 'image' && !file.type.startsWith('image/')) return setStatus('当前主媒体类型是图片，请选择图片文件。', true);
-    if (type === 'video' && !file.type.startsWith('video/')) return setStatus('当前主媒体类型是视频，请选择MP4或WebM。', true);
+    if (type === 'image' && !file.type.startsWith('image/')) return setStatus('当前主媒体类型是图片，请选择图片文件。', true, mainStatus);
+    if (type === 'video' && !file.type.startsWith('video/')) return setStatus('当前主媒体类型是视频，请选择MP4或WebM。', true, mainStatus);
     try {
-      const result = await uploadFile(file, 'main');
+      const result = await uploadFile(file, 'main', mainStatus);
       mainValue.value = result.path;
       renderPreview(mainPreview, result, type, '当前主媒体', 'data-clear-main');
     } catch (error) {
-      setStatus(error.message, true);
+      setStatus(error.message, true, mainStatus);
     } finally {
       mainFile.value = '';
     }
@@ -959,13 +1012,14 @@ function workFormScript() {
     if ((currentMainType() === 'video') !== isVideo) {
       mainValue.value = '';
       clearElement(mainPreview);
-      setStatus('主媒体类型已改变，请重新选择对应文件。');
+      setStatus('主媒体类型已改变，请重新选择对应文件。', false, mainStatus);
     }
   }));
 
   const galleryFiles = form.querySelector('#galleryFiles');
   const galleryValue = form.querySelector('[data-gallery-value]');
   const galleryList = form.querySelector('[data-gallery-list]');
+  const galleryStatus = localUploadStatus('gallery');
   function galleryPaths() {
     try { return JSON.parse(galleryValue.value || '[]'); } catch { return []; }
   }
@@ -994,16 +1048,16 @@ function workFormScript() {
     for (const file of galleryFiles.files) {
       const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : '';
       if (!type) {
-        setStatus('辅图只允许图片、MP4或WebM。', true);
+        setStatus('辅图只允许图片、MP4或WebM。', true, galleryStatus);
         continue;
       }
       try {
-        const result = await uploadFile(file, 'gallery');
+        const result = await uploadFile(file, 'gallery', galleryStatus);
         paths.push(result.path);
         galleryValue.value = JSON.stringify(paths);
         renderGalleryItem(result, type);
       } catch (error) {
-        setStatus(error.message, true);
+        setStatus(error.message, true, galleryStatus);
       }
     }
     galleryFiles.value = '';
@@ -1015,16 +1069,18 @@ function workFormScript() {
     const item = button.closest('[data-gallery-item]');
     galleryValue.value = JSON.stringify(galleryPaths().filter((path) => path !== item.dataset.galleryPath));
     item.remove();
+    markMainFormDirty();
   });
 
   const downloadUpload = form.querySelector('#downloadUpload');
   const downloadValue = form.querySelector('[data-download-value]');
   const downloadPreview = form.querySelector('[data-download-preview]');
+  const downloadStatus = localUploadStatus('download');
   downloadUpload.addEventListener('change', async () => {
     const file = downloadUpload.files[0];
     if (!file) return;
     try {
-      const result = await uploadFile(file, 'downloads');
+      const result = await uploadFile(file, 'downloads', downloadStatus);
       downloadValue.value = result.path;
       clearElement(downloadPreview);
       const name = document.createElement('span');
@@ -1033,7 +1089,7 @@ function workFormScript() {
       downloadPreview.append(name);
       addRemoveButton(downloadPreview, 'data-clear-download');
     } catch (error) {
-      setStatus(error.message, true);
+      setStatus(error.message, true, downloadStatus);
     } finally {
       downloadUpload.value = '';
     }
@@ -1043,14 +1099,17 @@ function workFormScript() {
     if (event.target.closest('[data-clear-cover]')) {
       coverValue.value = '';
       clearElement(coverPreview);
+      markMainFormDirty();
     }
     if (event.target.closest('[data-clear-main]')) {
       mainValue.value = '';
       clearElement(mainPreview);
+      markMainFormDirty();
     }
     if (event.target.closest('[data-clear-download]')) {
       downloadValue.value = '';
       clearElement(downloadPreview);
+      markMainFormDirty();
     }
   });
 
@@ -1058,7 +1117,11 @@ function workFormScript() {
     if (pendingUploads > 0) {
       event.preventDefault();
       setStatus('请等待当前上传完成后再保存。', true);
+      return;
     }
+    allowUnload = true;
+    hasUnsavedUpload = false;
+    mainFormDirty = false;
   });
 })();`;
 }

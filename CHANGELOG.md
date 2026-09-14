@@ -3,6 +3,17 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-14**
 
+## 2026-09-14 后台作品编辑三处验收返工（未提交，未打标签）
+
+- **前台深色适配**：`css/style.css` 将 `.version-log` 唯一一处硬编码浅色背景改为主题变量，并由 `.archive-page .version-log` 明确接管为档案页表面色；复核 `.version-timeline`、`.version-entry*`、`.version-log-empty` 及其子元素，其余颜色已经走现有主题变量，未引入新令牌。
+- **上传反馈就近显示**：`admin-server/src/views.js` 为 02A 封面裁剪、02B 主媒体、辅图多选、03 下载 ZIP 四个入口分别加入紧邻的 `role="status"`；`src/lib/html.js` 把上传中、成功与失败反馈同时写入对应位置和保留的底部总状态行。成功文案仍明确“保存作品后才会生效”。
+- **防丢改动**：主表单的任意 `input` / `change`、媒体移除操作、成功上传或仍在进行的上传均进入 dirty 判定；04 区添加/删除的独立表单发现这些状态时阻止提交，并在当前按钮旁提示先保存主表单。成功上传或上传进行中离开页面会触发 `beforeunload`；主表单通过 HTML5 校验并进入提交后解除。保存被 HTML5 校验拦下时，底部状态行写出未通过字段及浏览器校验原因，并滚动到该字段。
+- **04 区顺序**：添加记录表单移到历史记录列表之前；既有记录仍按原顺序展示，路由、CSRF 与删除确认不变。
+- **上一轮记录独立审核**：迁移 SQL 判定、`147/147` 测试数与边界描述均和 `96b5f94` 一致；原条目的 `16 文件、+524/-38` 实为“代码与测试”口径，完整提交还含 5 份记录文档，实际为 21 文件、+544/-45，已在原条目补清统计口径。原称时间线样式“沿用 v3.7 档案风格”过强，现明确为结构沿用但深色卡片背景漏接主题，本条完成返工。
+- **证据**：改动前完整 `npm test` 为 147/147；改动后为 149/149。`presentation.test.js` 新增四入口就近状态位与“添加表单在列表之前”两项断言；`npm run check`、相关脚本独立解析与 `git diff --check` 通过。
+- **逐文件改动**（6 文件，+156/-37）：`CHANGELOG.md` +13/-2；`admin-server/src/lib/html.js` +93/-30；`admin-server/src/views.js` +6/-2；`admin-server/tests/presentation.test.js` +37/-0；`admin-server/tests/work-form.test.js` +5/-1；`css/style.css` +2/-2。
+- **未验证**：未在真机或真实浏览器复核深色视觉、离开页面原生提示与实际鼠标/触摸操作；按任务约定由用户验收，不在本条代报通过。
+
 ## 2026-09-14 作品「更新记录」改为可追加/删除的时间线（未打标签，待生产副本迁移验证）
 
 - **用户需求**：「希望是可以做成不断添加的形式，也可以删除历史；编写记录需要"记录时间"、"记录正文"，给外人看到一种长期的循序渐进的过程。」
@@ -10,9 +21,9 @@
 - **迁移 `works-update-timeline-v1`**（走 `content_migrations` 幂等模式）：对 `TRIM(COALESCE(version_log,'')) <> ''` 且尚无 `work_updates` 的作品，插入一条 `recorded_at = works.updated_at`、`body = version_log` 原文；`works` 行数与各 `updated_at` 不变。⚠️ **生产库有真实数据，部署前须由统筹师在生产库副本上跑一次迁移核对条数。**
 - **旧列冻结而非删除**：`works.version_log` 保留、历史值不清、不再读写；`content-service`、作品模板、表单三处的 `version_log`/`versionLog` 引用归零。作品 Markdown 文件降为派生快照——迁移时不改写旧文件，首次时间线增删后才由 `work_updates` 重建（无条目写"暂无更新记录"），任何渲染不读它。安全审查器曾两次拦下"冻结旧列"一步，Codex 核实列可空、旧值不动、旧 Markdown 不在迁移时覆盖后，指挥师明确批准。
 - **后台**：表单 04 分区改为时间线列表 + 添加（`datetime-local`，可回填）+ 逐条删除（`confirm()`，走既有 `/admin/work-form.js`，CSP 不变）；不做编辑。新路由 `POST /admin/works/:id/updates`、`POST /admin/works/:id/updates/:updateId/delete`，`requireAdmin` + `requireCsrf`，跨作品 `updateId` 返回 404。增删后立即 `publishAll()` 并推进 `works.updated_at`。新建作品时该分区提示"先保存作品，再回来逐条添加"。
-- **前台**：`templates/works.js` 更新记录区改为按 `recorded_at` 倒序、同时间按 `id` 倒序的时间线，时间走 `formatDateTime`（UTC+8）；无条目保留空状态；样式沿用 `v3.7` 档案风格。
+- **前台**：`templates/works.js` 更新记录区改为按 `recorded_at` 倒序、同时间按 `id` 倒序的时间线，时间走 `formatDateTime`（UTC+8）；无条目保留空状态；时间线结构沿用 `v3.7` 档案风格，但当时漏掉深色卡片背景的主题接管，已在其后返工条目修正。
 - **证据**：`npm test` 147/147（指挥师本机复跑同数）。新增证伪测试：旧库 2 有 1 空 → 恰 2 条且重跑不变；新建作品不填记录可保存；旧 `versionLog` 输入被忽略；跨作品删除经真实 HTTP 返回 404 且未删；删除作品后级联清空；前台 HTML 顺序断言。
-- **逐文件改动**（16 文件，+524/-38）：`admin-server/data/schema.sql`、`src/db.js`、`src/services/content-service.js`、`src/services/publish-service.js`、`src/templates/works.js`、`src/views.js`、`src/app.js`、`src/lib/html.js`、`css/style.css`，以及 7 个测试文件。
+- **代码与测试改动**（16 文件，+524/-38）：`admin-server/data/schema.sql`、`src/db.js`、`src/services/content-service.js`、`src/services/publish-service.js`、`src/templates/works.js`、`src/views.js`、`src/app.js`、`src/lib/html.js`、`css/style.css`，以及 7 个测试文件；连同 `CHANGELOG.md`、两份 README 与两份指挥师文档，`96b5f94` 完整提交为 21 文件、+544/-45。
 - 代码由 Codex 程序员完成，因其额度用尽未写 README/CHANGELOG；本条与 README 两处描述由指挥师补写，代码未改动。**未真机验证**。
 
 ## Git标签 v3.9 - 2026-09-14

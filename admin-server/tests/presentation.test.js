@@ -9,6 +9,7 @@ const {
 const { formatCommentTime } = require('../src/templates/feedback');
 const { renderNotesList } = require('../src/templates/notes');
 const { GENERATED_MARKER } = require('../src/templates/shared');
+const { workFormPage } = require('../src/views');
 
 test('展示时间固定为UTC+8，正确处理跨日、带偏移与SQLite时间', () => {
   assert.equal(formatDateTime('2026-09-11T18:20:00Z'), '2026.09.12 02:20 UTC+8');
@@ -32,6 +33,42 @@ test('心得空列表仍保留发布标记、主标题与可用的下一步入�
 test('作品文件上传成功后明确提示仍需保存作品', () => {
   const script = workFormScript();
   assert.match(script, /已上传 .*保存作品后才会生效/);
+});
+
+test('作品表单四个上传入口各自在操作位置旁提供状态反馈', () => {
+  const html = workFormPage({
+    csrfToken: 'csrf-test-token',
+    categories: [{ name: '程序', is_visible: 1 }],
+  });
+  for (const [inputId, statusName] of [
+    ['coverFile', 'cover'],
+    ['mainMediaFile', 'main'],
+    ['galleryFiles', 'gallery'],
+    ['downloadUpload', 'download'],
+  ]) {
+    assert.match(
+      html,
+      new RegExp(`id="${inputId}"[\\s\\S]*?data-upload-local-status="${statusName}" role="status"`),
+      `${inputId} 后应有自己的就近状态位。`,
+    );
+  }
+  assert.equal((html.match(/data-upload-local-status=/g) || []).length, 4);
+});
+
+test('作品更新记录的添加表单排在历史列表之前', () => {
+  const html = workFormPage({
+    csrfToken: 'csrf-test-token',
+    categories: [{ name: '程序', is_visible: 1 }],
+    record: {
+      id: 7,
+      category: '程序',
+      updates: [{ id: 11, recorded_at: '2026-09-10T04:30:00.000Z', body: '一条记录' }],
+    },
+  });
+  const addFormAt = html.indexOf('action="/admin/works/7/updates" data-work-update-action');
+  const listAt = html.indexOf('class="work-update-list"');
+  assert.ok(addFormAt >= 0, '应渲染添加记录表单。');
+  assert.ok(listAt > addFormAt, '添加记录表单应排在历史记录列表之前。');
 });
 
 test('后台移动导航吸顶折叠且退出登录表单仍保留在菜单内', () => {

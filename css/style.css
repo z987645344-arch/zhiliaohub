@@ -1865,7 +1865,7 @@ canvas {
   padding: clamp(30px, 6vw, 68px);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: rgba(239, 242, 243, 0.5);
+  background: var(--paper-deep);
   color: var(--ink);
 }
 
@@ -3097,7 +3097,7 @@ html:has(.archive-page) { color-scheme: dark; scrollbar-color: var(--archive-mut
 .archive-page .showcase-right h1 { line-height: 1.2; }
 .archive-page .showcase-meta span, .archive-page .detail-meta span, .archive-page .detail-meta time { background: transparent; border-color: var(--line); color: var(--archive-muted); }
 .archive-page .note-detail { max-width: 920px; padding-block: 56px; }
-.archive-page .note-placeholder, .archive-page .version-log { max-width: 72ch; font-size: 17px; line-height: 1.95; color: var(--archive-muted); }
+.archive-page .note-placeholder, .archive-page .version-log { max-width: 72ch; background: var(--archive-surface); font-size: 17px; line-height: 1.95; color: var(--archive-muted); }
 .archive-page .version-entry { border-left-color: var(--line); }
 .archive-page .version-entry::before { background: var(--acid); }
 .archive-page .version-entry time { color: var(--archive-muted); }

@@ -186,10 +186,10 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '', not
   }).join('');
   const updates = Array.isArray(record.updates) ? record.updates : [];
   const updateItems = updates.length
-    ? updates.map((update) => `<article class="work-update-admin"><div><time datetime="${escapeHtml(update.recorded_at)}">${escapeHtml(formatDateTime(update.recorded_at))}</time><p>${escapeHtml(updateSummary(update.body))}</p></div><form method="post" action="/admin/works/${record.id}/updates/${update.id}/delete" data-delete-work-update><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="button-danger compact-button">删除这条记录</button></form></article>`).join('')
+    ? updates.map((update) => `<article class="work-update-admin"><div><time datetime="${escapeHtml(update.recorded_at)}">${escapeHtml(formatDateTime(update.recorded_at))}</time><p>${escapeHtml(updateSummary(update.body))}</p></div><form method="post" action="/admin/works/${record.id}/updates/${update.id}/delete" data-work-update-action data-delete-work-update><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="button-danger compact-button">删除这条记录</button><p class="upload-status" data-work-update-status role="status" aria-live="polite"></p></form></article>`).join('')
     : '<p class="empty-state">还没有更新记录。保存作品后，可以从这里逐条补充进展。</p>';
   const updatesSection = isEdit
-    ? `<section class="form-section work-updates-admin" id="work-updates" aria-labelledby="work-updates-title"><h2 id="work-updates-title"><span class="section-number">04</span>更新记录</h2><p class="hint">记录会按时间倒序展示给访客。历史记录可删除；需要修改时，请删除后重新添加。</p><div class="work-update-list">${updateItems}</div><form method="post" action="/admin/works/${record.id}/updates"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><div class="form-grid"><div><label for="updateRecordedAt">记录时间</label><input id="updateRecordedAt" name="recordedAt" type="datetime-local" value="${currentUtc8DateTimeLocal()}" required></div></div><label for="updateBody">记录正文</label><textarea id="updateBody" name="body" required></textarea><button type="submit">添加记录并发布</button></form></section>`
+    ? `<section class="form-section work-updates-admin" id="work-updates" aria-labelledby="work-updates-title"><h2 id="work-updates-title"><span class="section-number">04</span>更新记录</h2><p class="hint">记录会按时间倒序展示给访客。历史记录可删除；需要修改时，请删除后重新添加。</p><form method="post" action="/admin/works/${record.id}/updates" data-work-update-action><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><div class="form-grid"><div><label for="updateRecordedAt">记录时间</label><input id="updateRecordedAt" name="recordedAt" type="datetime-local" value="${currentUtc8DateTimeLocal()}" required></div></div><label for="updateBody">记录正文</label><textarea id="updateBody" name="body" required></textarea><button type="submit">添加记录并发布</button><p class="upload-status" data-work-update-status role="status" aria-live="polite"></p></form><div class="work-update-list">${updateItems}</div></section>`
     : '<section class="form-section work-updates-admin" id="work-updates"><h2><span class="section-number">04</span>更新记录</h2><p class="empty-state">先保存作品，再回来逐条添加带时间的更新记录。</p></section>';
   const deleteForm = isEdit
     ? `<form class="danger-zone" method="post" action="/admin/works/${record.id}/delete"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><p class="notice warning">删除会同时移除这件作品、正文、详情页和公开媒体，无法在此撤销。请先确认已保留需要的内容。</p><button type="submit" class="button-danger">删除作品</button></form>`
@@ -212,6 +212,7 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '', not
           <p class="hint">选择图片后，拖动选区内部调整位置，拖动四角按16:9缩放，再上传裁剪结果。</p>
           <label for="coverFile">选择封面图片</label><input id="coverFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif">
           <div class="cropper" data-cropper hidden><canvas data-cover-canvas></canvas><button type="button" data-upload-crop>上传裁剪封面</button></div>
+          <p class="upload-status" data-upload-local-status="cover" role="status" aria-live="polite"></p>
           <input type="hidden" name="coverImage" value="${escapeHtml(coverImage)}" data-cover-value>
           <div class="upload-preview" data-cover-preview>${mediaPreview(coverImage, 'image', '当前作品封面')}${coverImage ? '<button type="button" class="button-danger compact-button" data-clear-cover>移除</button>' : ''}</div>
         </fieldset>
@@ -219,9 +220,11 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '', not
         <fieldset class="form-section"><legend><span class="section-number">02B</span>打开后的展示</legend><p class="hint">主图或视频放在详情页最前，辅图供访客切换查看。</p>
           <div class="choice-row" role="group" aria-label="主媒体类型"><label class="choice"><input type="radio" name="mainMediaType" value="image"${mainType === 'image' ? ' checked' : ''}> 图片</label><label class="choice"><input type="radio" name="mainMediaType" value="video"${mainType === 'video' ? ' checked' : ''}> 视频</label></div>
           <label for="mainMediaFile">主图或主视频</label><input id="mainMediaFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif,video/mp4,video/webm">
+          <p class="upload-status" data-upload-local-status="main" role="status" aria-live="polite"></p>
           <input type="hidden" name="mainMediaPath" value="${escapeHtml(mainMediaPath)}" data-main-value>
           <div class="upload-preview" data-main-preview>${mediaPreview(mainMediaPath, mainType, '当前主媒体')}${mainMediaPath ? '<button type="button" class="button-danger compact-button" data-clear-main>移除</button>' : ''}</div>
           <label for="galleryFiles">辅图/辅视频（可多选）</label><input id="galleryFiles" type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,image/avif,video/mp4,video/webm">
+          <p class="upload-status" data-upload-local-status="gallery" role="status" aria-live="polite"></p>
           <input type="hidden" name="gallery" value="${escapeHtml(JSON.stringify(gallery))}" data-gallery-value>
           <div class="gallery-grid" data-gallery-list>${galleryItems}</div>
         </fieldset></div>
@@ -229,6 +232,7 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '', not
         <fieldset class="form-section" id="work-access"><legend><span class="section-number">03</span>访问与下载</legend><p class="hint">只开放已经准备好的入口。勾选智能工具展示时，需要填写有效的体验链接。</p>
           <input type="hidden" name="isDownloadable" value="0"><label class="choice checkbox-choice"><input type="checkbox" name="isDownloadable" value="1"${record.is_downloadable ? ' checked' : ''}> 允许访客下载</label>
           <label for="downloadUpload">ZIP压缩包</label><input id="downloadUpload" type="file" accept=".zip,application/zip,application/x-zip-compressed">
+          <p class="upload-status" data-upload-local-status="download" role="status" aria-live="polite"></p>
           <input type="hidden" name="downloadFile" value="${escapeHtml(downloadFile)}" data-download-value>
           <div class="upload-preview" data-download-preview>${downloadFile ? `<span class="upload-filename">${escapeHtml(assetFilename(downloadFile))}</span><button type="button" class="button-danger compact-button" data-clear-download>移除</button>` : ''}</div>
           <label for="experienceUrl">体验链接</label><input id="experienceUrl" name="experienceUrl" type="url" value="${escapeHtml(record.experience_url || '')}" maxlength="2000" placeholder="粘贴完整的体验链接">
