@@ -622,7 +622,7 @@ function workFormScript() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || '上传失败（HTTP ' + response.status + '）。');
-      setStatus('已上传：' + payload.originalName);
+      setStatus('已上传 ' + payload.originalName + ' · 保存作品后才会生效');
       return {
         path: 'assets/works/' + directory + '/' + payload.storedName,
         previewUrl: '/uploads/' + encodeURIComponent(payload.storedName),

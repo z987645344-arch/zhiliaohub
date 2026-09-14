@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { formatDateTime } = require('../src/lib/html');
+const { formatDateTime, workFormScript } = require('../src/lib/html');
 const { formatCommentTime } = require('../src/templates/feedback');
 const { renderNotesList } = require('../src/templates/notes');
 const { GENERATED_MARKER } = require('../src/templates/shared');
@@ -22,4 +22,9 @@ test('心得空列表仍保留发布标记、主标题与可用的下一步入�
   assert.match(html, /href="works.html">浏览作品/);
   assert.equal((html.match(/<h1\b/g) || []).length, 1);
   assert.doesNotMatch(html, /<article class="diary-card">/);
+});
+
+test('作品文件上传成功后明确提示仍需保存作品', () => {
+  const script = workFormScript();
+  assert.match(script, /已上传 .*保存作品后才会生效/);
 });
