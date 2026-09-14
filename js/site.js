@@ -139,41 +139,10 @@
 
   document.querySelectorAll("[data-work-slider]").forEach((slider) => {
     const track = slider.querySelector("[data-work-track]");
-    const previous = slider.querySelector("[data-scroll-prev]");
-    const next = slider.querySelector("[data-scroll-next]");
-    if (!track || !previous || !next) return;
+    if (!track) return;
 
     const edgeTolerance = 4;
     const maximumScroll = () => Math.max(0, track.scrollWidth - track.clientWidth);
-    const setControlState = (control, disabled) => {
-      control.disabled = disabled;
-      control.setAttribute("aria-disabled", String(disabled));
-    };
-    const updateControls = () => {
-      const maximum = maximumScroll();
-      setControlState(previous, maximum <= edgeTolerance || track.scrollLeft <= edgeTolerance);
-      setControlState(next, maximum <= edgeTolerance || track.scrollLeft >= maximum - edgeTolerance);
-    };
-    const scrollDistance = () => {
-      const cards = track.querySelectorAll(".portfolio-card");
-      if (cards.length > 1) return Math.max(1, cards[1].offsetLeft - cards[0].offsetLeft);
-      return Math.max(1, track.clientWidth);
-    };
-    const scrollByCard = (direction) => {
-      track.scrollBy({
-        left: scrollDistance() * direction,
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-      });
-    };
-
-    previous.addEventListener("click", () => scrollByCard(-1));
-    next.addEventListener("click", () => scrollByCard(1));
-
-    let scrollFrame = 0;
-    track.addEventListener("scroll", () => {
-      cancelAnimationFrame(scrollFrame);
-      scrollFrame = requestAnimationFrame(updateControls);
-    }, { passive: true });
 
     track.addEventListener("wheel", (event) => {
       const maximum = maximumScroll();
@@ -200,7 +169,6 @@
         suppressClick = true;
         window.setTimeout(() => { suppressClick = false; }, 0);
       }
-      updateControls();
     };
 
     track.addEventListener("pointerdown", (event) => {
@@ -228,15 +196,6 @@
       event.stopPropagation();
     }, true);
 
-    if ("ResizeObserver" in window) {
-      const observer = new ResizeObserver(updateControls);
-      observer.observe(track);
-      track.querySelectorAll(".portfolio-card").forEach((card) => observer.observe(card));
-    } else {
-      window.addEventListener("resize", updateControls);
-    }
-    window.addEventListener("load", updateControls, { once: true });
-    updateControls();
   });
 
   document.querySelectorAll("[data-unavailable-action]").forEach((control) => {

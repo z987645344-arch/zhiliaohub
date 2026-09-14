@@ -3,6 +3,16 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-14**
 
+## 2026-09-14 v3.11 候选 —— 版本升：更新记录超过 5 条折叠为新交互；单卡宽度、去箭头、封面 16:9 为纯修，随最高档
+
+- **单卡保持卡片宽度**：删除四处 `data-card-count="1"` 撑满规则；全仓核对后确认 `data-card-count` 已无其它运行时消费者，模板属性一并移除，单个作品不再横跨整行。
+- **横向浏览简化**：作品分组模板移除左右箭头和三列 `.work-slider-shell` 外壳；`js/site.js` 的守卫改为 `if (!track) return;`，只删除按钮查询、控制状态与其 resize/scroll 更新，轨道的横向滚动、scroll snap、滚轮转换和 pointer 拖拽全部保留。分组页原本使用普通网格，不受按钮移除影响。
+- **封面比例统一**：`.portfolio-cover` 改为 `aspect-ratio: 16 / 9`，删除封面及图片的两处 `min-height: 230px`；卡片链接的桌面 `470px` 与窄屏 `440px` 强制最小高度均删除，改由 16:9 封面和正文自然撑高。230px 装饰圆未动；featured 卡片继续共用同一封面比例；详情页占位本身已有 16:9 舞台和 `min-height: 0`，保持比例不变。
+- **更新记录折叠**：前台详情与后台 04 区统一直接渲染前 5 条，第 6 条起进入原生 `<details>`；摘要显示“展开更新详情（还有 N 条）”。5 条及以下不输出折叠结构；前台样式使用 `.archive-page` 既有主题变量，后台沿用 `.work-updates-admin` 变量体系，零 JavaScript、无新颜色令牌。
+- **证据**：`presentation.test.js` 新增“无左右箭头/无单卡标记”和前后台 5/6 条边界断言；`publish-service.test.js` 同步锁定轨道仍生成且按钮/标记不再输出。完整 `npm test` 为 151/151（基线 149），`npm run check`、涉及 JavaScript 的 `node --check` 与 `git diff --check` 通过。
+- **逐文件改动**：`CHANGELOG.md` +10/-0、`admin-server/src/lib/html.js` +5/-0、`admin-server/src/templates/works.js` +9/-3、`admin-server/src/views.js` +7/-1、`admin-server/tests/presentation.test.js` +39/-0、`admin-server/tests/publish-service.test.js` +2/-1、`css/style.css` +30/-66、`js/site.js` +1/-42；合计 8 个文件 +103/-113。
+- **未验证**：桌面与 390px 视觉、真机拖拽手感由用户验收，本条不代报通过。
+
 ## 2026-09-14 后台作品编辑三处验收返工（未提交，未打标签）
 
 - **前台深色适配**：`css/style.css` 将 `.version-log` 唯一一处硬编码浅色背景改为主题变量，并由 `.archive-page .version-log` 明确接管为档案页表面色；复核 `.version-timeline`、`.version-entry*`、`.version-log-empty` 及其子元素，其余颜色已经走现有主题变量，未引入新令牌。

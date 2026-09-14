@@ -429,7 +429,8 @@ test('一级页每组按更新时间只显示最新4条，二级页保留该分�
   assert.doesNotMatch(listHtml, /影视作品1/);
   for (const index of [2, 3, 4, 5]) assert.match(listHtml, new RegExp(`影视作品${index}`));
   assert.match(listHtml, /5 ITEMS \/ LATEST 4/);
-  assert.match(listHtml, /data-card-count="4"/);
+  assert.match(listHtml, /class="work-slider-track" data-work-track/);
+  assert.doesNotMatch(listHtml, /data-card-count|work-slider-arrow/);
   assert.match(listHtml, /生活类作品还在路上/);
 
   const categoryHtml = renderWorkCategory(categories[1], works);

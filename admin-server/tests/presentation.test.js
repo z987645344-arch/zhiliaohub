@@ -9,6 +9,7 @@ const {
 const { formatCommentTime } = require('../src/templates/feedback');
 const { renderNotesList } = require('../src/templates/notes');
 const { GENERATED_MARKER } = require('../src/templates/shared');
+const { renderWorkDetail, renderWorksList } = require('../src/templates/works');
 const { workFormPage } = require('../src/views');
 
 test('展示时间固定为UTC+8，正确处理跨日、带偏移与SQLite时间', () => {
@@ -69,6 +70,44 @@ test('作品更新记录的添加表单排在历史列表之前', () => {
   const listAt = html.indexOf('class="work-update-list"');
   assert.ok(addFormAt >= 0, '应渲染添加记录表单。');
   assert.ok(listAt > addFormAt, '添加记录表单应排在历史记录列表之前。');
+});
+
+test('作品列表不再输出左右箭头且单卡不携带撑满标记', () => {
+  const html = renderWorksList(
+    [{ name: '程序', slug: 'program', kicker: 'PROGRAM', intro: '程序作品', empty_text: '暂无作品' }],
+    [{ id: 1, slug: 'only-work', title: '唯一作品', category: '程序', detail_intro: '简介' }],
+  );
+  assert.match(html, /class="work-slider-track" data-work-track/);
+  assert.doesNotMatch(html, /work-slider-arrow|data-scroll-prev|data-scroll-next|data-card-count/);
+});
+
+test('前后台更新记录超过5条时只折叠其余条目', () => {
+  const updates = Array.from({ length: 6 }, (_, index) => ({
+    id: index + 1,
+    recorded_at: `2026-09-${String(14 - index).padStart(2, '0')}T04:30:00.000Z`,
+    body: `记录 ${index + 1}`,
+    htmlBody: `<p>记录 ${index + 1}</p>`,
+  }));
+  const work = {
+    id: 7,
+    slug: 'timeline-work',
+    title: '时间线作品',
+    category: '程序',
+    detail_intro: '简介',
+  };
+  const categories = [{ name: '程序', is_visible: 1 }];
+  const frontSix = renderWorkDetail(work, updates);
+  const adminSix = workFormPage({ csrfToken: 'csrf-test-token', categories, record: { ...work, updates } });
+  const frontFive = renderWorkDetail(work, updates.slice(0, 5));
+  const adminFive = workFormPage({ csrfToken: 'csrf-test-token', categories, record: { ...work, updates: updates.slice(0, 5) } });
+
+  for (const html of [frontSix, adminSix]) {
+    assert.equal((html.match(/<details\b/g) || []).length, 1);
+    assert.match(html, /<summary>展开更新详情（还有 1 条）<\/summary>/);
+  }
+  for (const html of [frontFive, adminFive]) {
+    assert.equal((html.match(/<details\b/g) || []).length, 0);
+  }
 });
 
 test('后台移动导航吸顶折叠且退出登录表单仍保留在菜单内', () => {

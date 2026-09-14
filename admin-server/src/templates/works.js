@@ -49,9 +49,9 @@ function renderCategorySection(category, works) {
   const cards = latestWorks.map((work, index) => renderWorkCard(work, index, 3)).join('\n              ');
   const archiveLabel = `${allCategoryWorks.length} ITEMS / LATEST ${latestWorks.length}`;
   const body = latestWorks.length
-    ? `<div class="work-slider-shell"><button class="work-slider-arrow work-slider-arrow-prev" type="button" data-scroll-prev aria-label="向左浏览${category.name}作品" aria-disabled="true">←</button><div class="work-slider-track" data-work-track data-card-count="${latestWorks.length}" tabindex="0" aria-label="${category.name}最新作品，可横向滑动">
+    ? `<div class="work-slider-track" data-work-track tabindex="0" aria-label="${category.name}最新作品，可横向滑动">
               ${cards}
-            </div><button class="work-slider-arrow work-slider-arrow-next" type="button" data-scroll-next aria-label="向右浏览${category.name}作品" aria-disabled="true">→</button></div>`
+            </div>`
     : `<div class="work-category-empty"><p>${escapeHtml(category.empty_text)}</p></div>`;
   return `<section class="work-category-block" data-work-slider aria-labelledby="${headingId}">
           <div class="work-category-head"><div><p class="work-category-kicker">${escapeHtml(category.kicker)}</p><h2 id="${headingId}">${escapeHtml(category.name)}</h2><span>${archiveLabel}</span></div><a class="work-category-access" href="works-category-${category.slug}.html">查看全部<span aria-hidden="true">↗</span></a></div>
@@ -138,8 +138,14 @@ function renderWorkDetail(work, updates = [], index = 0) {
   const sortedUpdates = [...updates].sort((left, right) => (
     String(right.recorded_at).localeCompare(String(left.recorded_at)) || Number(right.id) - Number(left.id)
   ));
+  const renderUpdate = (update) => `<article class="version-entry"><time datetime="${escapeHtml(update.recorded_at)}">${escapeHtml(formatDateTime(update.recorded_at))}</time><div class="version-entry-body">${update.htmlBody}</div></article>`;
+  const visibleUpdates = sortedUpdates.slice(0, 5);
+  const hiddenUpdates = sortedUpdates.slice(5);
+  const hiddenUpdatesMarkup = hiddenUpdates.length
+    ? `<details class="version-more"><summary>展开更新详情（还有 ${hiddenUpdates.length} 条）</summary><div class="version-timeline version-timeline-overflow">${hiddenUpdates.map(renderUpdate).join('')}</div></details>`
+    : '';
   const updatesMarkup = sortedUpdates.length
-    ? `<div class="version-timeline">${sortedUpdates.map((update) => `<article class="version-entry"><time datetime="${escapeHtml(update.recorded_at)}">${escapeHtml(formatDateTime(update.recorded_at))}</time><div class="version-entry-body">${update.htmlBody}</div></article>`).join('')}</div>`
+    ? `<div class="version-timeline">${visibleUpdates.map(renderUpdate).join('')}${hiddenUpdatesMarkup}</div>`
     : '<p class="version-log-empty">还没有更新记录。之后的调整与新进展会记在这里。</p>';
   return page({
     title: work.title,

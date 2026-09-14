@@ -185,8 +185,14 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '', not
     return `<div class="gallery-item" data-gallery-item data-gallery-path="${escapeHtml(item)}">${preview}<span>${escapeHtml(filename)}</span><button type="button" class="button-danger compact-button" data-remove-gallery>移除</button></div>`;
   }).join('');
   const updates = Array.isArray(record.updates) ? record.updates : [];
+  const renderUpdateItem = (update) => `<article class="work-update-admin"><div><time datetime="${escapeHtml(update.recorded_at)}">${escapeHtml(formatDateTime(update.recorded_at))}</time><p>${escapeHtml(updateSummary(update.body))}</p></div><form method="post" action="/admin/works/${record.id}/updates/${update.id}/delete" data-work-update-action data-delete-work-update><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="button-danger compact-button">删除这条记录</button><p class="upload-status" data-work-update-status role="status" aria-live="polite"></p></form></article>`;
+  const visibleUpdates = updates.slice(0, 5);
+  const hiddenUpdates = updates.slice(5);
+  const hiddenUpdatesMarkup = hiddenUpdates.length
+    ? `<details class="work-update-more"><summary>展开更新详情（还有 ${hiddenUpdates.length} 条）</summary>${hiddenUpdates.map(renderUpdateItem).join('')}</details>`
+    : '';
   const updateItems = updates.length
-    ? updates.map((update) => `<article class="work-update-admin"><div><time datetime="${escapeHtml(update.recorded_at)}">${escapeHtml(formatDateTime(update.recorded_at))}</time><p>${escapeHtml(updateSummary(update.body))}</p></div><form method="post" action="/admin/works/${record.id}/updates/${update.id}/delete" data-work-update-action data-delete-work-update><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="button-danger compact-button">删除这条记录</button><p class="upload-status" data-work-update-status role="status" aria-live="polite"></p></form></article>`).join('')
+    ? `${visibleUpdates.map(renderUpdateItem).join('')}${hiddenUpdatesMarkup}`
     : '<p class="empty-state">还没有更新记录。保存作品后，可以从这里逐条补充进展。</p>';
   const updatesSection = isEdit
     ? `<section class="form-section work-updates-admin" id="work-updates" aria-labelledby="work-updates-title"><h2 id="work-updates-title"><span class="section-number">04</span>更新记录</h2><p class="hint">记录会按时间倒序展示给访客。历史记录可删除；需要修改时，请删除后重新添加。</p><form method="post" action="/admin/works/${record.id}/updates" data-work-update-action><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><div class="form-grid"><div><label for="updateRecordedAt">记录时间</label><input id="updateRecordedAt" name="recordedAt" type="datetime-local" value="${currentUtc8DateTimeLocal()}" required></div></div><label for="updateBody">记录正文</label><textarea id="updateBody" name="body" required></textarea><button type="submit">添加记录并发布</button><p class="upload-status" data-work-update-status role="status" aria-live="polite"></p></form><div class="work-update-list">${updateItems}</div></section>`

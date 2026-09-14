@@ -587,6 +587,11 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     .work-update-admin p { margin: 8px 0 0; color: var(--ink-soft); }
     .work-update-admin form { margin: 0; flex: 0 0 auto; }
     .work-updates-admin textarea { min-height: 180px; font-family: var(--font-mono); }
+    .work-update-more { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+    .work-update-more summary { padding: var(--space-2); color: var(--acid); cursor: pointer; font-weight: 700; }
+    .work-update-more summary::marker { color: var(--acid); }
+    .work-update-more[open] summary { border-bottom: 1px solid var(--line); }
+    .work-update-more .work-update-admin { margin: var(--space-2); }
     .save-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding-block: var(--space-3); border-top: 1px solid var(--line); }
     .save-bar button { margin: 0; }
     .save-bar p { color: var(--ink-soft); font-size: 13px; }
