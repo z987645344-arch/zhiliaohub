@@ -54,6 +54,7 @@ zhiliaohub/
 ├── assets/
 │   ├── hero-oc-rain-alley.webp # 首页主视觉
 │   ├── works-oc-creative-passage.webp # 作品页栏目插画
+│   ├── errors/                  # 静态 403/404 页，Nginx error_page 内部跳转
 │   └── works/                   # 后台发布的作品媒体副本
 │       ├── covers/              # 16:9封面
 │       ├── main/                # 主图或主视频
@@ -128,7 +129,7 @@ zhiliaohub/
 | `index.html` | 站点首页与视觉入口 | 站点名称、标语、作品/心得入口、OC 都市雨巷插画、Canvas 雨雾开屏 | 登录、动态数据、远程内容 |
 | `works.html` | 多作品展示一级索引 | 按**数据库中已创建的分组**分区（默认 0 个、由管理员自建），各组按更新时间显示最多4个最新作品；横向滚动、箭头和空状态均由静态标记与共享CSS/JS完成 | 运行时动态请求、后台筛选接口、知天业务代码或真实域名 |
 | `works-category-<slug>.html` | 后台生成的分类二级页，**每个已创建分组一个** | 展示对应分类全部真实作品的普通换行网格，提供返回一级页和进入详情的入口；分组的名称/kicker/导语/空状态文案均来自分组数据 | 横向轮播、运行时查询。⚠️ **分类增删已支持**（2026-09-11 起数据驱动），但发生在后台，前台仍是静态页 |
-| `works-{slug}.html` | 后台生成的作品详情 | Steam风格主媒体/辅图展示、标题简介、按作品配置的真实下载与体验入口、Markdown版本日志 | 前台登录、下载权限控制或运行时远程内容 |
+| `works-{slug}.html` | 后台生成的作品详情 | Steam风格主媒体/辅图展示、标题简介、按作品配置的真实下载与体验入口、Markdown更新记录（字段 `version_log`）| 前台登录、下载权限控制或运行时远程内容 |
 | `notes.html` | 学习心得索引 | 后台从当前全部日记记录生成日期、标题、摘要和占位标记 | 搜索、分类逻辑或运行时动态请求 |
 | `notes-*.html` | 后台生成的日记详情 | 标题、日期、Markdown正文、占位/发布状态、返回与编辑入口 | 前台登录、在线编辑或运行时内容保存 |
 | `tools.html` | 后台生成的智能工具入口 | 列出 `works` 表中勾选 `show_on_tools` 的作品，入口取自该作品的 `experience_url`；0 条勾选时为干净空状态页 | 登录、注册、表单、输入框、API调用、真实工具或上线时间承诺；页面内不写死任何主机名 |
@@ -179,12 +180,14 @@ zhiliaohub/
 
 当前保存首页及三个内容栏目的压缩 WebP 插画：`hero-oc-rain-alley.webp`、`works-oc-creative-passage.webp`、`notes-oc-rain-writing.webp`、`feedback-oc-message-slot.webp` 均为网站实际加载的本地静态资源；`reference/oc-three-view.jpg` 只作为开发阶段角色设定参考，并由 `.gitignore` 排除，不进入版本库。新增资产应使用能说明用途的文件名，并在入库前控制尺寸和体积。
 
+`errors/403.html` 与 `errors/404.html`（`v3.7` 起）是手写静态错误页，随 `cp -r assets` 的静态基底一起进入 `public/site/`，不由发布服务生成，也不在发布清理的 `assets/works/` 四个受控目录内。Nginx 用 `error_page 404 /assets/errors/404.html` 内部跳转，并用 `location = … { internal; }` 拒绝直接访问。⚠️ 两个页面对 `css/`、`js/` 的引用**必须是根绝对路径**（`/css/style.css`）：内部跳转后浏览器地址仍是触发错误的 URL（可能在任意深度），相对路径会解析到错误目录。
+
 ### 5.5 `.github/workflows/ci.yml`
 
 CI 执行以下确定性检查——⚠️ 自 `v2.8` 起**已不再只有前两类**，另见本节末的完整说明：
 
 - 对仓库内全部已提交的 `.js` 文件逐个运行 `node --check`，因此会覆盖 `admin-server/` 源码和测试文件的语法。
-- 扫描全部 HTML 的 `href` 与 `src`，忽略片段和外部协议，确认本地相对引用目标存在。
+- 扫描全部 HTML 的 `href` 与 `src`，忽略片段和外部协议，确认本地引用目标存在。`v3.7`（`7d689fd`）起 `/` 开头的引用按仓库根解析，其余仍按 HTML 所在目录解析——前者是为错误页而加，此前根绝对引用会被误报为死链。
 
 自 `v2.8`（2026-08-27）起，CI 还会按 `admin-server/package-lock.json` 执行 `npm ci`，随后运行**未经裁剪的完整 `npm test`**；测试失败不会被跳过或降级为警告。此前 CI 长期只做上述两类静态检查、`npm test` 命中 0 次，属于「假绿」。
 
@@ -216,7 +219,7 @@ index.html 额外 defer 加载 js/particles.js
    ├── 初始化 SQLite schema、content和uploads目录
    └── 浏览器访问 /admin
           ├── 密码 + TOTP → 认证会话
-          ├── 设备管理 → 生成一次性配对码 / 吊销当前设备
+          ├── 设备管理 → 生成一次性配对码 / 取消这台设备的登录授权
           ├── 反馈审核 → 按主题通过、拒绝/隐藏或发布站长回复
           │      └── 明确全量发布 → SQL只读approved公开列 → 生成feedback.html
           ├── 小作坊管理 → 受控ZIP全目录预检 → 独立slug目录安全解压
@@ -341,7 +344,7 @@ index.html 额外 defer 加载 js/particles.js
 
 SQLite当前包含：
 
-- `works`：标题、稳定slug、作品日期、固定分类、摘要、必填详情简介、特殊状态、占位/排序字段、Markdown路径和时间戳；封面、下载开关/文件、体验链接、主媒体类型/路径、辅图JSON和版本日志8个字段已经贯通后台独立作品表单、发布服务与前台作品模板。
+- `works`：标题、稳定slug、作品日期、固定分类、摘要、必填详情简介、特殊状态、占位/排序字段、Markdown路径和时间戳；封面、下载开关/文件、体验链接、主媒体类型/路径、辅图JSON和更新记录（`version_log`）8个字段已经贯通后台独立作品表单、发布服务与前台作品模板。
 - `notes`：标题、稳定slug、日记日期、摘要、占位/排序字段、Markdown路径和时间戳。
 - `publish_state`：最近一次成功发布时间及作品/日记数量。
 - `content_migrations`：一次性内容迁移标记，防止重复初始化。
@@ -361,7 +364,7 @@ SQLite当前包含：
 
 作品或日记新增、编辑、删除成功后立即触发一次串行化全量发布，不设置草稿状态；小作坊显示切换和删除也会触发全量发布；反馈审核状态变化本身不发布，管理员在审核完成后明确执行全量发布。发布服务从当前SQLite记录读取作品/日记Markdown，查询 `is_visible=1` 的小作坊项目，并对反馈执行 `WHERE status='approved'` 的独立SQL查询；反馈查询只选择公开所需ID、父级、作者名、正文、时间和管理员回复标记，不读取邮箱/IP。模板继续复刻既有水泥灰/雾蓝灰页面骨架，写入 `works.html`、三个固定作品分类二级页、`notes.html`、`feedback.html` 和规律命名的详情页。作品一级页及二级页统一按 `updated_at DESC, created_at DESC, id DESC` 呈现“最新”顺序；一级页每类最多4条，二级页保留该类全部记录。slug首次创建后保持稳定；重名使用数字后缀，非ASCII标题使用确定性的Unicode码点形式，避免文件名冲突和路径逃逸。
 
-每个生成文件首行包含自动生成标记。全量发布会比较期望详情页集合与磁盘文件，只删除带该标记且已不在数据库中的旧详情页；手工 `index.html`、`tools.html`、`css/`、`js/` 不在写入范围，`feedback.html`与作品/日记页一样参与写前快照和失败回滚。作品引用的上传文件会复制到 `assets/works/covers/`、`main/`、`gallery/`、`downloads/` 四个受控目录，不再被任何作品引用的前台媒体副本会被删除；后台上传源文件不在发布清理范围。作品列表优先显示图片封面，详情页用主媒体、横向辅图条和信息面板组成Steam风格showcase，并在下方渲染版本日志；无媒体旧作品回退CSS封面。`works.html`底部只在存在可见小作坊项目时生成标题、简介与新窗口访问链接，不生成空区块。反馈模板把approved顶层留言及其approved回复组成最多两层的静态结构，管理员回复显示身份标签，没有approved记录时显示空状态。写入前保存受影响HTML与媒体快照，失败时恢复发布前状态；成功后才更新 `publish_state`。Markdown中的原始HTML被转义，危险协议链接和图片地址不会写成可执行URL。
+每个生成文件首行包含自动生成标记。全量发布会比较期望详情页集合与磁盘文件，只删除带该标记且已不在数据库中的旧详情页；手工 `index.html`、`tools.html`、`css/`、`js/` 不在写入范围，`feedback.html`与作品/日记页一样参与写前快照和失败回滚。作品引用的上传文件会复制到 `assets/works/covers/`、`main/`、`gallery/`、`downloads/` 四个受控目录，不再被任何作品引用的前台媒体副本会被删除；后台上传源文件不在发布清理范围。作品列表优先显示图片封面，详情页用主媒体、横向辅图条和信息面板组成Steam风格showcase，并在下方渲染更新记录（`version_log`）；无媒体旧作品回退CSS封面。`works.html`底部只在存在可见小作坊项目时生成标题、简介与新窗口访问链接，不生成空区块。反馈模板把approved顶层留言及其approved回复组成最多两层的静态结构，管理员回复显示身份标签，没有approved记录时显示空状态。写入前保存受影响HTML与媒体快照，失败时恢复发布前状态；成功后才更新 `publish_state`。Markdown中的原始HTML被转义，危险协议链接和图片地址不会写成可执行URL。
 
 原8个作品与3篇占位日记已经通过 `scripts/migrate-existing-content.js` 一次性迁入SQLite和Markdown。脚本默认只预览，实际执行要求内容表为空、目标Markdown不存在、迁移未执行过，并显式传入 `--apply --confirm-server-stopped`；执行前还会主动探测后台配置端口，仍有服务监听时直接拒绝。本轮真实迁移已经完成并通过SQLite完整性检查。
 
@@ -392,7 +395,7 @@ SQLite当前包含：
 1. Compose包含独立的 `admin-server` 与官方Nginx服务；后台只在内部网络暴露3001端口。
 2. 后台使用 `admin-server/.env` 读取业务配置与密钥；根目录 `.env` 只保存Compose拓扑变量。两者均由服务器现场创建且不入库。
 3. SQLite数据、Markdown正文、上传文件、本地备份、小作坊站点和独立公开站点目录均持久化到宿主机。⚠️ **它们通过「一个父级 bind mount + 六个普通子目录」挂载，而不是六个各自独立的叶子挂载**：并且**按可见性再分两层**：`public/` 放 `site`、`lab-storage`，`private/` 放 `data`、`content`、`uploads`、`backups`。`admin-server` 挂 `RUNTIME_ROOT_PATH` 到 `/app/runtime` 整体（需读写全部）；**Nginx 只读挂 `public/` 子树**到 `/app/runtime/public`（容器内路径与 admin-server 保持一致，避免同一路径在两个容器里含义不同），两处静态根指向 `/app/runtime/public/site` 与 `/app/runtime/public/lab-storage`。⚠️ Nginx 挂的必须是 `public/` **这个父目录**而非两个叶子窄挂载：挂父目录时 `lab-storage` 被恢复重命名替换后 Nginx 立刻解析到新目录，挂叶子则会握旧 inode、静默伺服恢复前的内容而健康检查全绿；该性质在整根挂载时本已存在，分层是保住它并补上「对外容器读不到密钥材料」的隔离。⚠️ `public/` 与 `private/` 两个父目录必须是 `1000:1000`——暂存目录建在目标的父目录里，属主错了即 `EACCES`。**这是恢复能工作的前提**——恢复用 `replaceDirectory` 的原子重命名切换目录，而挂载点自身无法被 `rename`（`EBUSY`），暂存目录也无法建在容器 `/app`（`root:root`，`EACCES`）。旧的六叶子挂载布局下**每一次恢复、每一个目录都必然失败**，且 `nginx` 直接挂叶子目录时恢复后仍握旧 inode、会继续伺服恢复前的小作坊内容而健康检查全绿。改为父级挂载后 `replaceDirectory` 算法一行未改，Nginx 也自然跟随重命名。
-4. Nginx从只读公开站点目录伺服前台，代理 `/admin`、`/api`、`/health` 与后台上传预览，并设置真实IP/协议转发头；后台固定使用 `TRUST_PROXY_HOPS=1`。**本项目的 Nginx 不再终止 TLS**，TLS 只在 `zhiliao-gateway` 终止一次。
+4. Nginx从只读公开站点目录伺服前台，代理 `/admin`、`/api`、`/health` 与后台上传预览，并设置真实IP/协议转发头；403/404 由 `error_page` 内部跳转到 `assets/errors/` 下的静态页（见 5.4）；后台固定使用 `TRUST_PROXY_HOPS=1`。**本项目的 Nginx 不再终止 TLS**，TLS 只在 `zhiliao-gateway` 终止一次。
 5. **代理信任链是 访客 → zhiliao-gateway → 知了hub Nginx → Express，共两跳。** 新服务器只有一个公网 IP，四个主机名共用 443，因此由独立仓库 `zhiliao-gateway` 作唯一前端，按 `server_name` 分流。gateway 发 `X-Forwarded-For $proxy_add_x_forwarded_for`；知了hub 的 Nginx 用 `real_ip_header X-Forwarded-For` 加**单条 env 驱动**的 `set_real_ip_from ${TRUSTED_PROXY_CIDR}` 还原真实访客IP，`real_ip_recursive` 保持默认 off（取XFF末位）。还原成功后转发出去的 XFF 末位仍是访客IP，故 `TRUST_PROXY_HOPS` 保持1不变。
    - ⚠️ **可信来源不是 `127.0.0.1`。** gateway 经宿主回环连入，报文过 docker-proxy 后本项目 Nginx 看到的是自身 Compose 网络的**桥网关地址**。`app-network` 只声明 `driver: bridge`、未固定子网，该地址会随网络重建而变，所以必须由 `.env` 注入、不得写死。
    - ⚠️ **仍不得写 `0.0.0.0/0`**：无条件信任 XFF 等于允许任意伪造来源IP，限流可被绕过。这条道理不因换掉 Cloudflare 而改变。
@@ -420,7 +423,7 @@ SQLite当前包含：
 | 没有作品正式域名 | 知天详情页使用未开放按钮说明地址尚未配置 |
 | 智能工具尚无真实能力 | `tools.html` 自 2026-09-10 起由发布生成，但它展示的是**作品记录**（勾选 `show_on_tools` 的作品 + 其 `experience_url`），不是工具本身；仍没有集成方案、登录/注册、API、后台管理或上线日期 |
 | 小作坊子域名隔离尚未完整实测 | localhost已验证ZIP安全、静态访问、CSP和响应不设置session Cookie；真实DNS、HTTPS、父域Cookie边界与独立Nginx静态服务仍需单独复测 |
-| 生成页不可手改 | 作品/日记/反馈生成页首行带自动生成标记；应修改后台数据、审核状态或模板后重新全量发布 |
+| 生成页不可手改 | 作品/日记/反馈生成页首行带自动生成标记；应修改后台数据、审核状态或模板后点「更新公开页面」（`v3.7` 前叫「重新全量发布」）重新发布 |
 | 没有自动化构建和浏览器测试 | CI 自 `v2.8` 起按 `package-lock.json` 执行 `npm ci` 并运行**完整后台 `npm test`**，另有JavaScript语法与HTML本地引用检查；但**不做容器、Nginx、端到端、视觉与性能测试**，这些仍需按任务进行真实浏览器回归 |
 | 生产更新不是自动完成 | 后台已在真实HTTPS域名运行；代码或依赖变化后仍必须在服务器显式拉取、构建镜像和重启，`docker compose up` 不保证自动使用最新代码 |
 | 备份仍限于同机数据面 | SQLite、Markdown、上传文件与`lab-storage`已支持定时归档、校验、加密、保留和恢复；ZIP默认入包，可选排除时在manifest留痕并依赖用户本地原件补齐；仍没有真实异地副本或容量监控；服务器恢复演练已于 2026-09-04 完成；**外部失败告警已被用户明确排除，改为人工查看已认证界面的状态（已知缺口，非待办）** |
