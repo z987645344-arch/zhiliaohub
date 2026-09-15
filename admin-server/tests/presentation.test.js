@@ -1,8 +1,10 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const vm = require('node:vm');
 const {
   adminNavigationScript,
   formatDateTime,
+  labManagementScript,
   layout,
   workFormScript,
 } = require('../src/lib/html');
@@ -10,7 +12,7 @@ const { formatCommentTime } = require('../src/templates/feedback');
 const { renderNotesList } = require('../src/templates/notes');
 const { GENERATED_MARKER } = require('../src/templates/shared');
 const { renderWorkDetail, renderWorksList } = require('../src/templates/works');
-const { workFormPage } = require('../src/views');
+const { labManagementPage, workFormPage } = require('../src/views');
 
 test('展示时间固定为UTC+8，正确处理跨日、带偏移与SQLite时间', () => {
   assert.equal(formatDateTime('2026-09-11T18:20:00Z'), '2026.09.12 02:20 UTC+8');
@@ -34,6 +36,99 @@ test('心得空列表仍保留发布标记、主标题与可用的下一步入�
 test('作品文件上传成功后明确提示仍需保存作品', () => {
   const script = workFormScript();
   assert.match(script, /已上传 .*保存作品后才会生效/);
+});
+
+test('作品与小作坊上传脚本显示真实进度并区分JSON与非JSON错误', () => {
+  for (const script of [workFormScript(), labManagementScript()]) {
+    assert.doesNotThrow(() => new Function(script));
+    assert.match(script, /new XMLHttpRequest\(\)/);
+    assert.match(script, /upload\.onprogress/);
+    assert.match(script, /已上传 .* \/ .* MB · .*%/);
+    assert.match(script, /JSON\.parse\(/);
+    assert.match(script, /上传失败（HTTP .*）/);
+  }
+  const labHtml = labManagementPage({ csrfToken: 'csrf-test-token' });
+  assert.match(labHtml, /进入网页文件夹，选中全部内容压缩；不要压缩文件夹本身。/);
+  assert.match(labHtml, /data-lab-upload-form[^>]*data-upload-api="\/api\/admin\/lab\/upload"/);
+  assert.match(labHtml, /data-lab-upload-button>[\s\S]*data-lab-upload-status role="status"/);
+});
+
+test('小作坊上传把400/408/413/415的具体失败原因显示在按钮旁', () => {
+  function simulate(statusCode, responseText) {
+    const messages = [];
+    const status = {
+      textContent: '',
+      classList: { toggle: (_name, active) => { status.isError = active; } },
+    };
+    const button = { disabled: false };
+    const fileInput = { files: [{ name: 'large-lab.zip' }] };
+    let submitHandler;
+    const form = {
+      dataset: { csrfToken: 'csrf-test-token', uploadApi: '/api/admin/lab/upload' },
+      querySelector(selector) {
+        if (selector === '[data-lab-upload-status]') return status;
+        if (selector === '[data-lab-upload-button]') return button;
+        if (selector === '#labFile') return fileInput;
+        return null;
+      },
+      addEventListener(name, handler) {
+        if (name === 'submit') submitHandler = handler;
+      },
+    };
+    class FakeRequest {
+      constructor() {
+        this.handlers = {};
+        this.headers = {};
+        this.status = statusCode;
+        this.responseText = responseText;
+        this.upload = {};
+      }
+
+      open() {}
+
+      setRequestHeader(name, value) { this.headers[name] = value; }
+
+      addEventListener(name, handler) { this.handlers[name] = handler; }
+
+      send() {
+        this.upload.onprogress({
+          lengthComputable: true,
+          loaded: Math.round(32.5 * 1024 * 1024),
+          total: Math.round(68.9 * 1024 * 1024),
+        });
+        messages.push(status.textContent);
+        this.handlers.load();
+        messages.push(status.textContent);
+        this.handlers.loadend();
+      }
+    }
+    vm.runInNewContext(labManagementScript(), {
+      document: {
+        querySelectorAll: () => [],
+        querySelector: () => form,
+      },
+      encodeURIComponent,
+      FormData: class FakeFormData {},
+      XMLHttpRequest: FakeRequest,
+      window: { location: { assign() {} }, setTimeout() {} },
+    });
+    submitHandler({ preventDefault() {} });
+    return { button, messages, status };
+  }
+
+  const cases = [
+    [400, JSON.stringify({ error: '标题长度应为 1 至 120 个字符。' }), '标题长度应为 1 至 120 个字符。'],
+    [408, '<html>request timeout</html>', '上传失败（HTTP 408）。'],
+    [413, JSON.stringify({ error: '文件超过上传大小上限。' }), '文件超过上传大小上限。'],
+    [415, JSON.stringify({ error: 'ZIP包含不允许的文件类型：shell.php。' }), 'ZIP包含不允许的文件类型：shell.php。'],
+  ];
+  for (const [statusCode, body, expected] of cases) {
+    const result = simulate(statusCode, body);
+    assert.equal(result.messages[0], '已上传 32.5 / 68.9 MB · 47%');
+    assert.equal(result.messages.at(-1), expected);
+    assert.equal(result.status.isError, true);
+    assert.equal(result.button.disabled, false);
+  }
 });
 
 test('作品表单四个上传入口各自在操作位置旁提供状态反馈', () => {
@@ -108,6 +203,26 @@ test('前后台更新记录超过5条时只折叠其余条目', () => {
   for (const html of [frontFive, adminFive]) {
     assert.equal((html.match(/<details\b/g) || []).length, 0);
   }
+});
+
+test('作品详情按媒体、右栏信息、通栏简介、更新记录的顺序渲染', () => {
+  const html = renderWorkDetail({
+    id: 9,
+    slug: 'showcase-order',
+    title: '详情顺序验证',
+    category: '程序',
+    detail_intro: '这段简介应在媒体与右栏之后通栏显示。',
+  });
+  const mediaAt = html.indexOf('class="showcase-left"');
+  const infoAt = html.indexOf('class="showcase-right"');
+  const introAt = html.indexOf('class="showcase-intro showcase-intro-wide"');
+  const updatesAt = html.indexOf('class="detail-content"');
+  assert.ok(mediaAt >= 0 && infoAt > mediaAt && introAt > infoAt && updatesAt > introAt);
+  assert.doesNotMatch(
+    html.slice(infoAt, introAt),
+    /showcase-intro/,
+    '右栏不应继续包含详情简介。',
+  );
 });
 
 test('后台移动导航吸顶折叠且退出登录表单仍保留在菜单内', () => {

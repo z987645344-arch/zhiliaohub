@@ -731,14 +731,37 @@ function workFormScript() {
     setPending(1);
     setStatus('正在上传 ' + file.name + '…', false, localStatus);
     try {
-      const response = await fetch(uploadApi, {
-        method: 'POST',
-        headers: { 'X-CSRF-Token': csrfToken },
-        credentials: 'same-origin',
-        body,
+      const payload = await new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        // uploadApi is same-origin; XHR sends same-origin cookies by default, matching the former fetch credentials mode.
+        request.open('POST', uploadApi);
+        request.setRequestHeader('X-CSRF-Token', csrfToken);
+        request.setRequestHeader('Accept', 'application/json');
+        request.upload.onprogress = (event) => {
+          if (!event.lengthComputable || event.total <= 0) return;
+          const uploaded = (event.loaded / 1024 / 1024).toFixed(1);
+          const total = (event.total / 1024 / 1024).toFixed(1);
+          const percent = Math.min(100, Math.round(event.loaded / event.total * 100));
+          setStatus('已上传 ' + uploaded + ' / ' + total + ' MB · ' + percent + '%', false, localStatus);
+        };
+        request.addEventListener('load', () => {
+          let responsePayload = null;
+          try { responsePayload = JSON.parse(request.responseText); } catch (_error) { /* 非 JSON 由状态码解释。 */ }
+          if (request.status >= 200 && request.status < 300) {
+            resolve(responsePayload || {});
+            return;
+          }
+          reject(new Error(
+            responsePayload && responsePayload.error
+              ? responsePayload.error
+              : '上传失败（HTTP ' + request.status + '）。',
+          ));
+        });
+        request.addEventListener('error', () => reject(new Error('上传失败：网络连接中断。')));
+        request.addEventListener('timeout', () => reject(new Error('上传失败：请求超时，请稍后重试。')));
+        request.addEventListener('abort', () => reject(new Error('上传已取消。')));
+        request.send(body);
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || '上传失败（HTTP ' + response.status + '）。');
       hasUnsavedUpload = true;
       markMainFormDirty();
       setStatus('已上传 ' + payload.originalName + ' · 保存作品后才会生效', false, localStatus);
@@ -1147,7 +1170,67 @@ document.querySelectorAll('[data-copy-lab-link]').forEach((button) => {
     }
     window.setTimeout(() => { button.textContent = '复制链接'; }, 1800);
   });
-});`;
+});
+
+const labUploadForm = document.querySelector('[data-lab-upload-form]');
+if (labUploadForm) {
+  const uploadStatus = labUploadForm.querySelector('[data-lab-upload-status]');
+  const uploadButton = labUploadForm.querySelector('[data-lab-upload-button]');
+  const csrfToken = labUploadForm.dataset.csrfToken;
+
+  function setLabUploadStatus(message, error = false) {
+    uploadStatus.textContent = message;
+    uploadStatus.classList.toggle('error', error);
+  }
+
+  function finishLabUpload() {
+    uploadButton.disabled = false;
+  }
+
+  labUploadForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (uploadButton.disabled) return;
+    const file = labUploadForm.querySelector('#labFile').files[0];
+    if (!file) {
+      setLabUploadStatus('请选择一个 ZIP 文件。', true);
+      return;
+    }
+    const body = new FormData(labUploadForm);
+    const request = new XMLHttpRequest();
+    // The API path is same-origin, so the authenticated session cookie is sent without broadening credentials.
+    request.open('POST', labUploadForm.dataset.uploadApi);
+    request.setRequestHeader('X-CSRF-Token', csrfToken);
+    request.setRequestHeader('Accept', 'application/json');
+    request.upload.onprogress = (progressEvent) => {
+      if (!progressEvent.lengthComputable || progressEvent.total <= 0) return;
+      const uploaded = (progressEvent.loaded / 1024 / 1024).toFixed(1);
+      const total = (progressEvent.total / 1024 / 1024).toFixed(1);
+      const percent = Math.min(100, Math.round(progressEvent.loaded / progressEvent.total * 100));
+      setLabUploadStatus('已上传 ' + uploaded + ' / ' + total + ' MB · ' + percent + '%');
+    };
+    request.addEventListener('load', () => {
+      let payload = null;
+      try { payload = JSON.parse(request.responseText); } catch (_error) { /* 非 JSON 由状态码解释。 */ }
+      if (request.status >= 200 && request.status < 300) {
+        setLabUploadStatus('上传完成，项目已创建并生成链接。');
+        const notice = encodeURIComponent('项目已创建：' + (payload?.project?.accessUrl || '请在列表中查看链接'));
+        window.setTimeout(() => window.location.assign('/admin/lab?notice=' + notice), 450);
+        return;
+      }
+      setLabUploadStatus(
+        payload && payload.error ? payload.error : '上传失败（HTTP ' + request.status + '）。',
+        true,
+      );
+    });
+    request.addEventListener('error', () => setLabUploadStatus('上传失败：网络连接中断。', true));
+    request.addEventListener('timeout', () => setLabUploadStatus('上传失败：请求超时，请稍后重试。', true));
+    request.addEventListener('abort', () => setLabUploadStatus('上传已取消。', true));
+    request.addEventListener('loadend', finishLabUpload);
+    uploadButton.disabled = true;
+    setLabUploadStatus('正在上传 ' + file.name + '…');
+    request.send(body);
+  });
+}`;
 }
 
 module.exports = { adminNavigationScript, formatDateTime, escapeHtml, labManagementScript, layout, workFormScript };

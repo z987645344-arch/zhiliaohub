@@ -1,7 +1,18 @@
 # 知了hub 改动记录
 > 每轮完成改动后在此追加记录（新条目追加在**最前**，本文件为新在前的倒序）。
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
-> **最后追加：2026-09-14**
+> **最后追加：2026-09-15**
+
+## 2026-09-15 v3.12 候选 —— 版本升：上传进度条与小作坊自动识别顶层目录为新交互；详情页布局、nginx 上传超时为随附纯修
+
+- **上传过程可见**：`admin-server/src/lib/html.js` 将作品表单与小作坊上传从 `fetch` 改为同源 `XMLHttpRequest`，保留 CSRF 请求头与 Cookie 语义；上传期间在按钮旁显示已传体积、总量与百分比，成功后继续明确“保存作品后才会生效”。服务端 JSON 错误原文就地红字显示，Nginx 等非 JSON 响应退化为含 HTTP 状态码的可读提示，覆盖 400/408/413/415。
+- **小作坊 ZIP 兼容**：`admin-server/src/services/lab-service.js` 在不放宽路径穿越、条目数、解压体积、符号链接与加密条目校验的前提下，识别 Windows“压缩文件夹”产生的唯一顶层目录并以其为根；忽略 `__MACOSX/`、`.DS_Store`、`Thumbs.db`、`desktop.ini`。类型错误会点名文件并列出允许扩展名；缺少入口页且检测到顶层目录时给出可执行的重新压缩提示。`admin-server/src/views.js` 同步为“进入网页文件夹，选中全部内容压缩；不要压缩文件夹本身”。
+- **中断上传残留兜底**：现有 Multer 2 会在客户端中断、请求错误与大小限制路径删除已落盘文件，CSRF 拒绝与 `LabService.createProject()` 也各有清理；未覆盖的持久泄漏层是进程在 Multer 已创建 `pending-lab-<UUID>.zip`、但进入或完成服务层 `finally` 前终止。`admin-server/src/app.js` 在每次启动时只清理由该路由生成的精确临时命名空间，测试用预置的中断现场复现并确认下一次启动清除。该结论定位当前代码的缺口，不反推现场 68.9 MB 文件必然由哪一次中断造成。
+- **详情页布局**：`admin-server/src/templates/works.js` 将详情简介从右栏移到媒体与信息栏下方的通栏，`css/style.css` 把 `.showcase` 改为顶部对齐并将简介限制为 `72ch`；DOM 与窄屏视觉顺序统一为媒体、右栏信息、简介、更新记录，样式继续使用 `.archive-page` 变量。
+- **上传代理超时**：`deploy/nginx.conf` 在通用反代规则之前加入 `^/(?:api/admin/uploads|api/admin/lab/upload|admin/lab/upload)$` 专用 location，设置 `client_body_timeout 300s` 与 `proxy_request_buffering off`，其余请求头保持一致且未修改 `client_max_body_size`。其中 `/api/admin/lab/upload` 是本轮小作坊 XHR 的实际入口，`/admin/lab/upload` 保留无 JavaScript 表单回退。
+- **证据**：完整 `npm test` 为 159/159（基线 151），`npm run check`、涉及文件的 `node --check` 与 `git diff --check` 通过。新增测试覆盖唯一顶层目录、macOS/Windows 元数据、可执行错误文案、进程中断残留启动清理、两套 XHR 的进度与四类错误，以及详情页 DOM 顺序。
+- **逐文件改动**（11 文件，+405/-33）：`CHANGELOG.md` +12/-1；`admin-server/src/app.js` +16/-0；`admin-server/src/lib/html.js` +91/-8；`admin-server/src/services/lab-service.js` +55/-16；`admin-server/src/templates/works.js` +1/-1；`admin-server/src/views.js` +1/-1；`admin-server/tests/lab-projects.test.js` +87/-1；`admin-server/tests/presentation.test.js` +116/-1；`admin-server/tests/work-form.test.js` +5/-3；`css/style.css` +7/-1；`deploy/nginx.conf` +14/-0。
+- **未验证**：当前环境没有可用的 Docker CLI，未执行渲染后真实 `nginx -t`；慢网进度、Windows 实际压缩上传、详情页桌面与移动端视觉均留给用户真机验收，本条不代报通过。
 
 ## 2026-09-14 五仓库统一采用“三问定档”版本规则（未提交，未打标签）
 

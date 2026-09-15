@@ -12,6 +12,9 @@ const ALLOWED_WEB_EXTENSIONS = new Set([
   '.woff', '.woff2', '.ttf', '.otf', '.eot',
   '.mp3', '.wav', '.ogg', '.mp4', '.webm',
 ]);
+const IGNORED_ZIP_DIRECTORIES = new Set(['__macosx']);
+const IGNORED_ZIP_FILENAMES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini']);
+const ALLOWED_WEB_EXTENSIONS_LABEL = [...ALLOWED_WEB_EXTENSIONS].sort().join('、');
 
 class LabValidationError extends Error {
   constructor(message, statusCode = 400) {
@@ -42,7 +45,7 @@ function buildProjectUrl(baseUrl, slug) {
   return `${String(baseUrl).replace(/\/+$/, '')}/${slug}/`;
 }
 
-function safeEntry(entry, destinationRoot) {
+function inspectEntryMetadata(entry) {
   const rawName = String(entry.path || '');
   const normalizedName = rawName.replaceAll('\\', '/');
   const isDirectory = entry.type === 'Directory' || normalizedName.endsWith('/');
@@ -58,18 +61,44 @@ function safeEntry(entry, destinationRoot) {
   if ((Number(entry.flags) & 0x1) !== 0) {
     throw new LabValidationError(`ZIP不允许包含加密条目：${rawName}`);
   }
+  const ignored = IGNORED_ZIP_DIRECTORIES.has(String(parts[0] || '').toLowerCase())
+    || (!isDirectory && IGNORED_ZIP_FILENAMES.has(String(parts.at(-1) || '').toLowerCase()));
+  return { entry, ignored, isDirectory, normalizedName, parts, rawName };
+}
+
+function detectTopLevelFolder(entries) {
+  const meaningful = entries.filter((item) => !item.ignored);
+  if (meaningful.length === 0) return '';
+  const folder = meaningful[0].parts[0];
+  const allInsideFolder = meaningful.every((item) => item.parts[0] === folder
+    && (item.isDirectory || item.parts.length > 1));
+  const hasNestedFile = meaningful.some((item) => !item.isDirectory && item.parts.length > 1);
+  return allInsideFolder && hasNestedFile ? folder : '';
+}
+
+function safeEntry(entry, destinationRoot, topLevelFolder = '') {
+  const metadata = inspectEntryMetadata(entry);
+  if (metadata.ignored) return { ...metadata, skip: true };
+  const relativeParts = topLevelFolder && metadata.parts[0] === topLevelFolder
+    ? metadata.parts.slice(1)
+    : metadata.parts;
+  if (relativeParts.length === 0) return { ...metadata, skip: true };
   const root = path.resolve(destinationRoot);
-  const target = path.resolve(root, ...parts);
+  const target = path.resolve(root, ...relativeParts);
   if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
-    throw new LabValidationError(`ZIP条目试图越过项目目录，已拒绝整个上传：${rawName}`);
+    throw new LabValidationError(`ZIP条目试图越过项目目录，已拒绝整个上传：${metadata.rawName}`);
   }
-  if (!isDirectory) {
+  const normalizedName = relativeParts.join('/') + (metadata.isDirectory ? '/' : '');
+  if (!metadata.isDirectory) {
     const extension = path.posix.extname(normalizedName).toLowerCase();
     if (!ALLOWED_WEB_EXTENSIONS.has(extension)) {
-      throw new LabValidationError(`ZIP包含不允许的文件类型：${rawName}`, 415);
+      throw new LabValidationError(
+        `ZIP包含不允许的文件类型：${metadata.rawName}。允许的扩展名：${ALLOWED_WEB_EXTENSIONS_LABEL}。`,
+        415,
+      );
     }
   }
-  return { isDirectory, normalizedName, target };
+  return { ...metadata, normalizedName, skip: false, target };
 }
 
 async function inspectZip(zipPath, destinationRoot, limits) {
@@ -81,33 +110,43 @@ async function inspectZip(zipPath, destinationRoot, limits) {
   try {
     const directory = await unzipper.Open.file(zipPath);
     entries = directory.files;
+    const metadata = entries.map(inspectEntryMetadata);
+    const topLevelFolder = detectTopLevelFolder(metadata);
     for (const entry of entries) {
-      const safe = safeEntry(entry, destinationRoot);
+      const safe = safeEntry(entry, destinationRoot, topLevelFolder);
       entryCount += 1;
       if (entryCount > limits.maxFiles) {
         throw new LabValidationError(`ZIP条目数量超过 ${limits.maxFiles} 个上限。`, 413);
       }
-      if (safe.isDirectory) continue;
-      fileCount += 1;
-      totalBytes += Number(entry.uncompressedSize);
+      if (!safe.isDirectory) totalBytes += Number(entry.uncompressedSize);
       if (!Number.isSafeInteger(totalBytes) || totalBytes > limits.maxUncompressedBytes) {
         throw new LabValidationError(`ZIP解压后总大小超过 ${limits.maxUncompressedBytes} 字节上限。`, 413);
       }
+      if (safe.skip || safe.isDirectory) continue;
+      fileCount += 1;
       if (safe.normalizedName === 'index.html') hasRootIndex = true;
     }
+    if (fileCount === 0) throw new LabValidationError('ZIP中没有可发布的网页文件。');
+    if (!hasRootIndex) {
+      if (topLevelFolder) {
+        throw new LabValidationError(
+          `ZIP中未找到 index.html；第一层是文件夹 ${topLevelFolder}，请进入文件夹选中全部内容再压缩。`,
+        );
+      }
+      throw new LabValidationError('ZIP根目录必须包含 index.html；请进入网页文件夹，选中全部内容后重新压缩。');
+    }
+    return { entries, entryCount, fileCount, topLevelFolder, totalBytes };
   } catch (error) {
     if (error instanceof LabValidationError) throw error;
     throw new LabValidationError(`ZIP结构无效或已损坏：${error.message}`);
   }
-  if (fileCount === 0) throw new LabValidationError('ZIP中没有可发布的网页文件。');
-  if (!hasRootIndex) throw new LabValidationError('ZIP根目录必须包含 index.html。');
-  return { entries, entryCount, fileCount, totalBytes };
 }
 
-async function extractZip(entries, destinationRoot, limits) {
+async function extractZip(entries, destinationRoot, limits, topLevelFolder = '') {
   let extractedBytes = 0;
   for (const entry of entries) {
-    const safe = safeEntry(entry, destinationRoot);
+    const safe = safeEntry(entry, destinationRoot, topLevelFolder);
+    if (safe.skip) continue;
     if (safe.isDirectory) {
       await fs.mkdir(safe.target, { recursive: true });
       continue;
@@ -197,7 +236,7 @@ class LabService {
       };
       const inspection = await inspectZip(file.path, temporaryDirectory, limits);
       await fs.mkdir(temporaryDirectory, { recursive: false });
-      await extractZip(inspection.entries, temporaryDirectory, limits);
+      await extractZip(inspection.entries, temporaryDirectory, limits, inspection.topLevelFolder);
       const rootIndex = await fs.stat(path.join(temporaryDirectory, 'index.html'));
       if (!rootIndex.isFile()) throw new LabValidationError('ZIP根目录的 index.html 不是普通文件。');
       await fs.rename(temporaryDirectory, finalDirectory);

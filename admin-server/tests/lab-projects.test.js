@@ -83,6 +83,13 @@ function validLabZip() {
 async function createRuntime(overrides = {}) {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-lab-'));
   const password = 'lab-test-password';
+  const uploadsDir = path.join(runtimeRoot, 'uploads');
+  let interruptedLabUploadPath = '';
+  if (overrides.seedInterruptedLabUpload) {
+    await fs.mkdir(uploadsDir, { recursive: true });
+    interruptedLabUploadPath = path.join(uploadsDir, `pending-lab-${crypto.randomUUID()}.zip`);
+    await fs.writeFile(interruptedLabUploadPath, validLabZip());
+  }
   const context = createApp({
     nodeEnv: 'test',
     host: '127.0.0.1',
@@ -93,7 +100,7 @@ async function createRuntime(overrides = {}) {
     dataDir: path.join(runtimeRoot, 'data'),
     databasePath: path.join(runtimeRoot, 'data', 'test.sqlite3'),
     contentDir: path.join(runtimeRoot, 'content'),
-    uploadsDir: path.join(runtimeRoot, 'uploads'),
+    uploadsDir,
     labStorageDir: path.join(runtimeRoot, 'lab-storage'),
     labBaseUrl: 'http://localhost:3001/lab',
     siteRoot: path.join(runtimeRoot, 'site'),
@@ -108,6 +115,7 @@ async function createRuntime(overrides = {}) {
     ...context,
     password,
     runtimeRoot,
+    interruptedLabUploadPath,
     server,
     baseUrl: `http://127.0.0.1:${server.address().port}`,
     async writeUpload(name, contents) {
@@ -200,6 +208,84 @@ test('有效网页ZIP可解压、发布显隐、生成链接并在删除时清�
   await runtime.labService.deleteProject(project.id);
   assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM lab_projects').get().count, 0);
   await assert.rejects(fs.access(path.join(runtime.config.labStorageDir, project.slug)), /ENOENT/);
+});
+
+test('Windows压缩文件夹的单一顶层目录会自动展开为项目根目录', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const wrappedZip = zip([
+    { name: '网页项目/', body: '' },
+    { name: '网页项目/index.html', body: '<!doctype html><h1>Windows 顶层目录兼容</h1>' },
+    { name: '网页项目/assets/app.js', body: 'document.body.dataset.ready="true";' },
+  ]);
+  const project = await runtime.labService.createProject(
+    await runtime.writeUpload('windows-folder.zip', wrappedZip),
+    { title: 'Windows 压缩项目', description: '自动识别唯一顶层目录。' },
+  );
+  const projectDirectory = path.join(runtime.config.labStorageDir, project.slug);
+  assert.match(await fs.readFile(path.join(projectDirectory, 'index.html'), 'utf8'), /顶层目录兼容/);
+  await assert.rejects(fs.access(path.join(projectDirectory, '网页项目')), /ENOENT/);
+});
+
+test('macOS与Windows元数据文件被忽略且不放宽其它ZIP安全校验', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const metadataZip = zip([
+    { name: '__MACOSX/', body: '' },
+    { name: '__MACOSX/._index.html', body: 'metadata' },
+    { name: '.DS_Store', body: 'finder' },
+    { name: 'Thumbs.db', body: 'thumbs' },
+    { name: 'desktop.ini', body: 'desktop' },
+    { name: 'index.html', body: '<!doctype html><h1>元数据忽略验证</h1>' },
+  ]);
+  const project = await runtime.labService.createProject(
+    await runtime.writeUpload('metadata.zip', metadataZip),
+    { title: '元数据兼容项目', description: '忽略系统生成文件。' },
+  );
+  const projectDirectory = path.join(runtime.config.labStorageDir, project.slug);
+  assert.match(await fs.readFile(path.join(projectDirectory, 'index.html'), 'utf8'), /元数据忽略验证/);
+  for (const ignored of ['__MACOSX', '.DS_Store', 'Thumbs.db', 'desktop.ini']) {
+    await assert.rejects(fs.access(path.join(projectDirectory, ignored)), /ENOENT/);
+  }
+});
+
+test('不允许的ZIP文件类型会同时点名文件和允许的扩展名', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const file = await runtime.writeUpload('bad-type.zip', zip([
+    { name: 'index.html', body: 'safe' },
+    { name: 'server/shell.php', body: '<?php echo 1;' },
+  ]));
+  await assert.rejects(
+    runtime.labService.createProject(file, { title: '错误类型', description: '验证可执行错误信息。' }),
+    (error) => error instanceof LabValidationError
+      && error.statusCode === 415
+      && /server\/shell\.php/.test(error.message)
+      && /允许的扩展名/.test(error.message)
+      && /\.html/.test(error.message)
+      && /\.css/.test(error.message),
+  );
+});
+
+test('唯一顶层文件夹缺少index时给出可执行的重新压缩提示', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const file = await runtime.writeUpload('missing-index.zip', zip([
+    { name: '网页项目/readme.txt', body: '缺少入口文件。' },
+  ]));
+  await assert.rejects(
+    runtime.labService.createProject(file, { title: '缺入口', description: '验证目录提示。' }),
+    (error) => error instanceof LabValidationError
+      && /第一层是文件夹 网页项目/.test(error.message)
+      && /进入文件夹选中全部内容再压缩/.test(error.message),
+  );
+});
+
+test('进程中断遗留的pending-lab临时文件会在下一次启动时清理', async (t) => {
+  const runtime = await createRuntime({ seedInterruptedLabUpload: true });
+  t.after(() => runtime.close());
+  assert.notEqual(runtime.interruptedLabUploadPath, '');
+  await assert.rejects(fs.access(runtime.interruptedLabUploadPath), /ENOENT/);
 });
 
 test('小作坊超长中文标题仍创建受限且唯一的目录名', async (t) => {

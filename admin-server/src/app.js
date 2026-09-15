@@ -44,6 +44,8 @@ const {
   errorPage,
 } = require('./views');
 
+const INTERRUPTED_LAB_UPLOAD_PATTERN = /^pending-lab-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.zip$/i;
+
 function csrfToken() {
   return crypto.randomBytes(32).toString('base64url');
 }
@@ -89,9 +91,23 @@ function verifyTotpStep(secret, token) {
   return Math.floor(Date.now() / 1000 / 30) + delta.delta;
 }
 
+// Multer and LabService clean normal failures in-process. A process termination after
+// diskStorage has opened the file cannot run either callback/finally, so the next
+// process removes only the exact temporary namespace before accepting new uploads.
+function cleanupInterruptedLabUploads(uploadsDir) {
+  let removed = 0;
+  for (const entry of fs.readdirSync(uploadsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !INTERRUPTED_LAB_UPLOAD_PATTERN.test(entry.name)) continue;
+    fs.unlinkSync(path.join(uploadsDir, entry.name));
+    removed += 1;
+  }
+  return removed;
+}
+
 function createApp(overrides = {}, dependencies = {}) {
   const config = loadConfig(overrides);
   const database = initializeDatabase(config);
+  cleanupInterruptedLabUploads(config.uploadsDir);
   const contentService = new ContentService(database, config);
   const publishService = new PublishService(database, config);
   const deviceAuthService = new DeviceAuthService(database, config);

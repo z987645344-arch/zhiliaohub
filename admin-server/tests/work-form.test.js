@@ -65,15 +65,17 @@ test('没有分组时作品表单明确提示先创建分组并禁止保存', ()
   assert.match(html, /data-save-work disabled/);
 });
 
-test('作品表单脚本使用原生Canvas、Fetch和受CSRF保护的现有上传接口', () => {
+test('作品表单脚本使用原生Canvas、XMLHttpRequest和受CSRF保护的现有上传接口', () => {
   const script = workFormScript();
   assert.doesNotThrow(() => new Function(script), '返回给浏览器的脚本必须可以独立解析。');
   assert.match(script, /getContext\('2d'\)/);
   assert.match(script, /hitResizeHandle/);
   assert.match(script, /box\.height = box\.width \* 9 \/ 16/);
   assert.match(script, /toBlob\(resolve, 'image\/webp'/);
-  assert.match(script, /fetch\(uploadApi/);
-  assert.match(script, /'X-CSRF-Token': csrfToken/);
+  assert.match(script, /new XMLHttpRequest\(\)/);
+  assert.match(script, /request\.open\('POST', uploadApi\)/);
+  assert.match(script, /request\.setRequestHeader\('X-CSRF-Token', csrfToken\)/);
+  assert.match(script, /request\.upload\.onprogress/);
   assert.match(script, /new FormData\(\)/);
   assert.match(script, /mainFormDirty \|\| hasUnsavedUpload \|\| pendingUploads > 0/);
   assert.match(script, /window\.addEventListener\('beforeunload'/);
