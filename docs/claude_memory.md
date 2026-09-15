@@ -11,7 +11,7 @@
 |---|---|
 | 项目名 | 知了hub（zhiliaohub） |
 | 主仓库 | `https://github.com/z987645344-arch/zhiliaohub` |
-| 当前已存档版本 | ⚠️ **不在本文记具体标签号**——用 `git tag --sort=-v:refname \| head -1` 现查，那是唯一不会过期的来源。本文只记 `git` 查不到的事：**生产运行的版本不由本仓库推导**，只有统筹师看得到；任何角色都不得凭本地Git状态宣称某版本已上线。统筹师口径（2026-09-13）：**线上为 `zhiliaohub v3.7` + `zhiliao-gateway v0.2`**（镜像 `cb7d15e59c90`，nginx 与 admin-server 均 `--force-recreate`）；2026-09-04 口径为 `v3.1`，迁移完成、已去 Cloudflare 代理。历史锚点：`v2.8` 指向 `5d15a82`（2026-08-28 曾在线） |
+| 当前已存档版本 | ⚠️ **不在本文记具体标签号**——用 `git tag --sort=-v:refname \| head -1` 现查，那是唯一不会过期的来源。本文只记 `git` 查不到的事：**生产运行的版本不由本仓库推导**，只有统筹师看得到；任何角色都不得凭本地Git状态宣称某版本已上线。统筹师口径（2026-09-15）：**线上为 `zhiliaohub v3.12` + `zhiliao-gateway v0.2.1`**（HEAD 各指向标签；含验收未通过的详情页 showcase 布局，`v3.13` 回退）。历史口径：09-13 `v3.7` + gateway `v0.2`；09-04 `v3.1`，迁移完成、已去 Cloudflare 代理。历史锚点：`v2.8` 指向 `5d15a82`（2026-08-28 曾在线） |
 | 生产入口 | `https://zhiliaohub.com`；主站、`/admin/login` 与 `/health` 已真实返回 HTTP 200 |
 | 定位 | 个人多作品展示、学习心得、反馈交流与静态小作坊入口 |
 | 前台 | 原生 HTML / CSS / JavaScript，零构建；作品、日记和反馈内容由后台发布为静态 HTML |
