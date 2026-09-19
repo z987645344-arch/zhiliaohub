@@ -72,6 +72,15 @@ CREATE TABLE IF NOT EXISTS content_migrations (
   applied_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS orphan_cleanup_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  last_run_at TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ok', 'error')),
+  deleted_count INTEGER NOT NULL DEFAULT 0,
+  reclaimed_bytes INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT
+);
+
 CREATE TABLE IF NOT EXISTS auth_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   totp_ciphertext TEXT,

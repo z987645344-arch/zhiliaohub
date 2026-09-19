@@ -31,6 +31,10 @@ const { BackupStatusAggregator } = require('./services/backup-status-aggregator'
 const { ZhitianBackupStatusClient } = require('./services/zhitian-backup-status-client');
 const { PublishError, PublishService } = require('./services/publish-service');
 const {
+  deleteReplacedUploadIfUnreferenced,
+  readOrphanCleanupState,
+} = require('./services/orphan-upload-service');
+const {
   loginPage,
   totpSetupPage,
   totpVerifyPage,
@@ -468,6 +472,7 @@ function createApp(overrides = {}, dependencies = {}) {
       publishStatus: publishService.getStatus(),
       pendingFeedbackCount: feedbackService.countPending(),
       backupStatus: await backupStatusAggregator.getStatus(),
+      orphanCleanupStatus: readOrphanCleanupState(database),
       notice: request.query.notice || '',
     }));
   });
@@ -916,6 +921,11 @@ function createApp(overrides = {}, dependencies = {}) {
     try {
       if (!request.file) throw new UploadPolicyError('请选择一个文件。', 400);
       const stored = await validateAndFinalizeUpload(request.file, config);
+      if (request.body?.replaces) {
+        await deleteReplacedUploadIfUnreferenced(config, request.body.replaces).catch((error) => {
+          console.error(`[uploads] 新文件已保存，但旧的未保存上传清理失败：${error.message}`);
+        });
+      }
       if (asJson) return response.status(201).json(stored);
       return response.redirect(`/admin?notice=${encodeURIComponent(`文件已保存：${stored.storedName}`)}`);
     } catch (error) {

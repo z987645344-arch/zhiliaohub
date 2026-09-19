@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -9,9 +10,15 @@ const { loadBackupConfig } = require('../src/backup-config');
 const { parseArguments } = require('../scripts/orphan-uploads');
 const {
   MINIMUM_ORPHAN_UPLOAD_AGE_MS,
+  ORPHAN_ROLLBACK_PREFIX,
+  ORPHAN_ROLLBACK_RETENTION,
   cleanupOrphanUploads,
+  deleteReplacedUploadIfUnreferenced,
   inventoryOrphanUploads,
+  persistOrphanCleanupResult,
+  readOrphanCleanupState,
 } = require('../src/services/orphan-upload-service');
+const { parseArchiveTimestamp } = require('../src/services/backup-scheduler');
 
 function createConfig(runtimeRoot) {
   const dataDir = path.join(runtimeRoot, 'data');
@@ -157,11 +164,83 @@ test('显式清理先生成包含ZIP的回退备份，再删除仍未变化的�
     assert.deepEqual(result.deleted.map((file) => file.relativePath), [orphanName]);
     await assert.rejects(fs.stat(orphanPath), { code: 'ENOENT' });
     assert.ok(result.backup);
+    assert.match(path.basename(result.backup.archivePath), /^orphan-rollback-/);
+    assert.equal(parseArchiveTimestamp(path.basename(result.backup.archivePath)), null);
     assert.equal((await fs.stat(result.backup.archivePath)).isFile(), true);
     const manifestEntry = result.backup.manifest.files.find((file) => file.path === `uploads/${orphanName}`);
     assert.ok(manifestEntry, 'cleanup rollback backup must physically contain the ZIP');
     assert.equal(manifestEntry.size, Buffer.byteLength('rollback-copy'));
     assert.deepEqual(result.backup.manifest.excluded, []);
+
+    for (let index = 1; index <= 3; index += 1) {
+      const nextName = `old-unreferenced-${index}.zip`;
+      await writeUpload(config, nextName, `rollback-${index}`, old);
+      await cleanupOrphanUploads(config, {
+        delete: true,
+        now,
+        backupOptions: { now: new Date(`2026-09-04T12:00:0${index + 1}.000Z`) },
+      });
+    }
+    const rollbackArchives = (await fs.readdir(config.backupDir))
+      .filter((name) => name.startsWith(`${ORPHAN_ROLLBACK_PREFIX}-`));
+    assert.equal(ORPHAN_ROLLBACK_RETENTION, 3);
+    assert.equal(rollbackArchives.length, 3, '孤儿回退包必须独立只保留最近3份。');
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('即时替换只删除命名合法、位于上传池且未被作品引用的旧上传', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-upload-replace-'));
+  const config = createConfig(runtimeRoot);
+  const referencedName = `1720000000000-${crypto.randomUUID()}.webp`;
+  const unreferencedName = `1720000000001-${crypto.randomUUID()}.webp`;
+  try {
+    const database = initializeDatabase(config);
+    const now = new Date().toISOString();
+    database.prepare(`
+      INSERT INTO work_categories (name, slug, kicker, intro, empty_text, display_order, is_visible, created_at, updated_at)
+      VALUES ('程序', 'program', 'PROGRAM', '程序', '暂无', 10, 1, ?, ?)
+    `).run(now, now);
+    database.prepare(`
+      INSERT INTO works (title, slug, work_date, category, summary, detail_intro, cover_image, markdown_path, created_at, updated_at)
+      VALUES ('在用作品', 'used-upload', '2026-09-19', '程序', '摘要', '简介', ?, 'works/used.md', ?, ?)
+    `).run(`assets/works/covers/${referencedName}`, now, now);
+    database.close();
+    await writeUpload(config, referencedName, 'used', new Date());
+    await writeUpload(config, unreferencedName, 'unused', new Date());
+
+    assert.deepEqual(
+      await deleteReplacedUploadIfUnreferenced(config, referencedName),
+      { deleted: false, reason: 'referenced' },
+    );
+    assert.equal(await fs.readFile(path.join(config.uploadsDir, referencedName), 'utf8'), 'used');
+    assert.equal((await deleteReplacedUploadIfUnreferenced(config, unreferencedName)).deleted, true);
+    await assert.rejects(fs.stat(path.join(config.uploadsDir, unreferencedName)), { code: 'ENOENT' });
+    assert.deepEqual(
+      await deleteReplacedUploadIfUnreferenced(config, '../outside.webp'),
+      { deleted: false, reason: 'invalid_name' },
+    );
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('自动清理结果写入SQLite并可在重新打开数据库后读取', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-orphan-state-'));
+  const config = createConfig(runtimeRoot);
+  try {
+    initializeDatabase(config).close();
+    persistOrphanCleanupResult(config, { deleted: [{ size: 1024 }, { size: 2048 }] }, null, new Date('2026-09-19T00:00:00.000Z'));
+    const reopened = initializeDatabase(config);
+    assert.deepEqual(readOrphanCleanupState(reopened), {
+      lastRunAt: '2026-09-19T00:00:00.000Z',
+      status: 'ok',
+      deletedCount: 2,
+      reclaimedBytes: 3072,
+      errorMessage: null,
+    });
+    reopened.close();
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
   }

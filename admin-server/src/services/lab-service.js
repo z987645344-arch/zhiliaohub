@@ -173,9 +173,10 @@ async function extractZip(entries, destinationRoot, limits, topLevelFolder = '')
 }
 
 class LabService {
-  constructor(database, config) {
+  constructor(database, config, dependencies = {}) {
     this.database = database;
     this.config = config;
+    this.extractZip = dependencies.extractZip || extractZip;
   }
 
   projectDirectory(slug) {
@@ -236,7 +237,7 @@ class LabService {
       };
       const inspection = await inspectZip(file.path, temporaryDirectory, limits);
       await fs.mkdir(temporaryDirectory, { recursive: false });
-      await extractZip(inspection.entries, temporaryDirectory, limits, inspection.topLevelFolder);
+      await this.extractZip(inspection.entries, temporaryDirectory, limits, inspection.topLevelFolder);
       const rootIndex = await fs.stat(path.join(temporaryDirectory, 'index.html'));
       if (!rootIndex.isFile()) throw new LabValidationError('ZIP根目录的 index.html 不是普通文件。');
       await fs.rename(temporaryDirectory, finalDirectory);

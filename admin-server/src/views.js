@@ -42,6 +42,7 @@ function dashboardPage({
   notes,
   publishStatus,
   backupStatus,
+  orphanCleanupStatus,
   pendingFeedbackCount = 0,
   notice = '',
 }) {
@@ -63,11 +64,16 @@ function dashboardPage({
     return `<section class="panel backup-status backup-status-${escapeHtml(state)}${danger}" data-backup-project="${escapeHtml(project)}" data-backup-status="${escapeHtml(state)}"><div><p class="backup-status-kicker">${escapeHtml(title)} · 调度备份</p><h2>${escapeHtml(status.label || fallbackLabel)}</h2><p>${escapeHtml(status.hint || '当前无法判断备份状态。')}</p></div></section>`;
   };
   const backup = `<div class="backup-status-grid">${backupCard('zhiliaohub', '知了hub', backupStatus?.zhiliaohub)}${backupCard('zhitian', '知天', backupStatus?.zhitian)}</div>`;
+  const cleanup = orphanCleanupStatus
+    ? orphanCleanupStatus.status === 'ok'
+      ? `<p class="notice"><strong>上次自动清理</strong>：${escapeHtml(formatDateTime(orphanCleanupStatus.lastRunAt))} · 删除 ${Number(orphanCleanupStatus.deletedCount)} 个 · 回收 ${(Number(orphanCleanupStatus.reclaimedBytes) / 1024 / 1024).toFixed(2)} MB</p>`
+      : `<p class="notice error"><strong>上次自动清理失败</strong>：${escapeHtml(formatDateTime(orphanCleanupStatus.lastRunAt))} · ${escapeHtml(orphanCleanupStatus.errorMessage || '原因未知')}</p>`
+    : '<p class="notice"><strong>上次自动清理</strong>：尚未运行。</p>';
   return layout({
     title: '管理面板',
     authenticated: true,
     csrfToken,
-    content: `${noticeBlock(notice)}<section class="panel dashboard-intro"><p class="admin-kicker">01 / 编辑室</p><h1>内容管理</h1><p>继续写一篇心得，或整理一件作品。保存会立即更新公开页面，没有单独的草稿步骤。</p>${publication}<form method="post" action="/admin/publish"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="button-secondary">更新公开页面</button></form><p class="dashboard-actions"><a class="button button-secondary" href="/admin/categories">管理作品分组</a> <a class="button button-secondary" href="/admin/feedback">审核反馈${pendingFeedbackCount ? `（${pendingFeedbackCount} 条待审核）` : ''}</a> <a class="button button-secondary" href="/admin/lab">管理小作坊</a> <a class="button button-secondary" href="/admin/device">管理手机登录</a></p></section><div class="grid"><section class="panel"><p class="admin-kicker">作品 / WORKS</p><h2>作品</h2><a class="button" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>分类</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button button-secondary" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div><p class="admin-kicker">存放与备份 / 打开此页时检查</p>${backup}`,
+    content: `${noticeBlock(notice)}<section class="panel dashboard-intro"><p class="admin-kicker">01 / 编辑室</p><h1>内容管理</h1><p>继续写一篇心得，或整理一件作品。保存会立即更新公开页面，没有单独的草稿步骤。</p>${publication}<form method="post" action="/admin/publish"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><button type="submit" class="button-secondary">更新公开页面</button></form><p class="dashboard-actions"><a class="button button-secondary" href="/admin/categories">管理作品分组</a> <a class="button button-secondary" href="/admin/feedback">审核反馈${pendingFeedbackCount ? `（${pendingFeedbackCount} 条待审核）` : ''}</a> <a class="button button-secondary" href="/admin/lab">管理小作坊</a> <a class="button button-secondary" href="/admin/device">管理手机登录</a></p></section><div class="grid"><section class="panel"><p class="admin-kicker">作品 / WORKS</p><h2>作品</h2><a class="button" href="/admin/works/new">新增作品</a><table><thead><tr><th>日期</th><th>标题</th><th>分类</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(works, 'work')}</tbody></table></section><section class="panel"><h2>日记</h2><a class="button button-secondary" href="/admin/notes/new">新增日记</a><table><thead><tr><th>日期</th><th>标题</th><th>摘要</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows(notes, 'note')}</tbody></table></section></div><p class="admin-kicker">存放与备份 / 打开此页时检查</p>${backup}${cleanup}`,
   });
 }
 

@@ -664,6 +664,7 @@ function workFormScript() {
   let mainFormDirty = false;
   let hasUnsavedUpload = false;
   let allowUnload = false;
+  const unsavedUploadsByField = new Map();
 
   function localUploadStatus(name) {
     return form.querySelector('[data-upload-local-status="' + name + '"]');
@@ -739,9 +740,12 @@ function workFormScript() {
     field.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, true);
 
-  async function uploadFile(file, directory, localStatus) {
+  async function uploadFile(file, directory, localStatus, replacementKey = '') {
     const body = new FormData();
     body.append('file', file, file.name);
+    if (replacementKey && unsavedUploadsByField.has(replacementKey)) {
+      body.append('replaces', unsavedUploadsByField.get(replacementKey));
+    }
     setPending(1);
     setStatus('正在上传 ' + file.name + '…', false, localStatus);
     try {
@@ -778,6 +782,7 @@ function workFormScript() {
       });
       hasUnsavedUpload = true;
       markMainFormDirty();
+      if (replacementKey) unsavedUploadsByField.set(replacementKey, payload.storedName);
       setStatus('已上传 ' + payload.originalName + ' · 保存作品后才会生效', false, localStatus);
       return {
         path: 'assets/works/' + directory + '/' + payload.storedName,
@@ -1018,7 +1023,7 @@ function workFormScript() {
     const blob = await new Promise((resolve) => output.toBlob(resolve, 'image/webp', 0.9));
     if (!blob) return setStatus('浏览器无法生成裁剪后的封面。', true, coverStatus);
     try {
-      const result = await uploadFile(new File([blob], 'cover.webp', { type: 'image/webp' }), 'covers', coverStatus);
+      const result = await uploadFile(new File([blob], 'cover.webp', { type: 'image/webp' }), 'covers', coverStatus, 'cover');
       coverValue.value = result.path;
       renderPreview(coverPreview, result, 'image', '当前作品封面', 'data-clear-cover');
     } catch (error) {
@@ -1037,7 +1042,7 @@ function workFormScript() {
     if (type === 'image' && !file.type.startsWith('image/')) return setStatus('当前主媒体类型是图片，请选择图片文件。', true, mainStatus);
     if (type === 'video' && !file.type.startsWith('video/')) return setStatus('当前主媒体类型是视频，请选择MP4或WebM。', true, mainStatus);
     try {
-      const result = await uploadFile(file, 'main', mainStatus);
+      const result = await uploadFile(file, 'main', mainStatus, 'main');
       mainValue.value = result.path;
       renderPreview(mainPreview, result, type, '当前主媒体', 'data-clear-main');
     } catch (error) {
@@ -1122,7 +1127,7 @@ function workFormScript() {
     const file = downloadUpload.files[0];
     if (!file) return;
     try {
-      const result = await uploadFile(file, 'downloads', downloadStatus);
+      const result = await uploadFile(file, 'downloads', downloadStatus, 'download');
       downloadValue.value = result.path;
       clearElement(downloadPreview);
       const name = document.createElement('span');

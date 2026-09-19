@@ -14,6 +14,10 @@
 // scheduled boundary has passed and takes one immediately.
 const fs = require('node:fs/promises');
 const { SCHEDULED_BACKUP_PREFIX, createBackup } = require('./backup-service');
+const {
+  cleanupOrphanUploads,
+  persistOrphanCleanupResult,
+} = require('./orphan-upload-service');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
@@ -81,6 +85,8 @@ class BackupScheduler {
     this.localTime = config.backupScheduleLocalTime ?? DEFAULT_LOCAL_TIME;
     parseLocalTime(this.localTime);
     this.createBackup = options.createBackup || createBackup;
+    this.cleanupOrphanUploads = options.cleanupOrphanUploads || cleanupOrphanUploads;
+    this.persistOrphanCleanupResult = options.persistOrphanCleanupResult || persistOrphanCleanupResult;
     this.now = options.now || (() => new Date());
     this.logger = options.logger || console;
     this.setTimeout = options.setTimeout || setTimeout;
@@ -125,7 +131,29 @@ class BackupScheduler {
       } else if (result.replication && !result.replication.skipped) {
         this.logger.error(`[backup] 定时备份的异地同步失败：${result.replication.error}（本地备份仍然有效）`);
       }
-      return { created: true, result, lastBackupAt: last, scheduledBoundaryAt };
+      let orphanCleanup;
+      try {
+        orphanCleanup = await this.cleanupOrphanUploads(this.config, {
+          delete: true,
+          now,
+          backupOptions: { now },
+        });
+        const persisted = this.persistOrphanCleanupResult(this.config, orphanCleanup, null, now);
+        const reclaimedBytes = orphanCleanup.deleted.reduce((total, file) => total + Number(file.size || 0), 0);
+        this.logger.log(
+          `[backup] 上传孤儿自动清理完成：删除 ${orphanCleanup.deleted.length} 个，`
+          + `回收 ${reclaimedBytes} 字节；结果已持久化于 ${persisted.lastRunAt}。`,
+        );
+      } catch (cleanupError) {
+        try {
+          this.persistOrphanCleanupResult(this.config, null, cleanupError, now);
+        } catch (persistError) {
+          this.logger.error(`[backup] 上传孤儿自动清理失败，且无法持久化失败状态：${persistError.message}`);
+        }
+        this.logger.error(`[backup] 定时备份已成功，但上传孤儿自动清理失败：${cleanupError.message}`);
+        orphanCleanup = { failed: true, error: cleanupError };
+      }
+      return { created: true, result, orphanCleanup, lastBackupAt: last, scheduledBoundaryAt };
     } catch (error) {
       // Loud on purpose. A backup system that fails quietly is worse than none, because it
       // produces confidence without protection.

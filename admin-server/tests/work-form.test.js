@@ -82,6 +82,8 @@ test('作品表单脚本使用原生Canvas、XMLHttpRequest和受CSRF保护的�
   assert.match(script, /request\.setRequestHeader\('X-CSRF-Token', csrfToken\)/);
   assert.match(script, /request\.upload\.onprogress/);
   assert.match(script, /new FormData\(\)/);
+  assert.match(script, /body\.append\('replaces', unsavedUploadsByField\.get\(replacementKey\)\)/);
+  assert.match(script, /unsavedUploadsByField\.set\(replacementKey, payload\.storedName\)/);
   assert.match(script, /mainFormDirty \|\| hasUnsavedUpload \|\| pendingUploads > 0/);
   assert.match(script, /window\.addEventListener\('beforeunload'/);
   assert.match(script, /form\.addEventListener\('invalid'/);

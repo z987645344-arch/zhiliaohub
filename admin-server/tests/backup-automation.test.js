@@ -331,6 +331,49 @@ test('定时备份失败时记录明确日志且不抛出，不会静默失败',
   }
 });
 
+test('上传孤儿自动清理只在调度备份成功后运行并持久化结果', async () => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-schedule-orphan-cleanup-'));
+  const config = createConfig(runtimeRoot);
+  let cleanupCalls = 0;
+  const persisted = [];
+  try {
+    await seedStorage(config);
+    const failed = new BackupScheduler(config, {
+      logger: silentLogger,
+      createBackup: async () => { throw new Error('backup failed'); },
+      cleanupOrphanUploads: async () => { cleanupCalls += 1; },
+      persistOrphanCleanupResult: (...args) => persisted.push(args),
+    });
+    assert.equal((await failed.tick()).failed, true);
+    assert.equal(cleanupCalls, 0, '备份失败当天不得运行删除逻辑。');
+    assert.equal(persisted.length, 0);
+
+    const now = new Date('2026-09-19T00:00:00.000Z');
+    const succeeded = new BackupScheduler(config, {
+      now: () => now,
+      logger: silentLogger,
+      createBackup: async () => ({ archivePath: 'scheduled-backup-proof.tar.gz' }),
+      cleanupOrphanUploads: async (_config, options) => {
+        cleanupCalls += 1;
+        assert.equal(options.delete, true);
+        assert.equal(options.now, now);
+        return { deleted: [{ size: 4096 }] };
+      },
+      persistOrphanCleanupResult: (...args) => {
+        persisted.push(args);
+        return { lastRunAt: now.toISOString() };
+      },
+    });
+    const result = await succeeded.tick();
+    assert.equal(result.created, true);
+    assert.equal(cleanupCalls, 1);
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0][1].deleted.length, 1);
+  } finally {
+    await fs.rm(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
 test('定时备份失败会在同一调度周期按固定退避重试，成功后连续失败计数归零', async () => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-schedule-retry-'));
   const config = createConfig(runtimeRoot);

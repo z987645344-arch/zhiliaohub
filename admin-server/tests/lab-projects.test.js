@@ -10,7 +10,7 @@ const speakeasy = require('speakeasy');
 
 const { createApp } = require('../src/app');
 const { MAX_SLUG_BYTES } = require('../src/lib/slug');
-const { LabValidationError } = require('../src/services/lab-service');
+const { LabService, LabValidationError } = require('../src/services/lab-service');
 
 const CRC_TABLE = Array.from({ length: 256 }, (_unused, number) => {
   let value = number;
@@ -286,6 +286,26 @@ test('进程中断遗留的pending-lab临时文件会在下一次启动时清理
   t.after(() => runtime.close());
   assert.notEqual(runtime.interruptedLabUploadPath, '');
   await assert.rejects(fs.access(runtime.interruptedLabUploadPath), /ENOENT/);
+});
+
+test('ZIP解压中途抛错会清掉半成品pending目录与上传临时包', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const file = await runtime.writeUpload('pending-lab-mid-extract.zip', validLabZip());
+  const service = new LabService(runtime.database, runtime.config, {
+    extractZip: async (_entries, destinationRoot) => {
+      await fs.writeFile(path.join(destinationRoot, 'partial.html'), 'partial');
+      throw new Error('simulated disk full during extraction');
+    },
+  });
+
+  await assert.rejects(
+    service.createProject(file, { title: '中途失败', description: '验证半成品清理。' }),
+    /小作坊项目创建失败：simulated disk full during extraction/,
+  );
+  const storageEntries = await fs.readdir(runtime.config.labStorageDir);
+  assert.deepEqual(storageEntries.filter((name) => name.startsWith('.pending-')), []);
+  await assert.rejects(fs.stat(file.path), { code: 'ENOENT' });
 });
 
 test('小作坊超长中文标题仍创建受限且唯一的目录名', async (t) => {

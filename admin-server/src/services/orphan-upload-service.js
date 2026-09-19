@@ -8,6 +8,9 @@ const Database = require('better-sqlite3');
 const { createBackup } = require('./backup-service');
 
 const MINIMUM_ORPHAN_UPLOAD_AGE_MS = 24 * 60 * 60 * 1000;
+const ORPHAN_ROLLBACK_PREFIX = 'orphan-rollback';
+const ORPHAN_ROLLBACK_RETENTION = 3;
+const STORED_UPLOAD_NAME_PATTERN = /^\d{10,}-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 
 function quoteIdentifier(value) {
   return `"${String(value).replaceAll('"', '""')}"`;
@@ -140,7 +143,11 @@ async function cleanupOrphanUploads(config, options = {}) {
 
   // This manual backup is the rollback point. Force ZIP inclusion even when routine
   // archives omit ZIP contents; otherwise deleting an orphan ZIP would not be reversible.
-  const backup = await createBackup({ ...config, backupExcludeZip: false }, options.backupOptions);
+  const backup = await createBackup({ ...config, backupExcludeZip: false }, {
+    ...options.backupOptions,
+    namePrefix: ORPHAN_ROLLBACK_PREFIX,
+    retentionCount: ORPHAN_ROLLBACK_RETENTION,
+  });
   const afterBackup = await inventoryOrphanUploads(config, options);
   const initialByPath = new Map(initial.orphans.map((file) => [file.relativePath, file]));
   const unchanged = afterBackup.orphans.filter((file) => {
@@ -185,4 +192,67 @@ async function cleanupOrphanUploads(config, options = {}) {
   };
 }
 
-module.exports = { MINIMUM_ORPHAN_UPLOAD_AGE_MS, cleanupOrphanUploads, inventoryOrphanUploads };
+async function deleteReplacedUploadIfUnreferenced(config, storedName) {
+  const filename = String(storedName || '');
+  if (!STORED_UPLOAD_NAME_PATTERN.test(filename) || path.posix.basename(filename) !== filename) {
+    return { deleted: false, reason: 'invalid_name' };
+  }
+  const target = path.resolve(config.uploadsDir, filename);
+  if (path.dirname(target) !== path.resolve(config.uploadsDir)) {
+    return { deleted: false, reason: 'outside_uploads' };
+  }
+  const inventory = await inventoryOrphanUploads(config);
+  const candidate = inventory.files.find((file) => file.relativePath === filename);
+  if (!candidate) return { deleted: false, reason: 'missing' };
+  if (candidate.references.length > 0) return { deleted: false, reason: 'referenced' };
+  await fs.unlink(target);
+  return { deleted: true, reason: 'unreferenced', filename };
+}
+
+function persistOrphanCleanupResult(config, result, error = null, now = new Date()) {
+  const database = new Database(config.databasePath);
+  try {
+    const deleted = result?.deleted || [];
+    const reclaimedBytes = deleted.reduce((total, file) => total + Number(file.size || 0), 0);
+    database.prepare(`
+      INSERT INTO orphan_cleanup_state (
+        id, last_run_at, status, deleted_count, reclaimed_bytes, error_message
+      ) VALUES (1, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        last_run_at = excluded.last_run_at,
+        status = excluded.status,
+        deleted_count = excluded.deleted_count,
+        reclaimed_bytes = excluded.reclaimed_bytes,
+        error_message = excluded.error_message
+    `).run(
+      now.toISOString(),
+      error ? 'error' : 'ok',
+      deleted.length,
+      reclaimedBytes,
+      error ? String(error.message || error) : null,
+    );
+    return { lastRunAt: now.toISOString(), status: error ? 'error' : 'ok', deletedCount: deleted.length, reclaimedBytes };
+  } finally {
+    database.close();
+  }
+}
+
+function readOrphanCleanupState(database) {
+  return database.prepare(`
+    SELECT last_run_at AS lastRunAt, status, deleted_count AS deletedCount,
+      reclaimed_bytes AS reclaimedBytes, error_message AS errorMessage
+    FROM orphan_cleanup_state WHERE id = 1
+  `).get() || null;
+}
+
+module.exports = {
+  MINIMUM_ORPHAN_UPLOAD_AGE_MS,
+  ORPHAN_ROLLBACK_PREFIX,
+  ORPHAN_ROLLBACK_RETENTION,
+  STORED_UPLOAD_NAME_PATTERN,
+  cleanupOrphanUploads,
+  deleteReplacedUploadIfUnreferenced,
+  inventoryOrphanUploads,
+  persistOrphanCleanupResult,
+  readOrphanCleanupState,
+};

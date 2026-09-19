@@ -194,6 +194,7 @@ test('仪表盘不再提供孤儿文件上传入口，旧页面上传路由返�
   const dashboardHtml = await dashboardResponse.text();
   assert.doesNotMatch(dashboardHtml, /<h2>文件上传<\/h2>/);
   assert.doesNotMatch(dashboardHtml, /action="\/admin\/uploads"/);
+  assert.match(dashboardHtml, /上次自动清理<\/strong>：尚未运行/);
 
   const legacyUploadResponse = await client.request('/admin/uploads', {
     method: 'POST',
@@ -841,9 +842,10 @@ test('上传策略接受真实 PNG，并分别拒绝非白名单、内容伪装�
   const client = createClient(runtime.baseUrl);
   const { csrf } = await bindAndAuthenticate(client, runtime);
 
-  async function upload(buffer, type, name) {
+  async function upload(buffer, type, name, replaces = '') {
     const body = new FormData();
     body.append('file', new Blob([buffer], { type }), name);
+    if (replaces) body.append('replaces', replaces);
     return client.request('/api/admin/uploads', {
       method: 'POST',
       headers: { 'x-csrf-token': csrf },
@@ -860,6 +862,11 @@ test('上传策略接受真实 PNG，并分别拒绝非白名单、内容伪装�
     assert.equal(payload.originalName, originalName);
     assert.match(payload.storedName, /^\d+-[0-9a-f-]+\.png$/);
     assert.doesNotMatch(payload.storedName, /中文封面/);
+    const replacement = await upload(ONE_PIXEL_PNG, 'image/png', '替换封面.png', payload.storedName);
+    assert.equal(replacement.status, 201);
+    const replacementPayload = await replacement.json();
+    await assert.rejects(fs.stat(path.join(runtime.config.uploadsDir, payload.storedName)), { code: 'ENOENT' });
+    assert.equal((await fs.stat(path.join(runtime.config.uploadsDir, replacementPayload.storedName))).isFile(), true);
   });
 
   await t.test('带 PK 文件头的 ZIP 上传成功', async () => {
