@@ -8,6 +8,7 @@ const WORK_CATEGORY_MIGRATION_NAME = 'works-categories-program-film-life-v1';
 const WORK_TOOLS_VISIBILITY_MIGRATION_NAME = 'works-show-on-tools-v1';
 const WORK_CATEGORY_RECORDS_MIGRATION_NAME = 'works-data-driven-categories-v1';
 const WORK_UPDATES_MIGRATION_NAME = 'works-update-timeline-v1';
+const WORK_DETAIL_BODY_MIGRATION_NAME = 'works-detail-body-v1';
 const WORK_CATEGORY_MAPPINGS = Object.freeze([
   Object.freeze({ from: '影像创作', to: '影视' }),
   Object.freeze({ from: 'AI音乐', to: '影视' }),
@@ -247,6 +248,23 @@ function migrateWorkUpdates(database) {
   return { applied: true, migratedRows: migrate() };
 }
 
+function migrateWorkDetailBody(database) {
+  const applied = database.prepare('SELECT 1 FROM content_migrations WHERE name = ?')
+    .get(WORK_DETAIL_BODY_MIGRATION_NAME);
+  if (applied) return { applied: false, columnAdded: false };
+
+  const migrate = database.transaction(() => {
+    const columns = new Set(database.prepare('PRAGMA table_info(works)').all().map((row) => row.name));
+    const columnAdded = !columns.has('detail_body');
+    if (columnAdded) database.exec('ALTER TABLE works ADD COLUMN detail_body TEXT');
+    database.prepare('INSERT INTO content_migrations (name, applied_at) VALUES (?, ?)')
+      .run(WORK_DETAIL_BODY_MIGRATION_NAME, new Date().toISOString());
+    return columnAdded;
+  });
+
+  return { applied: true, columnAdded: migrate() };
+}
+
 function initializeDatabase(config) {
   fs.mkdirSync(config.dataDir, { recursive: true });
   fs.mkdirSync(path.join(config.contentDir, 'works'), { recursive: true });
@@ -293,6 +311,7 @@ function initializeDatabase(config) {
   migrateWorkToolsVisibility(database);
   migrateWorkCategoryRecords(database);
   migrateWorkUpdates(database);
+  migrateWorkDetailBody(database);
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_works_date ON works(work_date DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_works_slug ON works(slug) WHERE slug IS NOT NULL;
@@ -310,9 +329,11 @@ module.exports = {
   WORK_CATEGORY_RECORDS_MIGRATION_NAME,
   WORK_TOOLS_VISIBILITY_MIGRATION_NAME,
   WORK_UPDATES_MIGRATION_NAME,
+  WORK_DETAIL_BODY_MIGRATION_NAME,
   initializeDatabase,
   migrateWorkCategories,
   migrateWorkCategoryRecords,
   migrateWorkToolsVisibility,
   migrateWorkUpdates,
+  migrateWorkDetailBody,
 };

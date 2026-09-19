@@ -211,11 +211,12 @@ class PublishService {
 
     for (const [index, work] of works.entries()) {
       const slug = assertSlug(work.slug);
+      const htmlDetailBody = work.detail_body ? renderMarkdown(work.detail_body) : '';
       const updates = (updatesByWorkId.get(work.id) || []).map((update) => ({
         ...update,
         htmlBody: renderMarkdown(update.body),
       }));
-      files.set(`works-${slug}.html`, renderWorkDetail(work, updates, index));
+      files.set(`works-${slug}.html`, renderWorkDetail({ ...work, htmlDetailBody }, updates, index));
       addMedia(work.cover_image, MEDIA_DIRECTORIES.cover);
       addMedia(work.main_media_path, MEDIA_DIRECTORIES.main);
       addMedia(work.download_file, MEDIA_DIRECTORIES.download);

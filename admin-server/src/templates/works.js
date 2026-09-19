@@ -147,6 +147,9 @@ function renderWorkDetail(work, updates = [], index = 0) {
   const updatesMarkup = sortedUpdates.length
     ? `<div class="version-timeline">${visibleUpdates.map(renderUpdate).join('')}${hiddenUpdatesMarkup}</div>`
     : '<p class="version-log-empty">还没有更新记录。之后的调整与新进展会记在这里。</p>';
+  const detailsMarkup = work.htmlDetailBody
+    ? `<section class="detail-content work-manual" aria-labelledby="work-manual-title"><div class="section-bar"><h2 id="work-manual-title">详情</h2><span>WORK MANUAL</span></div><div class="version-log work-manual-body">${work.htmlDetailBody}</div></section>`
+    : '';
   return page({
     title: work.title,
     description: work.detail_intro || '',
@@ -154,7 +157,7 @@ function renderWorkDetail(work, updates = [], index = 0) {
     bodyClass: 'detail-page',
     content: `<main class="detail-main" id="main-content">
       <div class="showcase-shell"><a class="back-link" href="works.html">← 返回作品列表</a><section class="showcase" aria-labelledby="detail-title"><div class="showcase-left"><div class="showcase-stage" data-showcase-stage aria-live="polite">${mainMedia}</div>${thumbs ? `<div class="showcase-thumbs" data-showcase-thumbs aria-label="作品辅助媒体">${thumbs}</div>` : ''}</div><div class="showcase-right"><p class="page-kicker">${escapeHtml(work.category)} / WORK ${number}</p><h1 id="detail-title">${escapeHtml(work.title)}</h1><p class="showcase-intro">${escapeHtml(work.detail_intro || '')}</p>${actions}<div class="showcase-meta"><span>状态 / ${status}</span></div></div></section></div>
-      <section class="detail-content" aria-labelledby="version-log-title"><div class="section-bar"><h2 id="version-log-title">更新记录</h2><span>${sortedUpdates.length ? `${sortedUpdates.length} ENTRIES` : 'NO ENTRIES'}</span></div><div class="version-log">${updatesMarkup}</div></section>
+      ${detailsMarkup}<section class="detail-content" aria-labelledby="version-log-title"><div class="section-bar"><h2 id="version-log-title">更新记录</h2><span>${sortedUpdates.length ? `${sortedUpdates.length} ENTRIES` : 'NO ENTRIES'}</span></div><div class="version-log">${updatesMarkup}</div></section>
     </main>`,
   });
 }

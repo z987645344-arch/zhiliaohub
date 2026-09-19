@@ -10,6 +10,7 @@ const {
   WORK_CATEGORY_RECORDS_MIGRATION_NAME,
   WORK_TOOLS_VISIBILITY_MIGRATION_NAME,
   WORK_UPDATES_MIGRATION_NAME,
+  WORK_DETAIL_BODY_MIGRATION_NAME,
   initializeDatabase,
 } = require('../src/db');
 const { MAX_SLUG_BYTES } = require('../src/lib/slug');
@@ -23,6 +24,7 @@ const expectedColumns = [
   'main_media_path',
   'gallery',
   'version_log',
+  'detail_body',
 ];
 
 test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移', async () => {
@@ -119,9 +121,16 @@ test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移'
     assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_CATEGORY_MIGRATION_NAME));
     assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_TOOLS_VISIBILITY_MIGRATION_NAME));
     assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_CATEGORY_RECORDS_MIGRATION_NAME));
+    assert.ok(database.prepare('SELECT 1 FROM content_migrations WHERE name = ?').get(WORK_DETAIL_BODY_MIGRATION_NAME));
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM works WHERE detail_body IS NULL').get().count,
+      categories.length + 3,
+      '旧作品新增详情列后必须保留行数并默认留空。',
+    );
 
     database.prepare("UPDATE works SET category = '生活' WHERE slug = 'work-5'").run();
     database.prepare("UPDATE works SET show_on_tools = 1 WHERE slug = 'work-0'").run();
+    database.prepare("UPDATE works SET detail_body = '# 保留详情' WHERE slug = 'work-0'").run();
     database.close();
     database = initializeDatabase(config);
     assert.equal(
@@ -130,6 +139,7 @@ test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移'
       '迁移标记存在后不得重复改写数据。',
     );
     assert.equal(database.prepare("SELECT show_on_tools FROM works WHERE slug = 'work-0'").get().show_on_tools, 1);
+    assert.equal(database.prepare("SELECT detail_body FROM works WHERE slug = 'work-0'").get().detail_body, '# 保留详情');
     assert.equal(
       database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?')
         .get(WORK_TOOLS_VISIBILITY_MIGRATION_NAME).count,
@@ -141,6 +151,12 @@ test('旧 works 表保留真实记录、补齐字段并幂等执行内容迁移'
         .get(WORK_CATEGORY_RECORDS_MIGRATION_NAME).count,
       1,
       '重复启动不得重复记录或执行数据驱动分组迁移。',
+    );
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?')
+        .get(WORK_DETAIL_BODY_MIGRATION_NAME).count,
+      1,
+      '重复启动不得重复记录或执行作品详情迁移。',
     );
     database.close();
     database = null;

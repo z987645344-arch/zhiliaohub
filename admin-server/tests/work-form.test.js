@@ -19,7 +19,7 @@ test('独立作品表单用现有分组下拉选择且日记旧字段不再混�
     record: { category: '隐藏分组' },
   });
   for (const name of [
-    'title', 'workDate', 'category', 'detailIntro', 'coverImage', 'mainMediaType',
+    'title', 'workDate', 'category', 'detailIntro', 'detailBody', 'coverImage', 'mainMediaType',
     'mainMediaPath', 'gallery', 'isDownloadable', 'downloadFile', 'experienceUrl', 'showOnTools',
   ]) {
     assert.match(html, new RegExp(`name="${name}"`));
@@ -29,6 +29,9 @@ test('独立作品表单用现有分组下拉选择且日记旧字段不再混�
   assert.match(html, /data-cover-canvas/);
   assert.match(html, /name="detailIntro" required maxlength="100"/);
   assert.match(html, /data-detail-intro-count[^>]*>0 \/ 100/);
+  assert.match(html, /id="work-details"/);
+  assert.match(html, /name="detailBody"/);
+  assert.match(html, /05 更新记录/);
   assert.match(html, /multiple accept=/);
   assert.match(html, /在智能工具页显示这条作品/);
   assert.match(html, /<script src="\/admin\/work-form\.js" defer><\/script>/);

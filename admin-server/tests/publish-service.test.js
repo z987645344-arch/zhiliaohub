@@ -149,6 +149,7 @@ test('全量发布生成安全静态页、解决slug重名并只清理带标记�
     category: '影视',
     summary: '第一条 & 摘要',
     detailIntro: '第一条 & 摘要',
+    detailBody: '## 作品说明书\n\n正文内容\n\n<script>alert(1)</script>\n\n[危险链接](javascript:alert(2))',
     body: '## Markdown 标题\n\n正文内容\n\n<script>alert(1)</script>\n\n[危险链接](javascript:alert(2))',
   });
   const second = await fixture.contentService.createWork({
@@ -184,9 +185,13 @@ test('全量发布生成安全静态页、解决slug重名并只清理带标记�
   assert.match(listHtml, /同名作品 &lt;script&gt;/);
   assert.doesNotMatch(listHtml, /<script>[^<]*<\/script>/);
   assert.match(detailHtml, /<h2>Markdown 标题<\/h2>/);
+  assert.match(detailHtml, /<h2 id="work-manual-title">详情<\/h2>/);
+  assert.match(detailHtml, /<h2>作品说明书<\/h2>/);
   assert.match(detailHtml, /第一条 &amp; 摘要/);
   assert.doesNotMatch(detailHtml, /<script>/);
   assert.doesNotMatch(detailHtml, /href="javascript:/);
+  const secondDetailHtml = await fs.readFile(path.join(fixture.config.siteRoot, `works-${second.slug}.html`), 'utf8');
+  assert.doesNotMatch(secondDetailHtml, /work-manual-title/);
   assert.match(filmCategoryHtml, /全部影视作品/);
   assert.match(filmCategoryHtml, /同名作品 &lt;script&gt;/);
   assert.match(programCategoryHtml, /程序作品正在整理中/);

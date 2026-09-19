@@ -1929,6 +1929,23 @@ canvas {
   text-align: center;
 }
 
+.work-manual {
+  max-width: 72ch;
+}
+
+.work-manual-body img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+.archive-page .work-manual-body code {
+  background: var(--archive-raised);
+  color: var(--white);
+}
+
 .version-more {
   overflow: hidden;
   border: 1px solid var(--line);

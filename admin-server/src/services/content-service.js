@@ -165,7 +165,7 @@ function validateWorkGallery(value) {
   return JSON.stringify(normalized);
 }
 
-function workRecord(input, database, existing = null) {
+function workRecord(input, database, maxBytes, existing = null) {
   const detailIntro = requiredCodePointText(input.detailIntro, '详情页简介', 100);
   const experienceUrl = validateExperienceUrl(input.experienceUrl ?? existing?.experience_url);
   const showOnTools = booleanFlag(input.showOnTools, Boolean(existing?.show_on_tools));
@@ -185,6 +185,7 @@ function workRecord(input, database, existing = null) {
     category: validateCategory(input.category ?? existing?.category, database),
     summary: requiredText(input.summary ?? detailIntro, '摘要', 500),
     detailIntro,
+    detailBody: optionalMarkdownBody(input.detailBody ?? existing?.detail_body, maxBytes),
     coverImage: validateMediaPath(
       input.coverImage ?? existing?.cover_image,
       '封面图',
@@ -252,6 +253,15 @@ function validDate(value, label) {
 function markdownBody(value, maxBytes) {
   const body = String(value ?? '').replaceAll('\r\n', '\n');
   if (!body.trim()) throw new ContentValidationError('Markdown正文不能为空。');
+  if (Buffer.byteLength(body, 'utf8') > maxBytes) {
+    throw new ContentValidationError(`Markdown正文不能超过 ${maxBytes} 字节。`, 413);
+  }
+  return body.endsWith('\n') ? body : `${body}\n`;
+}
+
+function optionalMarkdownBody(value, maxBytes) {
+  const body = String(value ?? '').replaceAll('\r\n', '\n');
+  if (!body.trim()) return null;
   if (Buffer.byteLength(body, 'utf8') > maxBytes) {
     throw new ContentValidationError(`Markdown正文不能超过 ${maxBytes} 字节。`, 413);
   }
@@ -412,7 +422,7 @@ class ContentService {
 
   async createWork(input) {
     return this.runSerializedUpdate('works:all', async () => {
-      const record = workRecord(input, this.database);
+      const record = workRecord(input, this.database, this.config.contentMaxBytes);
       record.slug = this.uniqueSlug('works', record.title);
       const relativePath = `works/${randomUUID()}.md`;
       const targetPath = safeContentPath(this.config.contentDir, relativePath, 'works');
@@ -422,12 +432,12 @@ class ContentService {
       try {
         const result = this.database.prepare(`
           INSERT INTO works (
-            title, slug, work_date, category, summary, detail_intro,
+            title, slug, work_date, category, summary, detail_intro, detail_body,
             cover_image, is_downloadable, download_file, experience_url,
             show_on_tools,
             main_media_type, main_media_path, gallery,
             markdown_path, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           record.title,
           record.slug,
@@ -435,6 +445,7 @@ class ContentService {
           record.category,
           record.summary,
           record.detailIntro,
+          record.detailBody,
           record.coverImage,
           record.isDownloadable,
           record.downloadFile,
@@ -483,11 +494,11 @@ class ContentService {
   async updateWork(id, input) {
     return this.runSerializedUpdate('works:all', async () => {
       const existing = await this.getWork(id);
-      const record = workRecord(input, this.database, existing);
+      const record = workRecord(input, this.database, this.config.contentMaxBytes, existing);
       try {
         this.database.prepare(`
           UPDATE works SET
-            title = ?, work_date = ?, category = ?, summary = ?, detail_intro = ?,
+            title = ?, work_date = ?, category = ?, summary = ?, detail_intro = ?, detail_body = ?,
             cover_image = ?, is_downloadable = ?, download_file = ?, experience_url = ?,
             show_on_tools = ?,
             main_media_type = ?, main_media_path = ?, gallery = ?, updated_at = ?
@@ -498,6 +509,7 @@ class ContentService {
           record.category,
           record.summary,
           record.detailIntro,
+          record.detailBody,
           record.coverImage,
           record.isDownloadable,
           record.downloadFile,

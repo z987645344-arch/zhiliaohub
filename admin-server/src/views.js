@@ -195,8 +195,8 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '', not
     ? `${visibleUpdates.map(renderUpdateItem).join('')}${hiddenUpdatesMarkup}`
     : '<p class="empty-state">还没有更新记录。保存作品后，可以从这里逐条补充进展。</p>';
   const updatesSection = isEdit
-    ? `<section class="form-section work-updates-admin" id="work-updates" aria-labelledby="work-updates-title"><h2 id="work-updates-title"><span class="section-number">04</span>更新记录</h2><p class="hint">记录会按时间倒序展示给访客。历史记录可删除；需要修改时，请删除后重新添加。</p><form method="post" action="/admin/works/${record.id}/updates" data-work-update-action><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><div class="form-grid"><div><label for="updateRecordedAt">记录时间</label><input id="updateRecordedAt" name="recordedAt" type="datetime-local" value="${currentUtc8DateTimeLocal()}" required></div></div><label for="updateBody">记录正文</label><textarea id="updateBody" name="body" required></textarea><button type="submit">添加记录并发布</button><p class="upload-status" data-work-update-status role="status" aria-live="polite"></p></form><div class="work-update-list">${updateItems}</div></section>`
-    : '<section class="form-section work-updates-admin" id="work-updates"><h2><span class="section-number">04</span>更新记录</h2><p class="empty-state">先保存作品，再回来逐条添加带时间的更新记录。</p></section>';
+    ? `<section class="form-section work-updates-admin" id="work-updates" aria-labelledby="work-updates-title"><h2 id="work-updates-title"><span class="section-number">05</span>更新记录</h2><p class="hint">记录会按时间倒序展示给访客。历史记录可删除；需要修改时，请删除后重新添加。</p><form method="post" action="/admin/works/${record.id}/updates" data-work-update-action><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><div class="form-grid"><div><label for="updateRecordedAt">记录时间</label><input id="updateRecordedAt" name="recordedAt" type="datetime-local" value="${currentUtc8DateTimeLocal()}" required></div></div><label for="updateBody">记录正文</label><textarea id="updateBody" name="body" required></textarea><button type="submit">添加记录并发布</button><p class="upload-status" data-work-update-status role="status" aria-live="polite"></p></form><div class="work-update-list">${updateItems}</div></section>`
+    : '<section class="form-section work-updates-admin" id="work-updates"><h2><span class="section-number">05</span>更新记录</h2><p class="empty-state">先保存作品，再回来逐条添加带时间的更新记录。</p></section>';
   const deleteForm = isEdit
     ? `<form class="danger-zone" method="post" action="/admin/works/${record.id}/delete"><input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}"><p class="notice warning">删除会同时移除这件作品、正文、详情页和公开媒体，无法在此撤销。请先确认已保留需要的内容。</p><button type="submit" class="button-danger">删除作品</button></form>`
     : '';
@@ -205,7 +205,7 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '', not
     title,
     authenticated: true,
     csrfToken,
-    content: `<section class="panel work-form-panel"><p class="admin-kicker">作品 / 编辑档案</p><h1>${title}</h1><p>先写清作品是什么，再补上图片与访问方式。保存后访客就能看到本次内容；上传图片本身不会发布作品。</p>${noticeBlock(notice)}${noticeBlock(error, 'notice error')}${categoryNotice}<nav class="form-index" aria-label="作品编辑分区"><a href="#work-basics">01 介绍</a><a href="#work-cover">02 媒体</a><a href="#work-access">03 访问与下载</a><a href="#work-updates">04 更新记录</a></nav>
+    content: `<section class="panel work-form-panel"><p class="admin-kicker">作品 / 编辑档案</p><h1>${title}</h1><p>先写清作品是什么，再补上图片与访问方式。保存后访客就能看到本次内容；上传图片本身不会发布作品。</p>${noticeBlock(notice)}${noticeBlock(error, 'notice error')}${categoryNotice}<nav class="form-index" aria-label="作品编辑分区"><a href="#work-basics">01 介绍</a><a href="#work-cover">02 媒体</a><a href="#work-access">03 访问与下载</a><a href="#work-details">04 详情</a><a href="#work-updates">05 更新记录</a></nav>
       <form method="post" action="${action}" data-work-form data-upload-api="/api/admin/uploads" data-csrf-token="${escapeHtml(csrfToken)}">
         <input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">
         <fieldset class="form-section" id="work-basics"><legend><span class="section-number">01</span>介绍这件作品</legend><p class="hint">标题与简介会展示给访客，用几句话说明它解决什么问题。</p>
@@ -243,6 +243,10 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '', not
           <div class="upload-preview" data-download-preview>${downloadFile ? `<span class="upload-filename">${escapeHtml(assetFilename(downloadFile))}</span><button type="button" class="button-danger compact-button" data-clear-download>移除</button>` : ''}</div>
           <label for="experienceUrl">体验链接</label><input id="experienceUrl" name="experienceUrl" type="url" value="${escapeHtml(record.experience_url || '')}" maxlength="2000" placeholder="粘贴完整的体验链接">
           <input type="hidden" name="showOnTools" value="0"><label class="choice checkbox-choice"><input type="checkbox" name="showOnTools" value="1"${record.show_on_tools ? ' checked' : ''}> 在智能工具页显示这条作品</label>
+        </fieldset>
+
+        <fieldset class="form-section" id="work-details"><legend><span class="section-number">04</span>详情</legend><p class="hint">用 Markdown 写成作品说明书。可留空；原始 HTML 会按文字显示，危险链接不会生效。</p>
+          <label for="detailBody">详情正文（Markdown）</label><textarea class="markdown-textarea" id="detailBody" name="detailBody">${escapeHtml(record.detail_body || '')}</textarea>
         </fieldset>
 
         <p class="upload-status" data-upload-status role="status" aria-live="polite"></p>

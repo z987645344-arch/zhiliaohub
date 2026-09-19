@@ -3,6 +3,14 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-19**
 
+## 2026-09-19 新增作品「详情」模块（未打标签）
+
+- **独立真源**：`works` 新增可空的 `detail_body TEXT`；后台作品表单新增 04「详情」Markdown 输入区，原 04「更新记录」顺延为 05。详情可留空，字节上限与心得正文共用 `CONTENT_MAX_BYTES`，不再借用更新记录或其派生 Markdown 快照。
+- **幂等迁移**：迁移名为 `works-detail-body-v1`。事务内先查 `PRAGMA table_info(works)`，缺列时执行原文 SQL `ALTER TABLE works ADD COLUMN detail_body TEXT`，再向 `content_migrations(name, applied_at)` 写入迁移标记；标记存在时整段跳过。加列不改已有作品行、`updated_at` 或其它字段，回滚旧代码时只需忽略该可空列。
+- **安全发布**：发布服务复用心得现有的 `marked` 安全渲染器；原始 HTML 转义为文本，`javascript:` 等危险协议不会形成链接。详情在媒体 showcase 下方作为通栏“作品说明书”渲染，最大宽度 `72ch`，标题、引用、代码与图片沿用 `.archive-page` 深色变量；空值时连标题在内整块不输出。
+- **证据**：旧库迁移测试确认新增列、既有行默认空、用户随后写入的详情在重复启动后仍保留，迁移标记始终仅一条；发布测试确认详情 Markdown 成功生成、`<script>` 被转义、危险链接不落地，另一条空详情作品不输出区块。`npm run check` 与完整 `npm test` 通过，测试总数保持 162 项、失败 0。
+- **未验证**：真实生产库副本迁移、桌面/移动端详情视觉由统筹师与用户后续验收，本条不代报通过。
+
 ## 2026-09-19 详情页 showcase 回退并将简介限制为 100 字（未打标签）
 
 - **布局回退**：按 `v3.11..v3.12` 的实际差异，只反向恢复详情页 showcase 的 C 部分：`.showcase` 回到 `align-items: stretch`，简介回到右栏，删除通栏 `.showcase-intro-wide`。`v3.12` 的上传进度、小作坊 ZIP 与 Nginx 修复均未动。
