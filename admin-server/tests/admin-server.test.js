@@ -10,6 +10,7 @@ const speakeasy = require('speakeasy');
 
 const { createApp } = require('../src/app');
 const { atomicWriteFile } = require('../src/lib/atomic-file');
+const { BackupStatusService } = require('../src/services/backup-status-service');
 const { encryptTotpSecret, decryptTotpSecret } = require('../src/lib/totp-secret');
 const { seedLegacyCategories } = require('./helpers/work-categories');
 
@@ -260,8 +261,19 @@ test('/health无Cookie请求不创建会话也不下发Cookie', async (t) => {
 });
 
 test('聚合备份状态只经认证通道返回，知天失败不影响知了hub与管理写入', async (t) => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-admin-backup-status-'));
+  const backupDir = path.join(runtimeRoot, 'backups');
   const runtime = await createRuntime({
+    runtimeRoot,
     dependencies: {
+      backupStatusService: new BackupStatusService({
+        backupDir,
+        backupScheduleEnabled: true,
+        backupScheduleLocalTime: '00:00',
+      }, {
+        // UTC 04:00 is UTC+8 12:00, safely beyond the fixed two-hour grace window.
+        now: () => new Date('2026-09-15T04:00:00.000Z'),
+      }),
       zhitianBackupStatusClient: {
         async getStatus() {
           throw new Error('simulated Zhitian outage');
