@@ -18,6 +18,20 @@ Desktop.ini
 !.env*.example
 /runtime/
 
+# Generated public pages and published work assets. The repository keeps only
+# the handwritten index plus source css/js/assets; publishAll() recreates these.
+/works.html
+/works-*.html
+/notes.html
+/notes-*.html
+/feedback.html
+/tools.html
+/assets/works/
+
+# Owner-local launch helpers
+/本地调试.bat
+/本地调试关闭.bat
+
 # Local-only character reference supplied by the project owner
 /assets/reference/oc-three-view.jpg
 /assets/concepts/

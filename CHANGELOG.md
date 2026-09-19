@@ -3,6 +3,11 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-20**
 
+## 2026-09-20 忽略发布派生物与本地调试脚本（未打标签）
+
+- `.gitignore`：按发布服务的根目录命名空间忽略 `works.html`、`works-*.html`、`notes.html`、`notes-*.html`、`feedback.html`、`tools.html` 与 `assets/works/`，并忽略用户本地的两个调试批处理文件；规则均锚定仓库根目录，不覆盖手写 `index.html`、`assets/errors/`、根级成品图片、`css/` 或 `js/`。
+- **边界**：本轮只收口 Git 工作区噪音；现有本地发布结果与批处理文件未读取、未删除、未暂存，发布与恢复行为没有变化。
+
 ## 2026-09-20 v3.13 候选展示返工：统一小作坊卡片与详情页双栏（未打标签）
 
 - `admin-server/src/templates/works.js`：小作坊不再按项目数切换布局；一个或多个项目一律使用作品分组相同的 `work-slider-track` 与 `portfolio-card` 结构，删除 `lab-portfolio-grid` / `lab-portfolio-card` 分支。分类二级页 `category-portfolio-grid` 未改。
