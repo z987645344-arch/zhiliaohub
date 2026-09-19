@@ -891,11 +891,20 @@ canvas {
 }
 
 .works-section,
+.lab-section,
 .notes-section,
 .feedback-section {
   width: min(calc(100% - 48px), var(--max-width));
   margin: 0 auto;
   padding: clamp(48px, 6vw, 88px) 0 clamp(72px, 8vw, 120px);
+}
+
+.works-section:has(+ .lab-section) {
+  padding-bottom: 0;
+}
+
+.lab-section {
+  padding-top: clamp(58px, 8vw, 96px);
 }
 
 .section-bar {
@@ -1390,7 +1399,6 @@ canvas {
   border-color: rgba(123, 130, 111, 0.54);
 }
 
-.diary-notice,
 .truth-notice {
   display: grid;
   margin-bottom: 18px;
@@ -1402,12 +1410,10 @@ canvas {
   background: rgba(239, 242, 243, 0.42);
 }
 
-.diary-notice strong,
 .truth-notice strong {
   font-size: 13px;
 }
 
-.diary-notice p,
 .truth-notice p {
   margin: 0;
   color: var(--ink-soft);
@@ -1436,16 +1442,6 @@ canvas {
   color: var(--ink-soft);
   font-family: var(--font-mono);
   font-size: 11px;
-}
-
-.placeholder-pill {
-  display: inline-flex;
-  padding: 4px 8px;
-  border: 1px solid rgba(123, 130, 111, 0.54);
-  border-radius: 999px;
-  color: var(--acid-strong);
-  font-size: 10px;
-  font-weight: 700;
 }
 
 .diary-card h2 {
@@ -1809,16 +1805,14 @@ canvas {
   color: var(--white);
 }
 
-.empty-log small,
-.note-placeholder small {
+.empty-log small {
   color: var(--acid);
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
 }
 
-.empty-log h2,
-.note-placeholder h2 {
+.empty-log h2 {
   max-width: 10ch;
   margin: clamp(70px, 8vw, 112px) 0 20px;
   font-size: clamp(42px, 6vw, 76px);
@@ -1826,8 +1820,7 @@ canvas {
   line-height: 1;
 }
 
-.empty-log p,
-.note-placeholder p {
+.empty-log p {
   max-width: 48ch;
   margin: 0;
   color: rgba(239, 242, 243, 0.64);
@@ -1835,8 +1828,7 @@ canvas {
 }
 
 .version-log {
-  min-height: 260px;
-  padding: clamp(30px, 6vw, 68px);
+  padding: clamp(28px, 4vw, 48px);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--paper-deep);
@@ -1965,6 +1957,11 @@ canvas {
 
 .work-manual {
   padding-top: 0;
+  padding-bottom: 0;
+}
+
+.detail-content + .detail-content {
+  padding-top: 12px;
 }
 
 .work-manual-body > * {
@@ -2030,25 +2027,11 @@ canvas {
 }
 
 .note-detail-header {
-  padding-bottom: clamp(48px, 7vw, 84px);
-  border-bottom: 1px solid var(--line);
+  padding-bottom: 0;
 }
 
-.note-detail-header .placeholder-pill {
-  margin-bottom: 22px;
-}
-
-.note-actions {
-  width: 100%;
-  padding-bottom: clamp(54px, 8vw, 86px);
-}
-
-.note-placeholder {
-  min-height: 430px;
-  padding: clamp(34px, 7vw, 78px);
-  border-radius: var(--radius-md);
-  background: var(--forest);
-  color: var(--white);
+.note-body {
+  margin-top: 12px;
 }
 
 .comments-section {
@@ -2727,6 +2710,7 @@ button:disabled,
   .page-hero,
   .tools-section,
   .works-section,
+  .lab-section,
   .notes-section,
   .feedback-section,
   .comments-section,
@@ -2906,7 +2890,6 @@ button:disabled,
     grid-template-columns: 1fr;
   }
 
-  .diary-notice,
   .truth-notice {
     grid-template-columns: 1fr;
     gap: 6px;
@@ -3090,13 +3073,11 @@ html:has(.archive-page) { color-scheme: dark; scrollbar-color: var(--archive-mut
 .archive-page .portfolio-copy p { line-height: 1.85; }
 .archive-page .work-category-head { align-items: end; }
 .archive-page .work-category-access { color: var(--white); white-space: nowrap; }
-.archive-page .diary-notice,
 .archive-page .truth-notice { background: var(--archive-surface); border-color: var(--line); color: var(--white); }
 .archive-page .diary-card a { padding-block: 32px; }
 .archive-page .diary-card a:hover { background: var(--archive-surface); }
 .archive-page .diary-card time { color: var(--acid); }
 .archive-page .diary-card p { line-height: 1.85; }
-.archive-page .placeholder-pill { background: var(--archive-raised); color: var(--archive-muted); border-color: var(--line); }
 .archive-page .tool-card { background: var(--archive-surface); margin-top: 24px; grid-template-columns: minmax(0, 1.4fr) minmax(290px, .8fr); }
 .archive-page .tool-card-copy { padding: 32px; }
 .archive-page .tool-card h3 { font-size: clamp(32px, 4vw, 52px); margin: 28px 0 16px; line-height: 1.2; }
@@ -3118,8 +3099,7 @@ html:has(.archive-page) { color-scheme: dark; scrollbar-color: var(--archive-mut
 .archive-page .showcase-right h1 { line-height: 1.2; }
 .archive-page .showcase-meta span, .archive-page .detail-meta span, .archive-page .detail-meta time { background: transparent; border-color: var(--line); color: var(--archive-muted); }
 .archive-page .note-detail { max-width: 920px; padding-block: 56px; }
-.archive-page .note-placeholder { max-width: 72ch; }
-.archive-page .note-placeholder, .archive-page .version-log { background: var(--archive-surface); font-size: 17px; line-height: 1.95; color: var(--archive-muted); }
+.archive-page .version-log { background: var(--archive-surface); font-size: 17px; line-height: 1.95; color: var(--archive-muted); }
 .archive-page .version-log > * { max-width: 72ch; }
 .archive-page .version-entry { border-left-color: var(--line); }
 .archive-page .version-entry::before { background: var(--acid); }
@@ -3127,9 +3107,9 @@ html:has(.archive-page) { color-scheme: dark; scrollbar-color: var(--archive-mut
 .archive-page .version-more { background: var(--archive-raised); border-color: var(--line); }
 .archive-page .version-more summary { color: var(--white); }
 .archive-page .version-more summary::marker { color: var(--acid); }
-.archive-page .note-placeholder h2, .archive-page .version-log h2,
-.archive-page .note-placeholder h3, .archive-page .version-log h3 { color: var(--white); }
-.archive-page .version-log pre, .archive-page .note-placeholder pre { background: var(--archive-surface); border: 1px solid var(--line); max-width: 100%; overflow-x: auto; }
+.archive-page .version-log h2,
+.archive-page .version-log h3 { color: var(--white); }
+.archive-page .version-log pre { background: var(--archive-surface); border: 1px solid var(--line); max-width: 100%; overflow-x: auto; }
 .archive-page .showcase-intro { line-height: 1.9; }
 .archive-page .feedback-form { border: 1px solid var(--line); }
 .archive-page .field label { color: var(--white); font-family: var(--font-sans); font-size: 13px; letter-spacing: 0; }
@@ -3159,7 +3139,7 @@ html:has(.archive-page) { color-scheme: dark; scrollbar-color: var(--archive-mut
   .archive-page .tool-card-actions { border-left: 0; border-top: 1px solid var(--line); }
   .archive-page .feedback-grid { grid-template-columns: 1fr; gap: 28px; }
   .archive-page .feedback-form { padding: 24px; }
-  .archive-page .note-placeholder, .archive-page .version-log { font-size: 16px; }
+  .archive-page .version-log { font-size: 16px; }
   .archive-page .diary-card a { gap: 16px; }
   .archive-page .page-visual { border-radius: var(--radius-sm); }
 }

@@ -226,8 +226,7 @@ class PublishService {
     for (const [index, note] of notes.entries()) {
       const slug = assertSlug(note.slug);
       const markdown = await this.loadMarkdown(note.markdown_path, 'notes');
-      const prefix = note.is_placeholder ? '<small>CONTENT / PLACEHOLDER</small>' : '';
-      files.set(`notes-${slug}.html`, renderNoteDetail(note, `${prefix}${renderMarkdown(markdown)}`, index));
+      files.set(`notes-${slug}.html`, renderNoteDetail(note, renderMarkdown(markdown), index));
     }
     return { files, mediaFiles, worksCount: works.length, notesCount: notes.length };
   }

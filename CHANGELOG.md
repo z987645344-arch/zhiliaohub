@@ -3,6 +3,14 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-20**
 
+## 2026-09-20 v3.13 候选本地验收返工：修复缩略图点击、小作坊容器、详情间距与日记展示（未打标签）
+
+- `js/site.js`：缩略图轨道改为鼠标实际移动超过 4px 后才捕获指针，普通 `pointerdown → pointerup → click` 不再被轨道吞掉；作品列表横向轨道存在同源问题，一并采用延迟捕获，卡片链接点击与拖拽后的 click 抑制各自保留。日记“关于编辑”是 `data-unavailable-action` 的唯一消费者，删除死按钮后同步移除无消费者脚本。
+- `admin-server/src/templates/works.js`、`css/style.css`：小作坊区恢复为与作品分组相同的受限宽容器和 `work-category-head` 标题结构，使用 `LAB / EXPERIMENTS`、同级标题与计数；与上方最后一个分组只留与分组行之间相同的一个节距。详情与更新记录连续出现时只留 12px 节距，卡片移除强制最小高度并把内边距收至右栏信息面板同级，既有 showcase 总宽保持不变。
+- `admin-server/src/templates/notes.js`、`admin-server/src/services/publish-service.js`、`css/style.css`：日记列表与详情不再读取历史 `is_placeholder` 展示分支；删除占位药丸、占位状态、占位统计及“关于编辑”死操作。正文改用作品详情相同的 `version-log work-manual-body` 排版，标题、元信息与正文之间不再叠加整屏空白；数据库列与历史正文数据未删除。
+- `admin-server/tests/presentation.test.js`、`admin-server/tests/migration.test.js`：用等价轻量 DOM 驱动真实 `site.js`，证实普通鼠标点击不捕获指针且会切换舞台与当前项；锁定小作坊标题和容器规则，并确认历史占位值不再输出 `placeholder-pill` 或 `data-unavailable-action`。迁移夹具同步核对新的日记公开语义。
+- **证据**：`npm run check` 通过；完整 `npm test` 从基线 174 增至 **176/176**，失败 0。桌面与移动端视觉仍由用户在重启后台并重新发布后验收，本轮不代报通过。
+
 ## 2026-09-20 v3.13 候选前台层级与间距返工（未打标签）
 
 - `admin-server/src/templates/works.js`：小作坊区进入与作品分组相同的 `work-category-stack`，标题复用 `work-category-head` / `work-category-kicker`，显示 `LAB / EXPERIMENTS`、同字号“小作坊”与同样式项目计数；项目卡继续复用统一横向轨道。

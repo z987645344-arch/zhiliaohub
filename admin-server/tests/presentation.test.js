@@ -11,7 +11,7 @@ const {
   workFormScript,
 } = require('../src/lib/html');
 const { formatCommentTime } = require('../src/templates/feedback');
-const { renderNotesList } = require('../src/templates/notes');
+const { renderNoteDetail, renderNotesList } = require('../src/templates/notes');
 const { GENERATED_MARKER } = require('../src/templates/shared');
 const { renderWorkDetail, renderWorksList } = require('../src/templates/works');
 const { labManagementPage, workFormPage } = require('../src/views');
@@ -209,9 +209,27 @@ test('小作坊只有一个项目时仍与作品分组共用横向轨道和卡�
     accessUrl: '/lab/single-lab/',
     cover_image: null,
   }]);
+  const stylesheet = fs.readFileSync(path.resolve(__dirname, '..', '..', 'css', 'style.css'), 'utf8');
   assert.match(html, /class="work-category-head"[\s\S]*?LAB \/ EXPERIMENTS[\s\S]*?<h2 id="lab-section-title">小作坊<\/h2>/);
   assert.match(html, /class="work-slider-track" data-work-track[^>]*aria-label="小作坊项目，可横向滑动"/);
   assert.doesNotMatch(html, /lab-portfolio-grid|lab-portfolio-card/);
+  assert.match(stylesheet, /\.works-section,\s*\.lab-section,\s*\.notes-section,/);
+});
+
+test('日记前台忽略历史占位标记且详情不再输出死操作', () => {
+  const note = {
+    slug: 'plain-note',
+    title: '正常阅读的日记',
+    summary: '历史字段不再改变前台语义。',
+    note_date: '2026-09-20',
+    is_placeholder: 1,
+  };
+  const listHtml = renderNotesList([note]);
+  const detailHtml = renderNoteDetail(note, '<h2>普通节标题</h2><p>正文。</p>', 0);
+  for (const html of [listHtml, detailHtml]) {
+    assert.doesNotMatch(html, /placeholder-pill|PLACEHOLDER DIARY|data-unavailable-action|占位内容|正文筹备中/);
+  }
+  assert.match(detailHtml, /class="version-log work-manual-body note-body"/);
 });
 
 test('作品详情与更新记录使用showcase总宽且只约束卡片内部正文行长', () => {
@@ -314,6 +332,96 @@ test('作品媒体舞台脚本切换前暂停视频并维护按钮、键盘与�
   assert.match(script, /data-showcase-scroll-prev/);
   assert.match(script, /previous\.disabled = atStart/);
   assert.match(script, /strip\.setPointerCapture/);
+});
+
+test('作品媒体缩略图普通鼠标点击不捕获指针并能切换舞台', () => {
+  const script = fs.readFileSync(path.resolve(__dirname, '..', '..', 'js', 'site.js'), 'utf8');
+  const classList = () => {
+    const values = new Set();
+    return {
+      add: (...names) => names.forEach((name) => values.add(name)),
+      remove: (...names) => names.forEach((name) => values.delete(name)),
+      toggle: (name, force) => (force ? values.add(name) : values.delete(name)),
+      contains: (name) => values.has(name),
+    };
+  };
+  const eventTarget = (extra = {}) => ({
+    ...extra,
+    listeners: new Map(),
+    addEventListener(type, listener) {
+      const listeners = this.listeners.get(type) || [];
+      listeners.push(listener);
+      this.listeners.set(type, listeners);
+    },
+  });
+  const dispatch = (target, type, event = {}) => {
+    for (const listener of target.listeners.get(type) || []) listener(event);
+  };
+  const makeThumb = (source, label) => eventTarget({
+    dataset: { src: source, type: 'image' },
+    classList: classList(),
+    attributes: new Map([['aria-current', 'false'], ['aria-label', label]]),
+    getAttribute(name) { return this.attributes.get(name) || null; },
+    setAttribute(name, value) { this.attributes.set(name, value); },
+    scrollIntoView() {},
+    focus() {},
+  });
+  const first = makeThumb('assets/works/main.webp', '查看主图');
+  const second = makeThumb('assets/works/next.webp', '查看辅图');
+  first.setAttribute('aria-current', 'true');
+  const stage = {
+    child: null,
+    querySelector: () => null,
+    replaceChildren(child) { this.child = child; },
+  };
+  let captureCount = 0;
+  const strip = eventTarget({
+    classList: classList(),
+    scrollLeft: 0,
+    scrollWidth: 320,
+    clientWidth: 160,
+    querySelectorAll: () => [first, second],
+    closest(selector) {
+      if (selector === '[data-showcase-gallery]') return { querySelector: () => null };
+      if (selector === '.showcase-left') return { querySelector: () => stage };
+      return null;
+    },
+    setPointerCapture() { captureCount += 1; },
+    hasPointerCapture: () => false,
+    releasePointerCapture() {},
+    scrollBy() {},
+  });
+  const document = {
+    documentElement: { classList: classList() },
+    querySelector: () => null,
+    querySelectorAll(selector) {
+      return selector === '[data-showcase-thumbs]' ? [strip] : [];
+    },
+    addEventListener() {},
+    createElement: (tagName) => ({
+      tagName,
+      className: '',
+      src: '',
+      setAttribute(name, value) { this[name] = value; },
+    }),
+  };
+  const window = {
+    addEventListener() {},
+    matchMedia: () => ({ addEventListener() {} }),
+    requestAnimationFrame: (callback) => callback(),
+    setTimeout: (callback) => callback(),
+  };
+  vm.runInNewContext(script, { document, window, FormData, URLSearchParams, fetch: async () => ({}) });
+
+  const pointerEvent = { pointerType: 'mouse', button: 0, pointerId: 7, clientX: 24, preventDefault() {} };
+  dispatch(strip, 'pointerdown', pointerEvent);
+  dispatch(strip, 'pointerup', pointerEvent);
+  dispatch(second, 'click', { preventDefault() {}, stopPropagation() {} });
+
+  assert.equal(captureCount, 0);
+  assert.equal(stage.child.src, 'assets/works/next.webp');
+  assert.equal(first.getAttribute('aria-current'), 'false');
+  assert.equal(second.getAttribute('aria-current'), 'true');
 });
 
 test('后台移动导航吸顶折叠且退出登录表单仍保留在菜单内', () => {

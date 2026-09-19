@@ -75,7 +75,9 @@ test('一次性迁移在隔离目录导入11条内容、生成静态页面并拒
     assert.match(await fs.readFile(path.join(config.siteRoot, 'works-category-program.html'), 'utf8'), /全部程序作品/);
     assert.match(await fs.readFile(path.join(config.siteRoot, 'works-category-film.html'), 'utf8'), /全部影视作品/);
     assert.match(await fs.readFile(path.join(config.siteRoot, 'works-category-life.html'), 'utf8'), /生活类作品还在路上/);
-    assert.match(await fs.readFile(path.join(config.siteRoot, 'notes-rain-window.html'), 'utf8'), /content="占位日记《雨落在窗外的时候》的详情模板。"/);
+    const noteHtml = await fs.readFile(path.join(config.siteRoot, 'notes-rain-window.html'), 'utf8');
+    assert.match(noteHtml, /content="雨落在窗外的时候的日记详情。"/);
+    assert.doesNotMatch(noteHtml, /CONTENT \/ PLACEHOLDER|placeholder-pill|data-unavailable-action/);
     assert.match(await fs.readFile(path.join(config.contentDir, 'notes', 'rain-window.md'), 'utf8'), /日记正文筹备中/);
     await assertMode(path.join(config.contentDir, 'notes', 'rain-window.md'), 0o600);
     await assert.rejects(applyMigration(config), /迁移已执行过/);

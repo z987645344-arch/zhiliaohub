@@ -189,14 +189,18 @@
       moved = false;
       startX = event.clientX;
       startScroll = strip.scrollLeft;
-      strip.setPointerCapture(event.pointerId);
-      strip.classList.add("is-dragging");
     });
     strip.addEventListener("pointermove", (event) => {
       if (!dragging) return;
       const distance = event.clientX - startX;
-      if (Math.abs(distance) > 4) moved = true;
-      if (moved) strip.scrollLeft = startScroll - distance;
+      if (!moved && Math.abs(distance) > 4) {
+        moved = true;
+        strip.setPointerCapture(event.pointerId);
+        strip.classList.add("is-dragging");
+      }
+      if (!moved) return;
+      event.preventDefault();
+      strip.scrollLeft = startScroll - distance;
     });
     const finishDrag = (event) => {
       if (!dragging) return;
@@ -255,13 +259,15 @@
       moved = false;
       pointerStart = event.clientX;
       scrollStart = track.scrollLeft;
-      track.setPointerCapture(event.pointerId);
-      track.classList.add("is-dragging");
     });
     track.addEventListener("pointermove", (event) => {
       if (!dragging) return;
       const distance = event.clientX - pointerStart;
-      if (Math.abs(distance) > 4) moved = true;
+      if (!moved && Math.abs(distance) > 4) {
+        moved = true;
+        track.setPointerCapture(event.pointerId);
+        track.classList.add("is-dragging");
+      }
       if (!moved) return;
       event.preventDefault();
       track.scrollLeft = scrollStart - distance;
@@ -274,17 +280,5 @@
       event.stopPropagation();
     }, true);
 
-  });
-
-  document.querySelectorAll("[data-unavailable-action]").forEach((control) => {
-    control.addEventListener("click", (event) => {
-      event.preventDefault();
-      const scope = control.closest("[data-action-scope]");
-      const status = scope?.querySelector("[data-action-status]");
-      if (!status) return;
-      status.textContent = control.dataset.unavailableMessage || "该功能暂未开放。";
-      status.classList.add("is-visible");
-      status.focus();
-    });
   });
 })();
