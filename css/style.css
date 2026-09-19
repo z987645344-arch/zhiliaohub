@@ -891,7 +891,6 @@ canvas {
 }
 
 .works-section,
-.lab-section,
 .notes-section,
 .feedback-section {
   width: min(calc(100% - 48px), var(--max-width));
@@ -930,11 +929,6 @@ canvas {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
-}
-
-.lab-section {
-  padding-top: 0;
-  border-top: 1px solid var(--line);
 }
 
 .lab-section-intro {
@@ -1492,7 +1486,7 @@ canvas {
 
 .showcase {
   display: grid;
-  margin-bottom: clamp(24px, 4vw, 48px);
+  margin-bottom: 12px;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
   gap: clamp(22px, 4vw, 44px);
   align-items: stretch;
@@ -1539,6 +1533,7 @@ canvas {
 .showcase-gallery {
   display: grid;
   min-width: 0;
+  padding-inline: 12px;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
@@ -1969,6 +1964,10 @@ canvas {
 }
 
 .work-manual {
+  padding-top: 0;
+}
+
+.work-manual-body > * {
   max-width: 72ch;
 }
 
@@ -2728,7 +2727,6 @@ button:disabled,
   .page-hero,
   .tools-section,
   .works-section,
-  .lab-section,
   .notes-section,
   .feedback-section,
   .comments-section,
@@ -3120,7 +3118,9 @@ html:has(.archive-page) { color-scheme: dark; scrollbar-color: var(--archive-mut
 .archive-page .showcase-right h1 { line-height: 1.2; }
 .archive-page .showcase-meta span, .archive-page .detail-meta span, .archive-page .detail-meta time { background: transparent; border-color: var(--line); color: var(--archive-muted); }
 .archive-page .note-detail { max-width: 920px; padding-block: 56px; }
-.archive-page .note-placeholder, .archive-page .version-log { max-width: 72ch; background: var(--archive-surface); font-size: 17px; line-height: 1.95; color: var(--archive-muted); }
+.archive-page .note-placeholder { max-width: 72ch; }
+.archive-page .note-placeholder, .archive-page .version-log { background: var(--archive-surface); font-size: 17px; line-height: 1.95; color: var(--archive-muted); }
+.archive-page .version-log > * { max-width: 72ch; }
 .archive-page .version-entry { border-left-color: var(--line); }
 .archive-page .version-entry::before { background: var(--acid); }
 .archive-page .version-entry time { color: var(--archive-muted); }

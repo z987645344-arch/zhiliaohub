@@ -3,6 +3,12 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-20**
 
+## 2026-09-20 v3.13 候选前台层级与间距返工（未打标签）
+
+- `admin-server/src/templates/works.js`：小作坊区进入与作品分组相同的 `work-category-stack`，标题复用 `work-category-head` / `work-category-kicker`，显示 `LAB / EXPERIMENTS`、同字号“小作坊”与同样式项目计数；项目卡继续复用统一横向轨道。
+- `css/style.css`：小作坊与分组间距改由同一栈 `gap` 控制；详情 showcase 到“详情”卡片缩短为 12px 节距，详情与更新记录卡片均撑满 showcase 总宽，`72ch` 仅约束卡片内部正文；媒体缩略条两侧增加 12px 内边距，按钮状态与切换逻辑未动。
+- `admin-server/tests/presentation.test.js`：锁定小作坊统一标题结构，以及 `.work-manual` 不再承担居中/收窄、正文行长仍受约束。`npm run check`、完整测试与视觉验收结果见本轮提交报告；视觉由用户本地验收，不代报。
+
 ## 2026-09-20 忽略发布派生物与本地调试脚本（未打标签）
 
 - `.gitignore`：按发布服务的根目录命名空间忽略 `works.html`、`works-*.html`、`notes.html`、`notes-*.html`、`feedback.html`、`tools.html` 与 `assets/works/`，并忽略用户本地的两个调试批处理文件；规则均锚定仓库根目录，不覆盖手写 `index.html`、`assets/errors/`、根级成品图片、`css/` 或 `js/`。

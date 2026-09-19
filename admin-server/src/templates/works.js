@@ -69,7 +69,7 @@ function renderLabSection(projects) {
     return `<article class="portfolio-card"><a class="portfolio-card-link" href="${escapeHtml(project.accessUrl)}" target="_blank" rel="noopener noreferrer">${cover}<div class="portfolio-copy"><small>LAB / ${number}</small><h3>${escapeHtml(project.title)}</h3><p>${escapeHtml(project.description)}</p><span class="card-enter">打开独立页面 ↗</span></div></a></article>`;
   }).join('\n              ');
   const cardsMarkup = `<div class="work-slider-track" data-work-track tabindex="0" aria-label="小作坊项目，可横向滑动">${cards}</div>`;
-  return `<section class="lab-section" data-work-slider aria-labelledby="lab-section-title"><div class="section-bar"><h2 id="lab-section-title">小作坊</h2><span>${projects.length} STATIC EXPERIMENTS</span></div><p class="lab-section-intro">一些独立打包的小型网页实验，在新的窗口中打开。</p>${cardsMarkup}</section>`;
+  return `<section class="work-category-block lab-section" data-work-slider aria-labelledby="lab-section-title"><div class="work-category-head"><div><p class="work-category-kicker">LAB / EXPERIMENTS</p><h2 id="lab-section-title">小作坊</h2><span>${projects.length} ITEMS</span></div></div><p class="lab-section-intro">一些独立打包的小型网页实验，在新的窗口中打开。</p>${cardsMarkup}</section>`;
 }
 
 function renderWorksList(categories, works, labProjects = []) {
@@ -86,8 +86,8 @@ function renderWorksList(categories, works, labProjects = []) {
       <section class="page-hero" aria-labelledby="page-title"><div class="page-hero-grid"><div><p class="page-kicker">Selected works / 02</p><h1 class="page-title" id="page-title">作品<span class="outline">展示</span></h1><p class="page-index">ZHILIAO — ARCHIVE 02</p></div><p class="page-intro">从影像、声音到软件，把做过的尝试放在同一条安静的街道上。按分组浏览，或打开一件作品看看它的来路。</p></div><figure class="page-visual"><img src="assets/works-oc-creative-passage.webp" width="1729" height="910" alt="雨后的水泥灰都市廊道中，黑发男孩站在相机、耳机、电脑和建筑模型组成的创作台前" decoding="async"></figure></section>
       <section class="works-section" aria-labelledby="works-list-title"><div class="section-bar"><h2 id="works-list-title">分组索引</h2><span>${visibleWorks.length} WORKS / ${categories.length} CATEGORIES</span></div><div class="work-category-stack">
         ${sections}
+        ${renderLabSection(labProjects)}
         </div></section>
-      ${renderLabSection(labProjects)}
     </main>`,
   });
 }

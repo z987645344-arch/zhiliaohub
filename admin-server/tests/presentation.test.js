@@ -209,8 +209,26 @@ test('小作坊只有一个项目时仍与作品分组共用横向轨道和卡�
     accessUrl: '/lab/single-lab/',
     cover_image: null,
   }]);
+  assert.match(html, /class="work-category-head"[\s\S]*?LAB \/ EXPERIMENTS[\s\S]*?<h2 id="lab-section-title">小作坊<\/h2>/);
   assert.match(html, /class="work-slider-track" data-work-track[^>]*aria-label="小作坊项目，可横向滑动"/);
   assert.doesNotMatch(html, /lab-portfolio-grid|lab-portfolio-card/);
+});
+
+test('作品详情与更新记录使用showcase总宽且只约束卡片内部正文行长', () => {
+  const html = renderWorkDetail({
+    id: 2,
+    slug: 'manual-width',
+    title: '详情宽度',
+    category: '程序',
+    detail_intro: '详情区块宽度验证。',
+    htmlDetailBody: '<p>正文内容</p>',
+  });
+  const stylesheet = fs.readFileSync(path.resolve(__dirname, '..', '..', 'css', 'style.css'), 'utf8');
+  const workManualRule = stylesheet.match(/\.work-manual\s*\{([^}]*)\}/);
+  assert.match(html, /class="detail-content work-manual"/);
+  assert.ok(workManualRule, '应保留详情区块的节距规则。');
+  assert.doesNotMatch(workManualRule[1], /max-width|margin-inline/);
+  assert.match(stylesheet, /\.work-manual-body > \*\s*\{[^}]*max-width:\s*72ch/);
 });
 
 test('前后台更新记录超过5条时只折叠其余条目', () => {
