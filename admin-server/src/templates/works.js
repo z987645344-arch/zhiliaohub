@@ -110,22 +110,37 @@ function renderWorkDetail(work, updates = [], index = 0) {
   const placeholder = Boolean(work.is_placeholder);
   const special = work.special_status === 'official_url_pending';
   const status = special ? '展示入口待开放' : placeholder ? '内容筹备中' : '已发布';
-  const primaryPath = work.main_media_path || work.cover_image;
-  const primaryType = work.main_media_path && work.main_media_type === 'video' ? 'video' : 'image';
+  const gallery = safeParseGallery(work.gallery);
+  const storedPrimaryPath = work.main_media_path || work.cover_image;
+  const storedPrimaryType = work.main_media_path && work.main_media_type === 'video' ? 'video' : 'image';
+  const stageItems = [
+    ...(storedPrimaryPath ? [{ path: storedPrimaryPath, type: storedPrimaryType, primary: true }] : []),
+    ...gallery.map((item) => ({
+      path: item,
+      type: /\.(?:mp4|webm)$/i.test(item) ? 'video' : 'image',
+      primary: false,
+    })),
+  ];
+  const primaryItem = stageItems[0] || null;
+  const primaryPath = primaryItem?.path;
+  const primaryType = primaryItem?.type;
   const mainMedia = primaryPath
     ? primaryType === 'video'
       ? `<video class="showcase-main" src="${escapeHtml(primaryPath)}" controls preload="metadata" playsinline aria-label="${escapeHtml(work.title)}主视频"></video>`
       : `<img class="showcase-main" src="${escapeHtml(primaryPath)}" alt="${escapeHtml(work.title)}主图" decoding="async">`
     : `<div class="showcase-main showcase-placeholder portfolio-cover ${cover}" role="img" aria-label="${escapeHtml(work.title)}暂无媒体，显示默认封面"><span>${escapeHtml(code)} / ${number}</span><b aria-hidden="true">${escapeHtml(symbol)}</b></div>`;
-  const gallery = safeParseGallery(work.gallery);
-  const thumbs = gallery.map((item, galleryIndex) => {
-    const video = /\.(?:mp4|webm)$/i.test(item);
-    const label = `${video ? '播放辅视频' : '查看辅图'} ${galleryIndex + 1}`;
-    const preview = video
-      ? `<video src="${escapeHtml(item)}" muted preload="metadata" playsinline aria-hidden="true"></video>`
-      : `<img src="${escapeHtml(item)}" alt="" loading="lazy" decoding="async">`;
-    return `<button class="showcase-thumb" type="button" data-src="${escapeHtml(item)}" data-type="${video ? 'video' : 'image'}" aria-label="${label}" aria-pressed="false">${preview}</button>`;
+  const thumbs = stageItems.map((item, itemIndex) => {
+    const label = item.primary
+      ? `${item.type === 'video' ? '播放' : '查看'}主${item.type === 'video' ? '视频' : '图'}`
+      : `${item.type === 'video' ? '播放辅视频' : '查看辅图'} ${itemIndex + (storedPrimaryPath ? 0 : 1)}`;
+    const preview = item.type === 'video'
+      ? `<video src="${escapeHtml(item.path)}" muted preload="metadata" playsinline aria-hidden="true"></video>`
+      : `<img src="${escapeHtml(item.path)}" alt="" loading="lazy" decoding="async">`;
+    return `<button class="showcase-thumb${itemIndex === 0 ? ' is-active' : ''}" type="button" data-src="${escapeHtml(item.path)}" data-type="${item.type}" aria-label="${label}" aria-current="${itemIndex === 0 ? 'true' : 'false'}">${preview}</button>`;
   }).join('');
+  const galleryControls = gallery.length > 0
+    ? `<div class="showcase-gallery" data-showcase-gallery><button class="showcase-gallery-arrow" type="button" data-showcase-scroll-prev aria-label="向左滚动媒体缩略图" aria-disabled="true" disabled>←</button><div class="showcase-thumbs" data-showcase-thumbs aria-label="作品媒体" tabindex="0">${thumbs}</div><button class="showcase-gallery-arrow" type="button" data-showcase-scroll-next aria-label="向右滚动媒体缩略图" aria-disabled="true" disabled>→</button></div>`
+    : '';
   const downloadButton = work.is_downloadable && work.download_file
     ? `<a class="button" href="${escapeHtml(work.download_file)}" download>下载作品</a>`
     : '';
@@ -156,7 +171,7 @@ function renderWorkDetail(work, updates = [], index = 0) {
     current: 'works',
     bodyClass: 'detail-page',
     content: `<main class="detail-main" id="main-content">
-      <div class="showcase-shell"><a class="back-link" href="works.html">← 返回作品列表</a><section class="showcase" aria-labelledby="detail-title"><div class="showcase-left"><div class="showcase-stage" data-showcase-stage aria-live="polite">${mainMedia}</div>${thumbs ? `<div class="showcase-thumbs" data-showcase-thumbs aria-label="作品辅助媒体">${thumbs}</div>` : ''}</div><div class="showcase-right"><p class="page-kicker">${escapeHtml(work.category)} / WORK ${number}</p><h1 id="detail-title">${escapeHtml(work.title)}</h1><p class="showcase-intro">${escapeHtml(work.detail_intro || '')}</p>${actions}<div class="showcase-meta"><span>状态 / ${status}</span></div></div></section></div>
+      <div class="showcase-shell"><a class="back-link" href="works.html">← 返回作品列表</a><section class="showcase" aria-labelledby="detail-title"><div class="showcase-left"><div class="showcase-stage" data-showcase-stage aria-live="polite">${mainMedia}</div>${galleryControls}</div><div class="showcase-right"><p class="page-kicker">${escapeHtml(work.category)} / WORK ${number}</p><h1 id="detail-title">${escapeHtml(work.title)}</h1><p class="showcase-intro">${escapeHtml(work.detail_intro || '')}</p>${actions}<div class="showcase-meta"><span>状态 / ${status}</span></div></div></section></div>
       ${detailsMarkup}<section class="detail-content" aria-labelledby="version-log-title"><div class="section-bar"><h2 id="version-log-title">更新记录</h2><span>${sortedUpdates.length ? `${sortedUpdates.length} ENTRIES` : 'NO ENTRIES'}</span></div><div class="version-log">${updatesMarkup}</div></section>
     </main>`,
   });

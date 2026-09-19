@@ -1535,6 +1535,32 @@ canvas {
   font-size: clamp(56px, 9vw, 116px);
 }
 
+.showcase-gallery {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.showcase-gallery-arrow {
+  display: inline-grid;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.showcase-gallery-arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .showcase-thumbs {
   display: flex;
   max-width: 100%;
@@ -1542,8 +1568,17 @@ canvas {
   gap: 9px;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
+  scroll-behavior: smooth;
+  scroll-snap-type: x mandatory;
+  touch-action: pan-x;
   scrollbar-width: thin;
   scrollbar-color: var(--acid-strong) transparent;
+}
+
+.showcase-thumbs.is-dragging {
+  cursor: grabbing;
+  scroll-behavior: auto;
+  user-select: none;
 }
 
 .showcase-thumb {
@@ -1556,6 +1591,7 @@ canvas {
   border-radius: 5px;
   background: var(--forest);
   cursor: pointer;
+  scroll-snap-align: start;
   transition: border-color 180ms var(--ease), transform 180ms var(--ease), opacity 180ms var(--ease);
 }
 
@@ -3071,6 +3107,7 @@ html:has(.archive-page) { color-scheme: dark; scrollbar-color: var(--archive-mut
 .archive-page .showcase-left,
 .archive-page .showcase-right,
 .archive-page .showcase-stage { background: var(--archive-surface); border-color: var(--line); }
+.archive-page .showcase-gallery-arrow { background: var(--archive-surface); border-color: var(--line); color: var(--white); }
 .archive-page .showcase-right { padding: clamp(28px, 4vw, 48px); }
 .archive-page .showcase-right h1 { line-height: 1.2; }
 .archive-page .showcase-meta span, .archive-page .detail-meta span, .archive-page .detail-meta time { background: transparent; border-color: var(--line); color: var(--archive-muted); }

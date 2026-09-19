@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 const {
@@ -220,6 +222,45 @@ test('作品详情简介保留在右栏且不再悬空到媒体下方', () => {
   const infoEndAt = html.indexOf('</div></section>', introAt);
   assert.ok(mediaAt >= 0 && infoAt > mediaAt && introAt > infoAt && infoEndAt > introAt && updatesAt > infoEndAt);
   assert.doesNotMatch(html, /showcase-intro-wide/);
+});
+
+test('作品媒体轨道以主媒体为首项且只有主媒体时不渲染轨道', () => {
+  const withGallery = renderWorkDetail({
+    id: 10,
+    slug: 'gallery-stage',
+    title: '媒体舞台',
+    category: '程序',
+    detail_intro: '媒体切换验证。',
+    main_media_type: 'video',
+    main_media_path: 'assets/works/media/main.webm',
+    gallery: JSON.stringify(['assets/works/gallery/one.webp', 'assets/works/gallery/two.mp4']),
+  });
+  const firstThumb = withGallery.match(/<button class="showcase-thumb[^>]*data-src="([^"]+)"[^>]*aria-current="true"/);
+  assert.equal(firstThumb?.[1], 'assets/works/media/main.webm');
+  assert.equal((withGallery.match(/<button class="showcase-thumb(?:\s|\")/g) || []).length, 3);
+  assert.match(withGallery, /data-showcase-scroll-prev/);
+  assert.match(withGallery, /data-showcase-scroll-next/);
+
+  const primaryOnly = renderWorkDetail({
+    id: 11,
+    slug: 'primary-only',
+    title: '只有主图',
+    category: '程序',
+    detail_intro: '不需要缩略条。',
+    main_media_type: 'image',
+    main_media_path: 'assets/works/media/main.webp',
+  });
+  assert.doesNotMatch(primaryOnly, /data-showcase-gallery|data-showcase-thumbs|showcase-gallery-arrow/);
+});
+
+test('作品媒体舞台脚本切换前暂停视频并维护按钮、键盘与拖拽交互', () => {
+  const script = fs.readFileSync(path.resolve(__dirname, '..', '..', 'js', 'site.js'), 'utf8');
+  assert.match(script, /stage\.querySelector\("video"\)\?\.pause\(\)/);
+  assert.match(script, /setAttribute\("aria-current", String\(active\)\)/);
+  assert.match(script, /\["ArrowLeft", "ArrowRight"\]/);
+  assert.match(script, /data-showcase-scroll-prev/);
+  assert.match(script, /previous\.disabled = atStart/);
+  assert.match(script, /strip\.setPointerCapture/);
 });
 
 test('后台移动导航吸顶折叠且退出登录表单仍保留在菜单内', () => {

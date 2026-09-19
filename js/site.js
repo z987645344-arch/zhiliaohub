@@ -105,36 +105,114 @@
   });
 
   document.querySelectorAll("[data-showcase-thumbs]").forEach((strip) => {
+    const gallery = strip.closest("[data-showcase-gallery]");
     const stage = strip.closest(".showcase-left")?.querySelector("[data-showcase-stage]");
+    const previous = gallery?.querySelector("[data-showcase-scroll-prev]");
+    const next = gallery?.querySelector("[data-showcase-scroll-next]");
     if (!stage) return;
 
-    strip.querySelectorAll(".showcase-thumb").forEach((thumbnail) => {
+    const thumbnails = [...strip.querySelectorAll(".showcase-thumb")];
+    const edgeTolerance = 4;
+    const updateControls = () => {
+      const maximum = Math.max(0, strip.scrollWidth - strip.clientWidth);
+      const atStart = maximum <= edgeTolerance || strip.scrollLeft <= edgeTolerance;
+      const atEnd = maximum <= edgeTolerance || strip.scrollLeft >= maximum - edgeTolerance;
+      if (previous) {
+        previous.disabled = atStart;
+        previous.setAttribute("aria-disabled", String(atStart));
+      }
+      if (next) {
+        next.disabled = atEnd;
+        next.setAttribute("aria-disabled", String(atEnd));
+      }
+    };
+    const activate = (thumbnail) => {
+      const source = thumbnail.dataset.src;
+      const type = thumbnail.dataset.type;
+      if (!source || !["image", "video"].includes(type)) return;
+
+      stage.querySelector("video")?.pause();
+      thumbnails.forEach((item) => {
+        const active = item === thumbnail;
+        item.classList.toggle("is-active", active);
+        item.setAttribute("aria-current", String(active));
+      });
+
+      const media = document.createElement(type === "video" ? "video" : "img");
+      media.className = "showcase-main";
+      media.src = source;
+      if (type === "video") {
+        media.controls = true;
+        media.preload = "metadata";
+        media.playsInline = true;
+        media.setAttribute("aria-label", thumbnail.getAttribute("aria-label") || "作品视频");
+      } else {
+        media.alt = thumbnail.getAttribute("aria-label") || "作品图片";
+        media.decoding = "async";
+      }
+      stage.replaceChildren(media);
+      thumbnail.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    };
+
+    thumbnails.forEach((thumbnail) => {
       thumbnail.addEventListener("click", () => {
-        const source = thumbnail.dataset.src;
-        const type = thumbnail.dataset.type;
-        if (!source || !["image", "video"].includes(type)) return;
-
-        strip.querySelectorAll(".showcase-thumb").forEach((item) => {
-          const active = item === thumbnail;
-          item.classList.toggle("is-active", active);
-          item.setAttribute("aria-pressed", String(active));
-        });
-
-        const media = document.createElement(type === "video" ? "video" : "img");
-        media.className = "showcase-main";
-        media.src = source;
-        if (type === "video") {
-          media.controls = true;
-          media.preload = "metadata";
-          media.playsInline = true;
-          media.setAttribute("aria-label", thumbnail.getAttribute("aria-label") || "作品辅视频");
-        } else {
-          media.alt = thumbnail.getAttribute("aria-label") || "作品辅图";
-          media.decoding = "async";
-        }
-        stage.replaceChildren(media);
+        activate(thumbnail);
       });
     });
+
+    const scrollPage = (direction) => {
+      strip.scrollBy({ left: direction * Math.max(strip.clientWidth * 0.8, 124), behavior: "smooth" });
+    };
+    previous?.addEventListener("click", () => scrollPage(-1));
+    next?.addEventListener("click", () => scrollPage(1));
+    strip.addEventListener("scroll", updateControls, { passive: true });
+    window.addEventListener("resize", updateControls);
+    strip.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const currentIndex = Math.max(0, thumbnails.findIndex((item) => item.getAttribute("aria-current") === "true"));
+      const nextIndex = Math.min(
+        thumbnails.length - 1,
+        Math.max(0, currentIndex + (event.key === "ArrowRight" ? 1 : -1)),
+      );
+      thumbnails[nextIndex]?.focus();
+      if (thumbnails[nextIndex]) activate(thumbnails[nextIndex]);
+    });
+
+    let dragging = false;
+    let moved = false;
+    let startX = 0;
+    let startScroll = 0;
+    strip.addEventListener("pointerdown", (event) => {
+      if (event.pointerType !== "mouse" || event.button !== 0) return;
+      dragging = true;
+      moved = false;
+      startX = event.clientX;
+      startScroll = strip.scrollLeft;
+      strip.setPointerCapture(event.pointerId);
+      strip.classList.add("is-dragging");
+    });
+    strip.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      const distance = event.clientX - startX;
+      if (Math.abs(distance) > 4) moved = true;
+      if (moved) strip.scrollLeft = startScroll - distance;
+    });
+    const finishDrag = (event) => {
+      if (!dragging) return;
+      dragging = false;
+      strip.classList.remove("is-dragging");
+      if (strip.hasPointerCapture(event.pointerId)) strip.releasePointerCapture(event.pointerId);
+    };
+    strip.addEventListener("pointerup", finishDrag);
+    strip.addEventListener("pointercancel", finishDrag);
+    strip.addEventListener("click", (event) => {
+      if (!moved) return;
+      event.preventDefault();
+      event.stopPropagation();
+      moved = false;
+    }, true);
+    window.requestAnimationFrame(updateControls);
   });
 
   document.querySelectorAll("[data-work-slider]").forEach((slider) => {
