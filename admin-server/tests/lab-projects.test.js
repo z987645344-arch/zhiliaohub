@@ -6,9 +6,16 @@ const path = require('node:path');
 const test = require('node:test');
 const zlib = require('node:zlib');
 const bcrypt = require('bcrypt');
+const Database = require('better-sqlite3');
 const speakeasy = require('speakeasy');
 
 const { createApp } = require('../src/app');
+const { loadConfig } = require('../src/config');
+const {
+  LAB_COVER_MIGRATION_NAME,
+  LAB_FILENAME_LATIN1_FIX_MIGRATION_NAME,
+  initializeDatabase,
+} = require('../src/db');
 const { MAX_SLUG_BYTES } = require('../src/lib/slug');
 const { LabService, LabValidationError } = require('../src/services/lab-service');
 
@@ -180,6 +187,21 @@ async function authenticate(client, runtime) {
   return extract(await response.text(), /name="_csrf" value="([^"]+)"/, '小作坊页面应包含CSRF令牌');
 }
 
+test('生产环境LAB_BASE_URL指向localhost时发出醒目警告但不阻止启动', async (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (message) => warnings.push(String(message)));
+  const config = loadConfig({
+    nodeEnv: 'production',
+    sessionSecret: crypto.randomBytes(48).toString('base64url'),
+    adminPasswordHash: await bcrypt.hash('warning-test-password', 4),
+    totpEncryptionKey: crypto.randomBytes(32),
+    labBaseUrl: 'http://localhost:3001/lab',
+  });
+  assert.equal(config.labBaseUrl, 'http://localhost:3001/lab');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /生产环境.*LAB_BASE_URL.*localhost/);
+});
+
 test('有效网页ZIP可解压、发布显隐、生成链接并在删除时清理记录和目录', async (t) => {
   const runtime = await createRuntime();
   t.after(() => runtime.close());
@@ -208,6 +230,54 @@ test('有效网页ZIP可解压、发布显隐、生成链接并在删除时清�
   await runtime.labService.deleteProject(project.id);
   assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM lab_projects').get().count, 0);
   await assert.rejects(fs.access(path.join(runtime.config.labStorageDir, project.slug)), /ENOENT/);
+});
+
+test('旧小作坊库会幂等修正latin1错解文件名并补封面列', async (t) => {
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-lab-migration-'));
+  t.after(() => fs.rm(runtimeRoot, { recursive: true, force: true }));
+  const dataDir = path.join(runtimeRoot, 'data');
+  const databasePath = path.join(dataDir, 'legacy.sqlite3');
+  await fs.mkdir(dataDir, { recursive: true });
+  const legacy = new Database(databasePath);
+  legacy.exec(`
+    CREATE TABLE lab_projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      original_filename TEXT NOT NULL,
+      is_visible INTEGER NOT NULL DEFAULT 0 CHECK (is_visible IN (0, 1)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  const insert = legacy.prepare(`
+    INSERT INTO lab_projects (slug, title, description, original_filename, is_visible, created_at, updated_at)
+    VALUES (?, ?, '迁移测试', ?, 0, '2026-09-15T00:00:00.000Z', '2026-09-15T00:00:00.000Z')
+  `);
+  insert.run('broken-name', '错解文件名', '11ç»\x84.zip');
+  insert.run('fixed-name', '已正确文件名', '11组.zip');
+  insert.run('invalid-sequence', '无效字节序列', 'badÿ.zip');
+  legacy.close();
+
+  const config = {
+    serverRoot: path.resolve(__dirname, '..'), dataDir, databasePath,
+    contentDir: path.join(runtimeRoot, 'content'), uploadsDir: path.join(runtimeRoot, 'uploads'),
+    labStorageDir: path.join(runtimeRoot, 'lab-storage'),
+  };
+  let database = initializeDatabase(config);
+  assert.equal(database.prepare('SELECT original_filename FROM lab_projects WHERE slug = ?').get('broken-name').original_filename, '11组.zip');
+  assert.equal(database.prepare('SELECT original_filename FROM lab_projects WHERE slug = ?').get('fixed-name').original_filename, '11组.zip');
+  assert.equal(database.prepare('SELECT original_filename FROM lab_projects WHERE slug = ?').get('invalid-sequence').original_filename, 'badÿ.zip');
+  assert.ok(database.prepare('PRAGMA table_info(lab_projects)').all().some((column) => column.name === 'cover_image'));
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?').get(LAB_FILENAME_LATIN1_FIX_MIGRATION_NAME).count, 1);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?').get(LAB_COVER_MIGRATION_NAME).count, 1);
+  database.close();
+
+  database = initializeDatabase(config);
+  assert.equal(database.prepare('SELECT original_filename FROM lab_projects WHERE slug = ?').get('broken-name').original_filename, '11组.zip');
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name IN (?, ?)').get(LAB_FILENAME_LATIN1_FIX_MIGRATION_NAME, LAB_COVER_MIGRATION_NAME).count, 2);
+  database.close();
 });
 
 test('Windows压缩文件夹的单一顶层目录会自动展开为项目根目录', async (t) => {
@@ -392,7 +462,7 @@ test('小作坊上传接口要求管理员和CSRF，成功后后台可列出项�
   upload.set('title', '接口上传项目');
   upload.set('description', '由受保护接口创建。');
   upload.set('isVisible', '1');
-  upload.set('file', new Blob([validLabZip()], { type: 'application/zip' }), 'api-design.zip');
+  upload.set('file', new Blob([validLabZip()], { type: 'application/zip' }), '接口设计.zip');
   response = await client.request('/api/admin/lab/upload', {
     method: 'POST',
     headers: { 'x-csrf-token': csrf },
@@ -402,11 +472,40 @@ test('小作坊上传接口要求管理员和CSRF，成功后后台可列出项�
   const payload = await response.json();
   assert.equal(payload.project.title, '接口上传项目');
   assert.equal(payload.project.isVisible, true);
+  assert.equal(payload.project.original_filename, '接口设计.zip');
   response = await client.request('/admin/lab');
   const html = await response.text();
   assert.match(html, /接口上传项目/);
   assert.match(html, /data-copy-lab-link/);
   assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM lab_projects').get().count, 1);
+
+  response = await client.request(`/admin/lab/${payload.project.id}/download`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'application/zip');
+  assert.match(response.headers.get('content-disposition'), /filename\*=UTF-8''%E6%8E%A5%E5%8F%A3%E8%AE%BE%E8%AE%A1\.zip/);
+  assert.equal(Buffer.from(await response.arrayBuffer()).subarray(0, 2).toString('hex'), '504b');
+});
+
+test('小作坊卡片使用可选封面且无封面时保留几何占位图', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const coverName = `${Date.now()}-${crypto.randomUUID()}.webp`;
+  await fs.writeFile(path.join(runtime.config.uploadsDir, coverName), Buffer.from('lab-cover'));
+  const withCover = await runtime.labService.createProject(
+    await runtime.writeUpload('with-cover.zip', validLabZip()),
+    { title: '有封面项目', description: '应显示真实封面。', coverImage: `assets/works/covers/${coverName}`, isVisible: true },
+  );
+  const withoutCover = await runtime.labService.createProject(
+    await runtime.writeUpload('without-cover.zip', validLabZip()),
+    { title: '无封面项目', description: '应显示几何占位图。', isVisible: true },
+  );
+  await runtime.publishService.publishAll();
+  const html = await fs.readFile(path.join(runtime.config.siteRoot, 'works.html'), 'utf8');
+  assert.match(html, new RegExp(`<img src="assets/works/covers/${coverName}"`));
+  assert.match(html, new RegExp(`href="${withCover.accessUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}" target="_blank"`));
+  assert.match(html, /<article class="portfolio-card lab-portfolio-card">[\s\S]*?<div class="portfolio-cover cover-/);
+  assert.equal(withoutCover.cover_image, null);
+  assert.match(html, /data-work-track tabindex="0" aria-label="小作坊项目，可横向滑动"/);
 });
 
 test('/lab静态响应不经过session、不写Set-Cookie，并带限制API连接的CSP', async (t) => {

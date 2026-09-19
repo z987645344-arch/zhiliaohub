@@ -62,7 +62,7 @@ function loadConfig(overrides = {}) {
   const siteRoot = overrides.siteRoot || resolveLocalPath(process.env.SITE_ROOT, '..');
   const port = positiveInteger(overrides.port ?? process.env.PORT, 'PORT', 3001);
 
-  return {
+  const config = {
     serverRoot,
     nodeEnv,
     isProduction: nodeEnv === 'production',
@@ -169,6 +169,10 @@ function loadConfig(overrides = {}) {
     ).replace(/\/+$/, ''),
     siteRoot,
   };
+  if (config.isProduction && /localhost/i.test(config.labBaseUrl)) {
+    console.warn('[config] ⚠️ 生产环境的 LAB_BASE_URL 仍指向 localhost；请在对外启用小作坊前改为真实公开地址。');
+  }
+  return config;
 }
 
 module.exports = { loadConfig };

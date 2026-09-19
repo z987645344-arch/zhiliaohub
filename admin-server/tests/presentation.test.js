@@ -133,6 +133,28 @@ test('小作坊上传把400/408/413/415的具体失败原因显示在按钮旁',
   }
 });
 
+test('小作坊表单提供16比9封面裁剪并保留流式ZIP下载入口', () => {
+  const html = labManagementPage({
+    csrfToken: 'csrf-test-token',
+    projects: [{
+      id: 7,
+      title: '封面项目',
+      description: '测试封面与下载入口。',
+      original_filename: '项目.zip',
+      updated_at: '2026-09-15T00:00:00.000Z',
+      isVisible: true,
+      accessUrl: 'https://example.com/lab/cover-project/',
+    }],
+  });
+  assert.match(html, /id="labCoverFile"/);
+  assert.match(html, /data-lab-cover-canvas/);
+  assert.match(html, /name="coverImage" data-lab-cover-value/);
+  assert.match(html, /href="\/admin\/lab\/7\/download">下载 ZIP<\/a>/);
+  const script = labManagementScript();
+  assert.match(script, /output\.width = 1280; output\.height = 720/);
+  assert.match(script, /assets\/works\/covers\//);
+});
+
 test('作品表单四个上传入口各自在操作位置旁提供状态反馈', () => {
   const html = workFormPage({
     csrfToken: 'csrf-test-token',

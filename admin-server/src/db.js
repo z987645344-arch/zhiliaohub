@@ -9,6 +9,8 @@ const WORK_TOOLS_VISIBILITY_MIGRATION_NAME = 'works-show-on-tools-v1';
 const WORK_CATEGORY_RECORDS_MIGRATION_NAME = 'works-data-driven-categories-v1';
 const WORK_UPDATES_MIGRATION_NAME = 'works-update-timeline-v1';
 const WORK_DETAIL_BODY_MIGRATION_NAME = 'works-detail-body-v1';
+const LAB_FILENAME_LATIN1_FIX_MIGRATION_NAME = 'lab-filename-latin1-fix-v1';
+const LAB_COVER_MIGRATION_NAME = 'lab-cover-v1';
 const WORK_CATEGORY_MAPPINGS = Object.freeze([
   Object.freeze({ from: '影像创作', to: '影视' }),
   Object.freeze({ from: 'AI音乐', to: '影视' }),
@@ -265,6 +267,51 @@ function migrateWorkDetailBody(database) {
   return { applied: true, columnAdded: migrate() };
 }
 
+function decodeLegacyLatin1Filename(value) {
+  const original = String(value || '');
+  if (!/[\u0080-\u00ff]/.test(original)) return null;
+  const decoded = Buffer.from(original, 'latin1').toString('utf8');
+  return decoded !== original && !decoded.includes('\ufffd') ? decoded : null;
+}
+
+function migrateLabFilenames(database) {
+  const applied = database.prepare('SELECT 1 FROM content_migrations WHERE name = ?')
+    .get(LAB_FILENAME_LATIN1_FIX_MIGRATION_NAME);
+  if (applied) return { applied: false, changedRows: 0 };
+
+  const migrate = database.transaction(() => {
+    const update = database.prepare('UPDATE lab_projects SET original_filename = ? WHERE id = ?');
+    let changedRows = 0;
+    for (const row of database.prepare('SELECT id, original_filename FROM lab_projects ORDER BY id').all()) {
+      const decoded = decodeLegacyLatin1Filename(row.original_filename);
+      if (decoded === null) continue;
+      changedRows += update.run(decoded, row.id).changes;
+    }
+    database.prepare('INSERT INTO content_migrations (name, applied_at) VALUES (?, ?)')
+      .run(LAB_FILENAME_LATIN1_FIX_MIGRATION_NAME, new Date().toISOString());
+    return changedRows;
+  });
+
+  return { applied: true, changedRows: migrate() };
+}
+
+function migrateLabCover(database) {
+  const applied = database.prepare('SELECT 1 FROM content_migrations WHERE name = ?')
+    .get(LAB_COVER_MIGRATION_NAME);
+  if (applied) return { applied: false, columnAdded: false };
+
+  const migrate = database.transaction(() => {
+    const columns = new Set(database.prepare('PRAGMA table_info(lab_projects)').all().map((row) => row.name));
+    const columnAdded = !columns.has('cover_image');
+    if (columnAdded) database.exec('ALTER TABLE lab_projects ADD COLUMN cover_image TEXT');
+    database.prepare('INSERT INTO content_migrations (name, applied_at) VALUES (?, ?)')
+      .run(LAB_COVER_MIGRATION_NAME, new Date().toISOString());
+    return columnAdded;
+  });
+
+  return { applied: true, columnAdded: migrate() };
+}
+
 function initializeDatabase(config) {
   fs.mkdirSync(config.dataDir, { recursive: true });
   fs.mkdirSync(path.join(config.contentDir, 'works'), { recursive: true });
@@ -312,6 +359,8 @@ function initializeDatabase(config) {
   migrateWorkCategoryRecords(database);
   migrateWorkUpdates(database);
   migrateWorkDetailBody(database);
+  migrateLabFilenames(database);
+  migrateLabCover(database);
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_works_date ON works(work_date DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_works_slug ON works(slug) WHERE slug IS NOT NULL;
@@ -330,10 +379,15 @@ module.exports = {
   WORK_TOOLS_VISIBILITY_MIGRATION_NAME,
   WORK_UPDATES_MIGRATION_NAME,
   WORK_DETAIL_BODY_MIGRATION_NAME,
+  LAB_FILENAME_LATIN1_FIX_MIGRATION_NAME,
+  LAB_COVER_MIGRATION_NAME,
+  decodeLegacyLatin1Filename,
   initializeDatabase,
   migrateWorkCategories,
   migrateWorkCategoryRecords,
   migrateWorkToolsVisibility,
   migrateWorkUpdates,
   migrateWorkDetailBody,
+  migrateLabFilenames,
+  migrateLabCover,
 };

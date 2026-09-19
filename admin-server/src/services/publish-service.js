@@ -222,6 +222,7 @@ class PublishService {
       addMedia(work.download_file, MEDIA_DIRECTORIES.download);
       for (const item of safeParseGallery(work.gallery)) addMedia(item, MEDIA_DIRECTORIES.gallery);
     }
+    for (const project of labProjects) addMedia(project.cover_image, MEDIA_DIRECTORIES.cover);
     for (const [index, note] of notes.entries()) {
       const slug = assertSlug(note.slug);
       const markdown = await this.loadMarkdown(note.markdown_path, 'notes');

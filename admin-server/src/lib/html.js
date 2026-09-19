@@ -836,7 +836,7 @@ function workFormScript() {
   const coverValue = form.querySelector('[data-cover-value]');
   const coverPreview = form.querySelector('[data-cover-preview]');
   const coverStatus = localUploadStatus('cover');
-  const context = canvas.getContext('2d');
+  const context = canvas?.getContext('2d');
   const cropState = {
     image: null,
     scale: 1,
@@ -912,7 +912,7 @@ function workFormScript() {
     };
   }
 
-  coverFile.addEventListener('change', () => {
+  coverFile?.addEventListener('change', () => {
     const file = coverFile.files[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) return setStatus('封面必须选择图片文件。', true, coverStatus);
@@ -944,7 +944,7 @@ function workFormScript() {
     image.src = cropState.objectUrl;
   });
 
-  canvas.addEventListener('pointerdown', (event) => {
+  canvas?.addEventListener('pointerdown', (event) => {
     if (!cropState.box) return;
     const point = canvasPoint(event);
     const box = cropState.box;
@@ -963,7 +963,7 @@ function workFormScript() {
     canvas.setPointerCapture(event.pointerId);
   });
 
-  canvas.addEventListener('pointermove', (event) => {
+  canvas?.addEventListener('pointermove', (event) => {
     const point = canvasPoint(event);
     if (!cropState.dragging) {
       const handle = hitResizeHandle(point);
@@ -1196,6 +1196,15 @@ if (labUploadForm) {
   const uploadStatus = labUploadForm.querySelector('[data-lab-upload-status]');
   const uploadButton = labUploadForm.querySelector('[data-lab-upload-button]');
   const csrfToken = labUploadForm.dataset.csrfToken;
+  const coverFile = labUploadForm.querySelector('#labCoverFile');
+  const coverStatus = labUploadForm.querySelector('[data-lab-cover-status]');
+  const coverValue = labUploadForm.querySelector('[data-lab-cover-value]');
+  const coverPreview = labUploadForm.querySelector('[data-lab-cover-preview]');
+  const cropper = labUploadForm.querySelector('[data-lab-cropper]');
+  const canvas = labUploadForm.querySelector('[data-lab-cover-canvas]');
+  const cropUpload = labUploadForm.querySelector('[data-lab-upload-crop]');
+  const context = canvas?.getContext('2d');
+  const cropState = { image: null, scale: 1, box: null, dragging: false, mode: '', handle: '', anchorX: 0, anchorY: 0, offsetX: 0, offsetY: 0, objectUrl: '' };
 
   function setLabUploadStatus(message, error = false) {
     uploadStatus.textContent = message;
@@ -1205,6 +1214,144 @@ if (labUploadForm) {
   function finishLabUpload() {
     uploadButton.disabled = false;
   }
+
+  function setCoverStatus(message, error = false) {
+    coverStatus.textContent = message;
+    coverStatus.classList.toggle('error', error);
+  }
+
+  function cropCorners() {
+    const box = cropState.box;
+    return {
+      nw: { x: box.x, y: box.y }, ne: { x: box.x + box.width, y: box.y },
+      sw: { x: box.x, y: box.y + box.height }, se: { x: box.x + box.width, y: box.y + box.height },
+    };
+  }
+
+  function cropPoint(event) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height };
+  }
+
+  function cropHandle(point) {
+    if (!cropState.box) return '';
+    const tolerance = Math.max(16, Math.min(24, cropState.box.width * 0.05));
+    for (const [name, corner] of Object.entries(cropCorners())) {
+      if (Math.hypot(point.x - corner.x, point.y - corner.y) <= tolerance) return name;
+    }
+    return '';
+  }
+
+  function drawCropper() {
+    if (!cropState.image || !cropState.box) return;
+    const box = cropState.box;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(cropState.image, 0, 0, canvas.width, canvas.height);
+    context.fillStyle = 'rgba(0,0,0,.55)';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(cropState.image, box.x / cropState.scale, box.y / cropState.scale, box.width / cropState.scale, box.height / cropState.scale, box.x, box.y, box.width, box.height);
+    context.strokeStyle = '#d7ff64';
+    context.lineWidth = 3;
+    context.strokeRect(box.x, box.y, box.width, box.height);
+    context.fillStyle = '#d7ff64';
+    for (const corner of Object.values(cropCorners())) context.fillRect(corner.x - 6, corner.y - 6, 12, 12);
+  }
+
+  coverFile?.addEventListener('change', () => {
+    const file = coverFile.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return setCoverStatus('封面必须选择图片文件。', true);
+    if (cropState.objectUrl) URL.revokeObjectURL(cropState.objectUrl);
+    cropState.objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      cropState.image = image;
+      cropState.scale = Math.min(720 / image.naturalWidth, 480 / image.naturalHeight, 1);
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * cropState.scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * cropState.scale));
+      const width = Math.min(canvas.width, canvas.height * 16 / 9);
+      const height = width * 9 / 16;
+      cropState.box = { x: (canvas.width - width) / 2, y: (canvas.height - height) / 2, width, height };
+      cropper.hidden = false;
+      drawCropper();
+      setCoverStatus('拖动选区内部调整位置，拖动四角按 16:9 缩放。');
+    };
+    image.onerror = () => setCoverStatus('无法读取所选封面图片。', true);
+    image.src = cropState.objectUrl;
+  });
+
+  canvas?.addEventListener('pointerdown', (event) => {
+    if (!cropState.box) return;
+    const point = cropPoint(event);
+    const handle = cropHandle(point);
+    const box = cropState.box;
+    if (handle) {
+      cropState.mode = 'resize'; cropState.handle = handle;
+      cropState.anchorX = handle.includes('w') ? box.x + box.width : box.x;
+      cropState.anchorY = handle.includes('n') ? box.y + box.height : box.y;
+    } else if (point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height) {
+      cropState.mode = 'move'; cropState.offsetX = point.x - box.x; cropState.offsetY = point.y - box.y;
+    } else return;
+    cropState.dragging = true;
+    canvas.setPointerCapture(event.pointerId);
+  });
+
+  canvas?.addEventListener('pointermove', (event) => {
+    const point = cropPoint(event);
+    if (!cropState.dragging) { canvas.style.cursor = cropHandle(point) ? 'nwse-resize' : 'move'; return; }
+    const box = cropState.box;
+    if (cropState.mode === 'move') {
+      box.x = Math.max(0, Math.min(canvas.width - box.width, point.x - cropState.offsetX));
+      box.y = Math.max(0, Math.min(canvas.height - box.height, point.y - cropState.offsetY));
+    } else {
+      const growsRight = cropState.handle.includes('e');
+      const growsDown = cropState.handle.includes('s');
+      const maxWidth = Math.min(growsRight ? canvas.width - cropState.anchorX : cropState.anchorX, (growsDown ? canvas.height - cropState.anchorY : cropState.anchorY) * 16 / 9);
+      box.width = Math.max(80, Math.min(maxWidth, Math.abs(point.x - cropState.anchorX), Math.abs(point.y - cropState.anchorY) * 16 / 9));
+      box.height = box.width * 9 / 16;
+      box.x = growsRight ? cropState.anchorX : cropState.anchorX - box.width;
+      box.y = growsDown ? cropState.anchorY : cropState.anchorY - box.height;
+    }
+    drawCropper();
+  });
+
+  function finishCropDrag(event) {
+    if (!cropState.dragging) return;
+    cropState.dragging = false; cropState.mode = ''; cropState.handle = '';
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  }
+  canvas?.addEventListener('pointerup', finishCropDrag);
+  canvas?.addEventListener('pointercancel', finishCropDrag);
+
+  cropUpload?.addEventListener('click', () => {
+    if (!cropState.image || !cropState.box) return setCoverStatus('请先选择封面图片。', true);
+    const output = document.createElement('canvas');
+    output.width = 1280; output.height = 720;
+    const box = cropState.box;
+    output.getContext('2d').drawImage(cropState.image, box.x / cropState.scale, box.y / cropState.scale, box.width / cropState.scale, box.height / cropState.scale, 0, 0, output.width, output.height);
+    output.toBlob((blob) => {
+      if (!blob) return setCoverStatus('浏览器无法生成裁剪后的封面。', true);
+      const body = new FormData();
+      body.append('file', new File([blob], 'lab-cover.webp', { type: 'image/webp' }));
+      const request = new XMLHttpRequest();
+      request.open('POST', labUploadForm.dataset.coverUploadApi);
+      request.setRequestHeader('X-CSRF-Token', csrfToken);
+      request.setRequestHeader('Accept', 'application/json');
+      request.addEventListener('load', () => {
+        let payload = null;
+        try { payload = JSON.parse(request.responseText); } catch (_error) { /* 状态码兜底。 */ }
+        if (request.status < 200 || request.status >= 300) return setCoverStatus(payload?.error || '封面上传失败（HTTP ' + request.status + '）。', true);
+        coverValue.value = 'assets/works/covers/' + payload.storedName;
+        coverPreview.replaceChildren();
+        const preview = document.createElement('img'); preview.src = '/uploads/' + encodeURIComponent(payload.storedName); preview.alt = '当前小作坊封面';
+        coverPreview.append(preview);
+        setCoverStatus('封面已上传 · 创建项目后才会生效');
+      });
+      request.addEventListener('error', () => setCoverStatus('封面上传失败：网络连接中断。', true));
+      setCoverStatus('正在上传裁剪封面…');
+      request.send(body);
+    }, 'image/webp', 0.9);
+  });
 
   labUploadForm.addEventListener('submit', (event) => {
     event.preventDefault();

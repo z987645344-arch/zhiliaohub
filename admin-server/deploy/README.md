@@ -45,6 +45,8 @@
 - 可选的 `BACKUP_ENCRYPTION_PASSWORD`；
 - 认证、反馈、上传、小作坊和备份策略参数；
 - `LAB_BASE_URL`。
+
+⚠️ `LAB_BASE_URL` 是生产必改项，不得保留 `localhost`。后台在生产模式检测到该值含 `localhost` 时会打印醒目警告，但为避免阻断既有部署不会自行退出；上线验收必须确认小作坊链接指向实际公开入口。
 - `ZHITIAN_OPS_TOKEN`：知了hub只用它经专用网络拉取知天备份状态，不得写入根目录 `.env`。
 
 `docker-compose.yml` 对这个文件声明 `format: raw`，用于关闭Compose变量插值。**不要去掉它**：bcrypt 哈希中的 `$` 会被Compose当成变量引用，插值后哈希会损坏，后台会以 `ADMIN_PASSWORD_HASH must be a bcrypt hash.` 启动失败。这里的 `$` 按原值保存，不需要写成 `$$`。

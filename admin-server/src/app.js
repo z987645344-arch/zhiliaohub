@@ -7,6 +7,7 @@ const bcrypt = require('bcrypt');
 const session = require('express-session');
 const helmet = require('helmet');
 const multer = require('multer');
+const archiver = require('archiver');
 const { rateLimit } = require('express-rate-limit');
 const QRCode = require('qrcode');
 const speakeasy = require('speakeasy');
@@ -49,6 +50,17 @@ const {
 } = require('./views');
 
 const INTERRUPTED_LAB_UPLOAD_PATTERN = /^pending-lab-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.zip$/i;
+
+function decodeUploadOriginalName(value) {
+  return Buffer.from(String(value || ''), 'latin1').toString('utf8');
+}
+
+function contentDispositionFilename(filename, slug) {
+  const encoded = encodeURIComponent(String(filename)).replace(/[!'()*]/g, (character) => (
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  ));
+  return `attachment; filename="lab-${slug}.zip"; filename*=UTF-8''${encoded}`;
+}
 
 function csrfToken() {
   return crypto.randomBytes(32).toString('base64url');
@@ -546,9 +558,13 @@ function createApp(overrides = {}, dependencies = {}) {
   async function createLabProject(request, response, next, asJson) {
     try {
       if (!request.file) throw new LabValidationError('请选择一个ZIP文件。');
-      const project = await labService.createProject(request.file, {
+      const project = await labService.createProject({
+        ...request.file,
+        originalname: decodeUploadOriginalName(request.file.originalname),
+      }, {
         title: request.body.title,
         description: request.body.description,
+        coverImage: request.body.coverImage,
         isVisible: request.body.isVisible === '1' || request.body.isVisible === true,
       });
       const publication = await publishService.publishAll();
@@ -566,6 +582,25 @@ function createApp(overrides = {}, dependencies = {}) {
 
   app.post('/api/admin/lab/upload', requireAdmin, labUpload.single('file'), requireCsrf, (request, response, next) => {
     createLabProject(request, response, next, true);
+  });
+
+  app.get('/admin/lab/:id/download', requireAdmin, (request, response, next) => {
+    try {
+      const project = labService.getProject(request.params.id);
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      response.type('application/zip');
+      response.setHeader(
+        'Content-Disposition',
+        contentDispositionFilename(project.original_filename, project.slug),
+      );
+      archive.on('warning', (error) => response.destroy(error));
+      archive.on('error', (error) => response.destroy(error));
+      archive.pipe(response);
+      archive.directory(labService.projectDirectory(project.slug), false);
+      archive.finalize().catch((error) => response.destroy(error));
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.post('/admin/lab/:id/visibility', requireAdmin, requireCsrf, async (request, response, next) => {

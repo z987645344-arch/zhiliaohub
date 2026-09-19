@@ -5,6 +5,7 @@ const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const unzipper = require('unzipper');
 const { createUniqueSlug } = require('../lib/slug');
+const { IMAGE_EXTENSIONS, MEDIA_DIRECTORIES, validateMediaPath } = require('./content-service');
 
 const ALLOWED_WEB_EXTENSIONS = new Set([
   '.html', '.htm', '.css', '.js', '.mjs', '.json', '.map', '.txt', '.xml', '.svg',
@@ -223,6 +224,12 @@ class LabService {
       const title = validateText(values.title, '标题', { min: 1, max: 120 });
       const description = validateText(values.description, '简介', { min: 1, max: 1000 });
       const originalFilename = validateText(file.originalname, '原始文件名', { min: 1, max: 255 });
+      const coverImage = validateMediaPath(
+        values.coverImage,
+        '小作坊封面',
+        MEDIA_DIRECTORIES.cover,
+        IMAGE_EXTENSIONS,
+      );
       if (path.extname(originalFilename).toLowerCase() !== '.zip') {
         throw new LabValidationError('小作坊只接受ZIP压缩包。', 415);
       }
@@ -245,9 +252,9 @@ class LabService {
       const now = new Date().toISOString();
       const result = this.database.prepare(`
         INSERT INTO lab_projects (
-          slug, title, description, original_filename, is_visible, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(slug, title, description, originalFilename, values.isVisible ? 1 : 0, now, now);
+          slug, title, description, original_filename, cover_image, is_visible, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(slug, title, description, originalFilename, coverImage, values.isVisible ? 1 : 0, now, now);
       return this.getProject(result.lastInsertRowid);
     } catch (error) {
       const cleanupDirectory = movedToFinal ? finalDirectory : temporaryDirectory;

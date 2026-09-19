@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS lab_projects (
   title TEXT NOT NULL,
   description TEXT NOT NULL,
   original_filename TEXT NOT NULL,
+  cover_image TEXT,
   is_visible INTEGER NOT NULL DEFAULT 0 CHECK (is_visible IN (0, 1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

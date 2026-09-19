@@ -676,6 +676,7 @@ class ContentService {
 }
 
 module.exports = {
+  IMAGE_EXTENSIONS,
   MEDIA_DIRECTORIES,
   ContentService,
   ContentValidationError,
