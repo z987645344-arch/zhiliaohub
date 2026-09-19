@@ -404,6 +404,8 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     }
     .upload-status { min-height: 1.5rem; margin: 0.75rem 0 0; color: var(--ink-soft); font-size: 13px; }
     .upload-status.error { padding: 0; border: 0; background: transparent; }
+    .character-count { margin: 0.35rem 0 0; color: var(--ink-soft); font-family: var(--font-mono); font-size: 12px; text-align: right; }
+    .character-count.error { padding: 0; border: 0; background: transparent; }
     .feedback-toolbar {
       display: flex;
       flex-wrap: wrap;
@@ -656,6 +658,8 @@ function workFormScript() {
   const csrfToken = form.dataset.csrfToken;
   const status = form.querySelector('[data-upload-status]');
   const saveButton = form.querySelector('[data-save-work]');
+  const detailIntro = form.querySelector('#detailIntro');
+  const detailIntroCount = form.querySelector('[data-detail-intro-count]');
   let pendingUploads = 0;
   let mainFormDirty = false;
   let hasUnsavedUpload = false;
@@ -684,6 +688,16 @@ function workFormScript() {
   function markMainFormDirty() {
     mainFormDirty = true;
   }
+
+  function updateDetailIntroCount() {
+    if (!detailIntro || !detailIntroCount) return;
+    const count = Array.from(detailIntro.value).length;
+    detailIntroCount.textContent = count + ' / 100';
+    detailIntroCount.classList.toggle('error', count > 100);
+  }
+
+  if (detailIntro) detailIntro.addEventListener('input', updateDetailIntroCount);
+  updateDetailIntroCount();
 
   function setUpdateActionStatus(actionForm, message) {
     const actionStatus = actionForm.querySelector('[data-work-update-status]');

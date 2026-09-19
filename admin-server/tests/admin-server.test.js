@@ -202,6 +202,23 @@ test('仪表盘不再提供孤儿文件上传入口，旧页面上传路由返�
   assert.equal(legacyUploadResponse.status, 404);
 });
 
+test('既有超长简介仍可打开编辑页并以红色计数提示修正', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  seedLegacyCategories(runtime.contentService);
+  const work = await runtime.contentService.createWork(workInput('旧简介'));
+  const oldIntro = '旧'.repeat(101);
+  runtime.database.prepare('UPDATE works SET detail_intro = ? WHERE id = ?').run(oldIntro, work.id);
+  const client = createClient(runtime.baseUrl);
+  await bindAndAuthenticate(client, runtime);
+
+  const response = await client.request(`/admin/works/${work.id}/edit`);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /class="character-count error"[^>]*>101 \/ 100/);
+  assert.match(html, new RegExp(oldIntro));
+});
+
 test('/health根据运行环境准确区分本地与生产部署', async (t) => {
   const localRuntime = await createRuntime();
   const productionRuntime = await createRuntime({ nodeEnv: 'production' });

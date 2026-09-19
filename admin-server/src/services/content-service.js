@@ -29,6 +29,15 @@ function requiredText(value, label, maxLength) {
   return text;
 }
 
+function requiredCodePointText(value, label, maxLength) {
+  const text = String(value ?? '').trim();
+  if (!text) throw new ContentValidationError(`${label}不能为空。`);
+  if ([...text].length > maxLength) {
+    throw new ContentValidationError(`${label}长度不能超过 ${maxLength} 个字符。`);
+  }
+  return text;
+}
+
 function validateCategory(value, database) {
   const name = requiredText(value, '作品分组', 100);
   if (!database?.prepare('SELECT 1 FROM work_categories WHERE name = ?').get(name)) {
@@ -157,7 +166,7 @@ function validateWorkGallery(value) {
 }
 
 function workRecord(input, database, existing = null) {
-  const detailIntro = requiredText(input.detailIntro, '详情页简介', 500);
+  const detailIntro = requiredCodePointText(input.detailIntro, '详情页简介', 100);
   const experienceUrl = validateExperienceUrl(input.experienceUrl ?? existing?.experience_url);
   const showOnTools = booleanFlag(input.showOnTools, Boolean(existing?.show_on_tools));
   if (showOnTools && !experienceUrl) {

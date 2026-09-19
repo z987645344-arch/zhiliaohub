@@ -211,7 +211,7 @@ function workFormPage({ csrfToken, categories = [], record = {}, error = '', not
         <fieldset class="form-section" id="work-basics"><legend><span class="section-number">01</span>介绍这件作品</legend><p class="hint">标题与简介会展示给访客，用几句话说明它解决什么问题。</p>
           <div class="form-grid"><div><label for="title">标题</label><input id="title" name="title" value="${escapeHtml(record.title || '')}" required maxlength="200"></div><div><label for="workDate">日期</label><input id="workDate" name="workDate" type="date" value="${escapeHtml(record.work_date || '')}" required></div></div>
           <label for="category">分类</label><select id="category" name="category" required${categories.length ? '' : ' disabled'}>${categoryOptions}</select>${categories.length ? '' : '<a class="button button-secondary" href="/admin/categories">先创建作品分组</a>'}
-          <label for="detailIntro">简介</label><textarea class="short-textarea" id="detailIntro" name="detailIntro" required maxlength="500">${escapeHtml(record.detail_intro || record.summary || '')}</textarea>
+          <label for="detailIntro">简介</label><textarea class="short-textarea" id="detailIntro" name="detailIntro" required maxlength="100" aria-describedby="detailIntroCount">${escapeHtml(record.detail_intro || record.summary || '')}</textarea><p class="character-count${[...(record.detail_intro || record.summary || '')].length > 100 ? ' error' : ''}" id="detailIntroCount" data-detail-intro-count aria-live="polite">${[...(record.detail_intro || record.summary || '')].length} / 100</p>
         </fieldset>
 
         <div class="form-media-grid"><fieldset class="form-section" id="work-cover"><legend><span class="section-number">02A</span>列表封面</legend>

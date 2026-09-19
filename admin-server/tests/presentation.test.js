@@ -205,24 +205,21 @@ test('前后台更新记录超过5条时只折叠其余条目', () => {
   }
 });
 
-test('作品详情按媒体、右栏信息、通栏简介、更新记录的顺序渲染', () => {
+test('作品详情简介保留在右栏且不再悬空到媒体下方', () => {
   const html = renderWorkDetail({
     id: 9,
     slug: 'showcase-order',
     title: '详情顺序验证',
     category: '程序',
-    detail_intro: '这段简介应在媒体与右栏之后通栏显示。',
+    detail_intro: '这段简介应保留在右栏。',
   });
   const mediaAt = html.indexOf('class="showcase-left"');
   const infoAt = html.indexOf('class="showcase-right"');
-  const introAt = html.indexOf('class="showcase-intro showcase-intro-wide"');
+  const introAt = html.indexOf('class="showcase-intro"');
   const updatesAt = html.indexOf('class="detail-content"');
-  assert.ok(mediaAt >= 0 && infoAt > mediaAt && introAt > infoAt && updatesAt > introAt);
-  assert.doesNotMatch(
-    html.slice(infoAt, introAt),
-    /showcase-intro/,
-    '右栏不应继续包含详情简介。',
-  );
+  const infoEndAt = html.indexOf('</div></section>', introAt);
+  assert.ok(mediaAt >= 0 && infoAt > mediaAt && introAt > infoAt && infoEndAt > introAt && updatesAt > infoEndAt);
+  assert.doesNotMatch(html, /showcase-intro-wide/);
 });
 
 test('后台移动导航吸顶折叠且退出登录表单仍保留在菜单内', () => {

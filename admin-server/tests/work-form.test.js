@@ -27,6 +27,8 @@ test('独立作品表单用现有分组下拉选择且日记旧字段不再混�
   assert.match(html, /<option value="自定义分组">自定义分组<\/option>/);
   assert.match(html, /<option value="隐藏分组" selected>隐藏分组（前台隐藏）<\/option>/);
   assert.match(html, /data-cover-canvas/);
+  assert.match(html, /name="detailIntro" required maxlength="100"/);
+  assert.match(html, /data-detail-intro-count[^>]*>0 \/ 100/);
   assert.match(html, /multiple accept=/);
   assert.match(html, /在智能工具页显示这条作品/);
   assert.match(html, /<script src="\/admin\/work-form\.js" defer><\/script>/);
@@ -80,6 +82,7 @@ test('作品表单脚本使用原生Canvas、XMLHttpRequest和受CSRF保护的�
   assert.match(script, /mainFormDirty \|\| hasUnsavedUpload \|\| pendingUploads > 0/);
   assert.match(script, /window\.addEventListener\('beforeunload'/);
   assert.match(script, /form\.addEventListener\('invalid'/);
+  assert.match(script, /Array\.from\(detailIntro\.value\)\.length/);
   assert.match(script, /请先点上方“保存并发布”/);
   assert.doesNotMatch(script, /new\s+Cropper|jQuery|React/);
 });

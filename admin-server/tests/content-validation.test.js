@@ -67,6 +67,20 @@ test('createWork 将详情页简介作为必填字段', async () => {
   );
 });
 
+test('详情页简介拒绝第 101 个 Unicode 字符', async () => {
+  const service = new ContentService(null, { contentMaxBytes: 1024 });
+  const input = {
+    title: '简介长度测试',
+    workDate: '2026-09-19',
+    category: '程序',
+    body: '正文',
+  };
+  await assert.rejects(
+    service.createWork({ ...input, detailIntro: '字'.repeat(101) }),
+    /详情页简介长度不能超过 100 个字符/,
+  );
+});
+
 test('勾选智能工具展示时必须同时提供有效体验链接', async () => {
   const service = new ContentService(null, { contentMaxBytes: 1024 });
   await assert.rejects(

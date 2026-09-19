@@ -90,6 +90,20 @@ test('分组slug严格校验且分组名与slug都保持唯一', async (t) => {
   assert.equal(renamed.slug, 'tools');
 });
 
+test('作品详情简介允许恰好 100 个 Unicode 字符', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => closeFixture(fixture));
+  const category = fixture.contentService.createCategory(categoryInput());
+  const detailIntro = '😀'.repeat(100);
+  const work = await fixture.contentService.createWork({
+    title: '百字简介作品',
+    workDate: '2026-09-19',
+    category: category.name,
+    detailIntro,
+  });
+  assert.equal(work.detail_intro, detailIntro);
+});
+
 test('更新分组名会保住作品归属并让发布页切换到新slug', async (t) => {
   const fixture = await createFixture();
   t.after(() => closeFixture(fixture));
