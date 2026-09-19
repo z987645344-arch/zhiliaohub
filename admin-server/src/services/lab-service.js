@@ -8,7 +8,7 @@ const { createUniqueSlug } = require('../lib/slug');
 const { IMAGE_EXTENSIONS, MEDIA_DIRECTORIES, validateMediaPath } = require('./content-service');
 
 const ALLOWED_WEB_EXTENSIONS = new Set([
-  '.html', '.htm', '.css', '.js', '.mjs', '.json', '.map', '.txt', '.xml', '.svg',
+  '.html', '.htm', '.css', '.js', '.mjs', '.wasm', '.data', '.json', '.map', '.txt', '.xml', '.svg',
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif', '.ico',
   '.woff', '.woff2', '.ttf', '.otf', '.eot',
   '.mp3', '.wav', '.ogg', '.mp4', '.webm',

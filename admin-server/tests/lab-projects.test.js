@@ -19,6 +19,9 @@ const {
 const { MAX_SLUG_BYTES } = require('../src/lib/slug');
 const { LabService, LabValidationError } = require('../src/services/lab-service');
 
+const UNCHANGED_MAIN_ADMIN_CSP = "default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data: blob:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' 'unsafe-inline';upgrade-insecure-requests";
+const UNITY_LAB_CSP = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'";
+
 const CRC_TABLE = Array.from({ length: 256 }, (_unused, number) => {
   let value = number;
   for (let bit = 0; bit < 8; bit += 1) value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
@@ -297,6 +300,49 @@ test('Windows压缩文件夹的单一顶层目录会自动展开为项目根目�
   await assert.rejects(fs.access(path.join(projectDirectory, '网页项目')), /ENOENT/);
 });
 
+test('Unity WebGL的wasm与data文件可通过校验并按正确MIME静态提供', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const unityZip = zip([
+    { name: 'index.html', body: '<!doctype html><script>window.unityConfig={};</script><script src="Build/game.loader.js"></script>' },
+    { name: 'Build/', body: '' },
+    { name: 'Build/game.loader.js', body: 'window.createUnityInstance=()=>Promise.resolve();' },
+    { name: 'Build/game.framework.js', body: 'self.unityFramework=true;' },
+    { name: 'Build/game.wasm', body: Buffer.from('0061736d01000000', 'hex') },
+    { name: 'Build/game.data', body: Buffer.from('unity-data') },
+    { name: 'TemplateData/', body: '' },
+    { name: 'TemplateData/style.css', body: 'canvas{width:100%}' },
+  ]);
+  const project = await runtime.labService.createProject(
+    await runtime.writeUpload('unity-webgl.zip', unityZip),
+    { title: 'Unity WebGL', description: '验证构建产物白名单。' },
+  );
+  const projectDirectory = path.join(runtime.config.labStorageDir, project.slug);
+  assert.deepEqual(await fs.readFile(path.join(projectDirectory, 'Build', 'game.wasm')), Buffer.from('0061736d01000000', 'hex'));
+  assert.equal(await fs.readFile(path.join(projectDirectory, 'Build', 'game.data'), 'utf8'), 'unity-data');
+
+  const response = await fetch(`${runtime.baseUrl}/lab/${project.slug}/Build/game.wasm`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'application/wasm');
+});
+
+test('Unity压缩格式与可执行文件仍被白名单以415拒绝', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  for (const extension of ['.exe', '.unityweb']) {
+    const file = await runtime.writeUpload(`rejected-${extension.slice(1)}.zip`, zip([
+      { name: 'index.html', body: 'safe' },
+      { name: `Build/game${extension}`, body: 'not allowed' },
+    ]));
+    await assert.rejects(
+      runtime.labService.createProject(file, { title: `拒绝 ${extension}`, description: '白名单边界验证。' }),
+      (error) => error instanceof LabValidationError
+        && error.statusCode === 415
+        && error.message.includes(`Build/game${extension}`),
+    );
+  }
+});
+
 test('macOS与Windows元数据文件被忽略且不放宽其它ZIP安全校验', async (t) => {
   const runtime = await createRuntime();
   t.after(() => runtime.close());
@@ -508,7 +554,7 @@ test('小作坊卡片使用可选封面且无封面时保留几何占位图', as
   assert.match(html, /data-work-track tabindex="0" aria-label="小作坊项目，可横向滑动"/);
 });
 
-test('/lab静态响应不经过session、不写Set-Cookie，并带限制API连接的CSP', async (t) => {
+test('/lab静态响应使用Unity专用CSP且主站与后台CSP逐字保持原值', async (t) => {
   const runtime = await createRuntime();
   t.after(() => runtime.close());
   const project = await runtime.labService.createProject(
@@ -521,10 +567,20 @@ test('/lab静态响应不经过session、不写Set-Cookie，并带限制API连�
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('set-cookie'), null);
   const csp = response.headers.get('content-security-policy');
-  assert.match(csp, /connect-src 'none'/);
-  assert.match(csp, /frame-src 'none'/);
-  assert.match(csp, /frame-ancestors 'none'/);
+  assert.equal(csp, UNITY_LAB_CSP);
+  assert.match(csp, /script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'/);
+  assert.match(csp, /connect-src 'self'/);
+  assert.match(csp, /worker-src 'self' blob:/);
   assert.match(await response.text(), /本地小作坊验证/);
+
+  const nginxConfig = await fs.readFile(path.resolve(__dirname, '..', '..', 'deploy', 'nginx.conf'), 'utf8');
+  const nginxLabCsp = nginxConfig.match(/add_header Content-Security-Policy "([^"]+)" always;/)?.[1];
+  assert.equal(nginxLabCsp, UNITY_LAB_CSP);
+
+  for (const route of ['/health', '/admin/login']) {
+    const unchanged = await fetch(`${runtime.baseUrl}${route}`);
+    assert.equal(unchanged.headers.get('content-security-policy'), UNCHANGED_MAIN_ADMIN_CSP);
+  }
 
   const missing = await fetch(`${runtime.baseUrl}/lab/not-found/`, {
     headers: { cookie: 'zhiliaohub.admin.sid=fake-admin-cookie' },

@@ -51,6 +51,7 @@ test('作品与小作坊上传脚本显示真实进度并区分JSON与非JSON错
   }
   const labHtml = labManagementPage({ csrfToken: 'csrf-test-token' });
   assert.match(labHtml, /进入网页文件夹，选中全部内容压缩；不要压缩文件夹本身。/);
+  assert.match(labHtml, /Unity WebGL 导出要求：[\s\S]*?Compression Format[\s\S]*?Disabled[\s\S]*?Decompression Fallback[\s\S]*?Default 或 Minimal[\s\S]*?首次点击画面后才有声音/);
   assert.match(labHtml, /data-lab-upload-form[^>]*data-upload-api="\/api\/admin\/lab\/upload"/);
   assert.match(labHtml, /data-lab-upload-button>[\s\S]*data-lab-upload-status role="status"/);
 });

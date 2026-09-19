@@ -3,6 +3,14 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-20**
 
+## 2026-09-20 v3.13.1 候选 —— 纯修：小作坊支持 Unity WebGL（白名单加 .wasm/.data、lab CSP 放宽三项），用户操作方式不变
+
+- `admin-server/src/services/lab-service.js`：小作坊 ZIP 白名单新增 `.wasm` 与 `.data`，用于接收关闭压缩后的 Unity WebGL 构建；`.gz`、`.br`、`.unityweb` 仍不放行，既有路径穿越、文件数、解压体积、符号链接与加密条目校验未放宽。
+- `admin-server/src/app.js`、`deploy/nginx.conf`：仅小作坊 `/lab` 响应逐字一致地增加 `script-src 'unsafe-inline' 'wasm-unsafe-eval'`、`connect-src 'self'` 与 `worker-src 'self' blob:`；主站与管理后台 CSP 保持原字符串不变。Unity 模板的 `index.html` 固定包含随构建文件名变化的内联实例化脚本，哈希不可维护；WebAssembly 实例化需要 `wasm-unsafe-eval`，loader 通过 `fetch` 读取 `.wasm` / `.data`，部分版本使用 blob Worker。安全边界仍是后台 Cookie 为 host-only 且 `SameSite=strict`，lab 子域无法读取，放宽范围只影响 lab 自身。
+- `admin-server/src/views.js`、`admin-server/.env.example`、`admin-server/deploy/README.md`：后台补充 Unity WebGL 导出与压缩说明；托管 Unity 时建议把 `LAB_MAX_UNCOMPRESSED_BYTES` 设为 `314572800`（300 MB），并同步检查 gateway 与站内 Nginx 的 `client_max_body_size`，仓库默认值不变。
+- `admin-server/tests/lab-projects.test.js`、`admin-server/tests/presentation.test.js`：真实 ZIP 覆盖 `.wasm` / `.data` 可上传、`.exe` / `.unityweb` 仍返回 415；锁定主站和后台 CSP 的改前字符串，并确认 Express 与 Nginx 的 lab CSP 完全一致。Express 静态服务实测 `.wasm` 响应为 `application/wasm`，因此未在 Nginx `location` 内另设局部 `types`，避免局部映射覆盖既有 MIME 表。
+- **证据与边界**：`npm run check` 通过；完整 `npm test` 从基线 **176** 增至 **178/178**，失败 0。真实 `zhiyi_v0.1_webgl.zip` 上传、浏览器游玩与控制台 CSP 结果仍由用户本地验收，本轮不代报通过。
+
 ## v3.13 —— 版本升：新增作品「详情」模块、辅图舞台切换、小作坊卡片与封面、上传孤儿自动清理为新交互；简介限 100 字、showcase 回退、文件名修正、LAB_BASE_URL 警告、四轮本地验收返工为随附
 
 - **覆盖范围**：本条写入前现场运行 `git log --oneline v3.12..HEAD`，当时 `HEAD=ff2e989`，实施范围 `v3.12..ff2e989` 共 **13 个提交**；本存档提交自身不计入下列实施提交：
