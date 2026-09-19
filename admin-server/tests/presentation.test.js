@@ -200,6 +200,19 @@ test('作品列表不再输出左右箭头且单卡不携带撑满标记', () =>
   assert.doesNotMatch(html, /work-slider-arrow|data-scroll-prev|data-scroll-next|data-card-count/);
 });
 
+test('小作坊只有一个项目时仍与作品分组共用横向轨道和卡片规格', () => {
+  const html = renderWorksList([], [], [{
+    id: 1,
+    slug: 'single-lab',
+    title: '单个小作坊',
+    description: '验证单项目仍使用统一轨道。',
+    accessUrl: '/lab/single-lab/',
+    cover_image: null,
+  }]);
+  assert.match(html, /class="work-slider-track" data-work-track[^>]*aria-label="小作坊项目，可横向滑动"/);
+  assert.doesNotMatch(html, /lab-portfolio-grid|lab-portfolio-card/);
+});
+
 test('前后台更新记录超过5条时只折叠其余条目', () => {
   const updates = Array.from({ length: 6 }, (_, index) => ({
     id: index + 1,

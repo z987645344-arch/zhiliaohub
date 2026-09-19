@@ -1503,6 +1503,7 @@ canvas {
   min-width: 0;
   flex-direction: column;
   gap: 12px;
+  border-radius: var(--radius-md);
 }
 
 .showcase-stage {
@@ -1618,7 +1619,9 @@ canvas {
 .showcase-right {
   display: flex;
   min-width: 0;
+  height: 100%;
   padding: clamp(24px, 3vw, 34px);
+  align-self: stretch;
   flex-direction: column;
   gap: 18px;
   border: 1px solid var(--line);
@@ -2008,9 +2011,14 @@ canvas {
   padding: clamp(24px, 4vw, 40px);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 760px) {
   .showcase {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .showcase-left,
+  .showcase-right {
+    height: auto;
   }
 
   .showcase-right {

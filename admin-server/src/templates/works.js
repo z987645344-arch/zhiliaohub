@@ -66,11 +66,9 @@ function renderLabSection(projects) {
     const cover = project.cover_image
       ? `<div class="portfolio-cover portfolio-cover-photo"><img src="${escapeHtml(project.cover_image)}" alt="${escapeHtml(project.title)}封面" loading="lazy" decoding="async"><span class="portfolio-cover-num">LAB / ${number}</span></div>`
       : `<div class="portfolio-cover ${fallbackCovers[index % fallbackCovers.length]}"><span>LAB / ${number}</span><b aria-hidden="true">◇</b></div>`;
-    return `<article class="portfolio-card lab-portfolio-card"><a class="portfolio-card-link" href="${escapeHtml(project.accessUrl)}" target="_blank" rel="noopener noreferrer">${cover}<div class="portfolio-copy"><small>LAB / ${number}</small><h3>${escapeHtml(project.title)}</h3><p>${escapeHtml(project.description)}</p><span class="card-enter">打开独立页面 ↗</span></div></a></article>`;
+    return `<article class="portfolio-card"><a class="portfolio-card-link" href="${escapeHtml(project.accessUrl)}" target="_blank" rel="noopener noreferrer">${cover}<div class="portfolio-copy"><small>LAB / ${number}</small><h3>${escapeHtml(project.title)}</h3><p>${escapeHtml(project.description)}</p><span class="card-enter">打开独立页面 ↗</span></div></a></article>`;
   }).join('\n              ');
-  const cardsMarkup = projects.length > 1
-    ? `<div class="work-slider-track" data-work-track tabindex="0" aria-label="小作坊项目，可横向滑动">${cards}</div>`
-    : `<div class="portfolio-grid lab-portfolio-grid">${cards}</div>`;
+  const cardsMarkup = `<div class="work-slider-track" data-work-track tabindex="0" aria-label="小作坊项目，可横向滑动">${cards}</div>`;
   return `<section class="lab-section" data-work-slider aria-labelledby="lab-section-title"><div class="section-bar"><h2 id="lab-section-title">小作坊</h2><span>${projects.length} STATIC EXPERIMENTS</span></div><p class="lab-section-intro">一些独立打包的小型网页实验，在新的窗口中打开。</p>${cardsMarkup}</section>`;
 }
 

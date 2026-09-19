@@ -503,7 +503,7 @@ test('小作坊卡片使用可选封面且无封面时保留几何占位图', as
   const html = await fs.readFile(path.join(runtime.config.siteRoot, 'works.html'), 'utf8');
   assert.match(html, new RegExp(`<img src="assets/works/covers/${coverName}"`));
   assert.match(html, new RegExp(`href="${withCover.accessUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}" target="_blank"`));
-  assert.match(html, /<article class="portfolio-card lab-portfolio-card">[\s\S]*?<div class="portfolio-cover cover-/);
+  assert.match(html, /class="work-slider-track"[\s\S]*?<article class="portfolio-card">[\s\S]*?<div class="portfolio-cover cover-/);
   assert.equal(withoutCover.cover_image, null);
   assert.match(html, /data-work-track tabindex="0" aria-label="小作坊项目，可横向滑动"/);
 });

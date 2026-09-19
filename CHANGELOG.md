@@ -3,6 +3,12 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-20**
 
+## 2026-09-20 v3.13 候选展示返工：统一小作坊卡片与详情页双栏（未打标签）
+
+- `admin-server/src/templates/works.js`：小作坊不再按项目数切换布局；一个或多个项目一律使用作品分组相同的 `work-slider-track` 与 `portfolio-card` 结构，删除 `lab-portfolio-grid` / `lab-portfolio-card` 分支。分类二级页 `category-portfolio-grid` 未改。
+- `css/style.css`：`.showcase-left` 与内部 `.showcase-stage` 统一使用 `var(--radius-md)`；桌面端 `.showcase-right` 显式拉伸为左栏“舞台 + 缩略条”的网格行总高，既有 `.showcase-meta { margin-top: auto; }` 继续把状态行推到底部；≤760px 时左右栏恢复自然高度。
+- `admin-server/tests/presentation.test.js`：新增单个小作坊项目仍输出统一横向轨道、且不再输出旧专用网格/卡片类的回归断言。视觉效果由用户验收，本轮不代报。
+
 ## 2026-09-20 固定备份状态聚合测试时钟（未打标签）
 
 - `admin-server/tests/admin-server.test.js`：聚合备份状态测试不再读取真实墙钟，而是通过 `createRuntime` 的 `dependencies.backupStatusService` 注入 UTC+8 12:00 的固定 `now`；`stale / no_archive_in_window` 断言保持不变。其余备份状态测试已逐项核对，均已显式注入固定时钟，无需修改。
