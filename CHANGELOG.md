@@ -3,8 +3,9 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-09-20**
 
-## 2026-09-20 v3.13.1 候选 —— 纯修：小作坊支持 Unity WebGL（白名单加 .wasm/.data、lab CSP 放宽三项），用户操作方式不变
+## 2026-09-20 v3.13.1 —— 纯修：小作坊支持 Unity WebGL（白名单加 .wasm/.data、lab CSP 放宽三项），用户操作方式不变
 
+- **覆盖范围**：本条存档提交完成后，`v3.13..HEAD` 共 **2 个提交**。
 - `admin-server/src/services/lab-service.js`：小作坊 ZIP 白名单新增 `.wasm` 与 `.data`，用于接收关闭压缩后的 Unity WebGL 构建；`.gz`、`.br`、`.unityweb` 仍不放行，既有路径穿越、文件数、解压体积、符号链接与加密条目校验未放宽。
 - `admin-server/src/app.js`、`deploy/nginx.conf`：仅小作坊 `/lab` 响应逐字一致地增加 `script-src 'unsafe-inline' 'wasm-unsafe-eval'`、`connect-src 'self'` 与 `worker-src 'self' blob:`；主站与管理后台 CSP 保持原字符串不变。Unity 模板的 `index.html` 固定包含随构建文件名变化的内联实例化脚本，哈希不可维护；WebAssembly 实例化需要 `wasm-unsafe-eval`，loader 通过 `fetch` 读取 `.wasm` / `.data`，部分版本使用 blob Worker。安全边界仍是后台 Cookie 为 host-only 且 `SameSite=strict`，lab 子域无法读取，放宽范围只影响 lab 自身。
 - `admin-server/src/views.js`、`admin-server/.env.example`、`admin-server/deploy/README.md`：后台补充 Unity WebGL 导出与压缩说明；托管 Unity 时建议把 `LAB_MAX_UNCOMPRESSED_BYTES` 设为 `314572800`（300 MB），并同步检查 gateway 与站内 Nginx 的 `client_max_body_size`，仓库默认值不变。
