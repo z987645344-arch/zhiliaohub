@@ -82,6 +82,7 @@
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
   --grain: url("../assets/grain.svg");
+  --silhouette: url("../assets/brand/silhouette.png");
 }
 
 /* ── 基础 ───────────────────────────────────────────────────────────────── */
@@ -1725,10 +1726,12 @@ canvas {
   right: clamp(24px, 8vw, 110px);
   width: clamp(72px, 10vw, 120px);
   aspect-ratio: 1;
-  transform: translateY(-50%) rotate(-6deg);
-  border: 1px dashed rgba(243, 179, 90, 0.55);
-  border-radius: 22px;
-  box-shadow: 0 0 40px -8px var(--amber-glow);
+  transform: translateY(-50%);
+  background: linear-gradient(180deg, var(--amber-hot), var(--amber-deep));
+  -webkit-mask: var(--silhouette) center / contain no-repeat;
+  mask: var(--silhouette) center / contain no-repeat;
+  filter: drop-shadow(0 0 18px var(--amber-glow));
+  opacity: 0.9;
   content: "";
 }
 
@@ -2927,6 +2930,74 @@ canvas {
   pointer-events: none;
   text-align: center;
   user-select: none;
+}
+
+/* ── 品牌剪影：单色轮廓用遮罩着色，出现在默认封面、空状态、错误页与页脚 ── */
+
+.portfolio-cover b.cover-silhouette::before {
+  width: 64%;
+  height: 64%;
+  margin-top: 12%;
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 50%, #000));
+  -webkit-mask: var(--silhouette) center / contain no-repeat;
+  mask: var(--silhouette) center / contain no-repeat;
+  filter: drop-shadow(0 0 8px var(--accent-glow));
+  content: "";
+}
+
+.comment-empty::before,
+.work-category-empty::before {
+  display: block;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 16px;
+  background: linear-gradient(180deg, var(--amber-hot), var(--amber-deep));
+  -webkit-mask: var(--silhouette) center / contain no-repeat;
+  mask: var(--silhouette) center / contain no-repeat;
+  filter: drop-shadow(0 0 12px var(--amber-glow));
+  opacity: 0.85;
+  content: "";
+}
+
+.error-hero {
+  position: relative;
+  isolation: isolate;
+}
+
+.error-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.error-hero::before {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: 0;
+  width: clamp(160px, 28vw, 340px);
+  aspect-ratio: 1;
+  transform: translateY(-50%);
+  background: linear-gradient(180deg, var(--amber-hot), var(--amber-deep) 70%, transparent);
+  -webkit-mask: var(--silhouette) center / contain no-repeat;
+  mask: var(--silhouette) center / contain no-repeat;
+  filter: drop-shadow(0 0 40px var(--amber-glow));
+  opacity: 0.55;
+  content: "";
+}
+
+.footer-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.footer-wordmark::before {
+  width: 16px;
+  height: 16px;
+  background: var(--amber);
+  -webkit-mask: var(--silhouette) center / contain no-repeat;
+  mask: var(--silhouette) center / contain no-repeat;
+  content: "";
 }
 
 /* ── 进场：滚动驱动的淡入（不支持的浏览器直接显示） ─────────────────────── */
