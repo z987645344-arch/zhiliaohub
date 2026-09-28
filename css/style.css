@@ -248,10 +248,14 @@ canvas {
   border-radius: 12px;
   background: radial-gradient(circle at 30% 25%, var(--amber-hot), var(--amber) 55%, var(--amber-deep));
   box-shadow: 0 0 0 1px rgba(255, 208, 138, 0.35), 0 0 22px var(--amber-glow);
-  color: var(--button-ink);
-  font-size: 17px;
-  font-weight: 900;
+  overflow: hidden;
   transition: transform 300ms var(--ease), box-shadow 300ms var(--ease);
+}
+
+.brand-mark img {
+  width: 92%;
+  height: auto;
+  margin-top: 14%;
 }
 
 .brand:hover .brand-mark {

@@ -70,6 +70,7 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}｜知了hub 管理后台</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/brand/favicon-32.png">
   <style>
     :root {
       color-scheme: dark;
@@ -640,10 +641,64 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
       dd { margin-bottom: 14px; }
       .save-bar button { width: 100%; }
     }
+    /* Lamp & Node：与访客前台一致的暖灯、节点与玻璃质感（只改显示层）。 */
+    @font-face { font-family: "Montserrat"; font-weight: 900; font-display: swap; src: url("/assets/fonts/montserrat-latin-900-normal.woff2") format("woff2"); }
+    @font-face { font-family: "JetBrains Mono"; font-weight: 400; font-display: swap; src: url("/assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); }
+    @font-face { font-family: "JetBrains Mono"; font-weight: 600; font-display: swap; src: url("/assets/fonts/jetbrains-mono-latin-600-normal.woff2") format("woff2"); }
+    :root {
+      --font-mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      --font-display: "Montserrat", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+      --glass: rgba(23, 23, 26, 0.66);
+      --glass-edge: rgba(255, 255, 255, 0.09);
+      --amber-glow: rgba(243, 179, 90, 0.4);
+    }
+    body {
+      background:
+        radial-gradient(1000px 680px at 6% -8%, rgba(243, 179, 90, 0.1), transparent 62%),
+        radial-gradient(800px 600px at 100% 30%, rgba(116, 211, 242, 0.04), transparent 64%),
+        var(--paper);
+      background-attachment: fixed;
+    }
+    body::after { position: fixed; inset: 0; z-index: 60; background-image: url("/assets/grain.svg"); background-size: 180px 180px; mix-blend-mode: overlay; opacity: 0.05; content: ""; pointer-events: none; }
+    body > header { background: rgba(9, 9, 11, 0.78); }
+    .admin-brand .brand-mark { overflow: hidden; }
+    .admin-brand .brand-mark img { width: 92%; height: auto; margin-top: 14%; }
+    .admin-brand strong { font-family: var(--font-display); font-weight: 900; letter-spacing: -0.01em; }
+    nav a[aria-current="page"] { position: relative; }
+    nav a[aria-current="page"]::after { position: absolute; right: 0; bottom: -8px; left: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--acid)); box-shadow: 0 0 8px var(--amber-glow); content: ""; }
+    h1 {
+      font-family: var(--font-display);
+      font-weight: 900;
+      letter-spacing: -0.03em;
+      background: linear-gradient(180deg, #ffffff 30%, #c9c9cf);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .admin-kicker, .section-number { display: inline-flex; align-items: center; gap: 10px; }
+    .admin-kicker::before, .section-number::before {
+      width: 7px;
+      height: 7px;
+      flex: none;
+      border-radius: 50%;
+      background: var(--acid-strong);
+      box-shadow: 0 0 0 4px rgba(243, 179, 90, 0.14), 0 0 12px 2px var(--amber-glow);
+      content: "";
+    }
+    .panel {
+      border: 1px solid var(--glass-edge);
+      background: radial-gradient(70% 60% at 0% 0%, rgba(243, 179, 90, 0.08), transparent 65%), var(--glass);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+    button:hover, .button:hover { box-shadow: 0 8px 26px -8px var(--amber-glow); }
+    .button-secondary:hover, .button-danger:hover, .link-button:hover { box-shadow: none; }
+    input:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px rgba(243, 179, 90, 0.18), 0 0 22px -8px var(--amber-glow); }
+    tbody tr:hover { background: rgba(243, 179, 90, 0.05); }
   </style>
 </head>
 <body>
-  <header><a class="admin-brand" href="/admin" aria-label="知了hub 管理后台"><span class="brand-mark" aria-hidden="true">知</span><span><strong>知了hub</strong><small>PERSONAL ARCHIVE / 编辑室</small></span></a>${navigation}</header>
+  <header><a class="admin-brand" href="/admin" aria-label="知了hub 管理后台"><span class="brand-mark" aria-hidden="true"><img src="/assets/brand/avatar-128.webp" width="128" height="128" alt="" decoding="async"></span><span><strong>知了hub</strong><small>PERSONAL ARCHIVE / 编辑室</small></span></a>${navigation}</header>
   <main>${content}</main>
   ${authenticated ? '<script src="/admin/navigation.js" defer></script>' : ''}
 </body>
