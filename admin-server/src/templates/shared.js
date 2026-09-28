@@ -19,7 +19,7 @@ function page({ title, description, current, bodyClass = '', content }) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="${escapeHtml(description)}">
-    <meta name="theme-color" content="#0b0c0e">
+    <meta name="theme-color" content="#09090b">
     <title>${escapeHtml(title)}｜知了hub</title>
     <link rel="stylesheet" href="css/style.css?v=lamp-node-20260928">
     <script src="js/site.js?v=lamp-node-20260928" defer></script>
