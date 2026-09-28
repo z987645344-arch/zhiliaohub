@@ -18,6 +18,13 @@ function presentation(work, index) {
   return legacyPresentations[work.slug] || [fallbackCovers[index % fallbackCovers.length], 'WORK', '◇', String(work.category).toUpperCase()];
 }
 
+// 默认符号"◇"改用品牌剪影（CSS 遮罩着色）；作品自带的专属符号原样保留。
+function coverSymbol(symbol) {
+  return symbol === '◇'
+    ? '<b class="cover-silhouette" aria-hidden="true"></b>'
+    : `<b aria-hidden="true">${escapeHtml(symbol)}</b>`;
+}
+
 function compareByLatest(left, right) {
   const leftUpdated = String(left.updated_at || left.created_at || '');
   const rightUpdated = String(right.updated_at || right.created_at || '');
@@ -38,7 +45,7 @@ function renderWorkCard(work, index, headingLevel = 2) {
   const headingTag = headingLevel === 3 ? 'h3' : 'h2';
   const coverMarkup = work.cover_image
     ? `<div class="portfolio-cover portfolio-cover-photo"><img src="${escapeHtml(work.cover_image)}" alt="${escapeHtml(work.title)}封面" loading="lazy" decoding="async"><span class="portfolio-cover-num">${escapeHtml(code)} / ${number}</span></div>`
-    : `<div class="portfolio-cover ${cover}"><span>${escapeHtml(code)} / ${number}</span><b aria-hidden="true">${escapeHtml(symbol)}</b></div>`;
+    : `<div class="portfolio-cover ${cover}"><span>${escapeHtml(code)} / ${number}</span>${coverSymbol(symbol)}</div>`;
   return `<article class="portfolio-card${featured}"><a class="portfolio-card-link" href="works-${escapeHtml(work.slug)}.html">${coverMarkup}<div class="portfolio-copy"><small>${escapeHtml(work.category)}</small><${headingTag}>${escapeHtml(work.title)}</${headingTag}><p>${escapeHtml(work.detail_intro || '')}</p><span class="card-enter">${enter}</span></div></a></article>`;
 }
 
@@ -65,7 +72,7 @@ function renderLabSection(projects) {
     const number = String(index + 1).padStart(2, '0');
     const cover = project.cover_image
       ? `<div class="portfolio-cover portfolio-cover-photo"><img src="${escapeHtml(project.cover_image)}" alt="${escapeHtml(project.title)}封面" loading="lazy" decoding="async"><span class="portfolio-cover-num">LAB / ${number}</span></div>`
-      : `<div class="portfolio-cover ${fallbackCovers[index % fallbackCovers.length]}"><span>LAB / ${number}</span><b aria-hidden="true">◇</b></div>`;
+      : `<div class="portfolio-cover ${fallbackCovers[index % fallbackCovers.length]}"><span>LAB / ${number}</span>${coverSymbol('◇')}</div>`;
     return `<article class="portfolio-card"><a class="portfolio-card-link" href="${escapeHtml(project.accessUrl)}" target="_blank" rel="noopener noreferrer">${cover}<div class="portfolio-copy"><small>LAB / ${number}</small><h3>${escapeHtml(project.title)}</h3><p>${escapeHtml(project.description)}</p><span class="card-enter">打开独立页面 ↗</span></div></a></article>`;
   }).join('\n              ');
   const cardsMarkup = `<div class="work-slider-track" data-work-track tabindex="0" aria-label="小作坊项目，可横向滑动">${cards}</div>`;
@@ -135,7 +142,7 @@ function renderWorkDetail(work, updates = [], index = 0) {
     ? primaryType === 'video'
       ? `<video class="showcase-main" src="${escapeHtml(primaryPath)}" controls preload="metadata" playsinline aria-label="${escapeHtml(work.title)}主视频"></video>`
       : `<img class="showcase-main" src="${escapeHtml(primaryPath)}" alt="${escapeHtml(work.title)}主图" decoding="async">`
-    : `<div class="showcase-main showcase-placeholder portfolio-cover ${cover}" role="img" aria-label="${escapeHtml(work.title)}暂无媒体，显示默认封面"><span>${escapeHtml(code)} / ${number}</span><b aria-hidden="true">${escapeHtml(symbol)}</b></div>`;
+    : `<div class="showcase-main showcase-placeholder portfolio-cover ${cover}" role="img" aria-label="${escapeHtml(work.title)}暂无媒体，显示默认封面"><span>${escapeHtml(code)} / ${number}</span>${coverSymbol(symbol)}</div>`;
   const thumbs = stageItems.map((item, itemIndex) => {
     const label = item.primary
       ? `${item.type === 'video' ? '播放' : '查看'}主${item.type === 'video' ? '视频' : '图'}`
