@@ -41,6 +41,97 @@
     element.textContent = String(new Date().getFullYear());
   });
 
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  // 顶栏：首页滚过首屏后加底色；所有页面显示一条随滚动推进的发光导线。
+  const siteHeader = document.querySelector(".site-header");
+  if (siteHeader) {
+    const wire = document.createElement("span");
+    wire.className = "scroll-wire";
+    wire.setAttribute("aria-hidden", "true");
+    siteHeader.append(wire);
+    let ticking = false;
+    const updateHeader = () => {
+      ticking = false;
+      const maximum = document.documentElement.scrollHeight - window.innerHeight;
+      const progress = maximum > 0 ? Math.min(1, Math.max(0, window.scrollY / maximum)) : 0;
+      wire.style.setProperty("--progress", progress.toFixed(4));
+      siteHeader.classList.toggle("is-scrolled", window.scrollY > 24);
+    };
+    window.addEventListener("scroll", () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(updateHeader);
+    }, { passive: true });
+    window.addEventListener("resize", updateHeader);
+    updateHeader();
+  }
+
+  // 卡片表面的灯光跟随鼠标位置。
+  document.querySelectorAll(".portfolio-card, .showcase-right, .tool-card").forEach((card) => {
+    card.addEventListener("pointermove", (event) => {
+      if (event.pointerType !== "mouse") return;
+      const bounds = card.getBoundingClientRect();
+      card.style.setProperty("--mx", `${event.clientX - bounds.left}px`);
+      card.style.setProperty("--my", `${event.clientY - bounds.top}px`);
+    });
+  });
+
+  // 等宽小标签进入视口时像终端一样“解码”一次；读屏软件始终读到原文。
+  const scrambleTargets = document.querySelectorAll(".hero-kicker, .page-kicker, .section-kicker, .work-category-kicker");
+  if (!reduceMotion.matches && "IntersectionObserver" in window && scrambleTargets.length) {
+    const glyphs = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/<>_#";
+    const scramble = (element) => {
+      const finalText = element.textContent;
+      if (!finalText.trim()) return;
+      element.setAttribute("aria-label", finalText);
+      const totalFrames = 18;
+      let frame = 0;
+      const step = () => {
+        frame += 1;
+        const settled = Math.floor((frame / totalFrames) * finalText.length);
+        element.textContent = [...finalText].map((character, index) => {
+          if (index < settled || character === " " || character === "/") return character;
+          return glyphs[Math.floor(Math.random() * glyphs.length)];
+        }).join("");
+        if (frame < totalFrames) {
+          window.requestAnimationFrame(step);
+        } else {
+          element.textContent = finalText;
+        }
+      };
+      window.requestAnimationFrame(step);
+    };
+    const scrambleObserver = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        scrambleObserver.unobserve(entry.target);
+        scramble(entry.target);
+      });
+    }, { threshold: 0.6 });
+    scrambleTargets.forEach((element) => scrambleObserver.observe(element));
+  }
+
+  // 页脚时钟：固定显示北京时间，和站内其他时间口径一致。
+  const clocks = document.querySelectorAll("[data-clock]");
+  if (clocks.length) {
+    const formatter = new Intl.DateTimeFormat("zh-CN", {
+      timeZone: "Asia/Shanghai",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const tick = () => {
+      const text = `UTC+8 · ${formatter.format(new Date())}`;
+      clocks.forEach((clock) => {
+        clock.textContent = text;
+        clock.hidden = false;
+      });
+    };
+    tick();
+    window.setInterval(tick, 30000);
+  }
+
   function showFeedbackStatus(status, message, isError = false) {
     status.textContent = message;
     status.classList.add("is-visible");
