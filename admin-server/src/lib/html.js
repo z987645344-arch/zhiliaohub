@@ -691,6 +691,12 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
       backdrop-filter: blur(14px);
       -webkit-backdrop-filter: blur(14px);
     }
+    /* 这两块原本无边框、零内边距；加上玻璃卡边框后需补回内边距，否则文字贴边。 */
+    .dashboard-intro { padding: clamp(24px, 3.4vw, 40px); }
+    .work-form-panel { padding: clamp(20px, 3vw, 36px); }
+    @media (max-width: 720px) {
+      .dashboard-intro, .work-form-panel { padding: 18px; }
+    }
     button:hover, .button:hover { box-shadow: 0 8px 26px -8px var(--amber-glow); }
     .button-secondary:hover, .button-danger:hover, .link-button:hover { box-shadow: none; }
     input:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px rgba(243, 179, 90, 0.18), 0 0 22px -8px var(--amber-glow); }
