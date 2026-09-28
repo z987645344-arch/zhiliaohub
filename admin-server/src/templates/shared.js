@@ -8,7 +8,7 @@ function navigation(current) {
 }
 
 function footer() {
-  return '<footer class="site-footer"><div class="footer-inner"><p class="footer-wordmark">知了hub / ZHILIAO</p><p>© <span data-current-year>2026</span> · 持续生长的个人作品集</p></div></footer>';
+  return '<footer class="site-footer"><div class="footer-inner"><p class="footer-wordmark">知了hub / ZHILIAO</p><p class="footer-clock" data-clock hidden>UTC+8</p><p>© <span data-current-year>2026</span> · 持续生长的个人作品集</p></div></footer>';
 }
 
 function page({ title, description, current, bodyClass = '', content }) {
@@ -19,10 +19,10 @@ function page({ title, description, current, bodyClass = '', content }) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="${escapeHtml(description)}">
-    <meta name="theme-color" content="#2a333a">
+    <meta name="theme-color" content="#0b0c0e">
     <title>${escapeHtml(title)}｜知了hub</title>
-    <link rel="stylesheet" href="css/style.css?v=archive-ui-20260912">
-    <script src="js/site.js" defer></script>
+    <link rel="stylesheet" href="css/style.css?v=lamp-node-20260928">
+    <script src="js/site.js?v=lamp-node-20260928" defer></script>
   </head>
   <body class="archive-page${bodyClass ? ` ${escapeHtml(bodyClass)}` : ''}">
     <a class="skip-link" href="#main-content">跳到主要内容</a>

@@ -9,10 +9,12 @@
 
   const reduceMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
   const frameInterval = 1000 / 45;
-  const rainColor = "214, 222, 226";
-  const fogColor = "202, 212, 218";
+  const rainColor = "222, 216, 204";
+  const fogColor = "214, 204, 188";
+  const emberColor = "255, 196, 118";
   let drops = [];
   let fogBanks = [];
+  let embers = [];
   let width = 0;
   let height = 0;
   let deviceScale = 1;
@@ -95,6 +97,40 @@
     }
   }
 
+  // 暖色浮尘：从左下的“台灯”方向缓慢上浮、明暗闪烁。
+  class Ember {
+    constructor() {
+      this.reset(true);
+    }
+
+    reset(initial = false) {
+      this.x = Math.random() * width * 0.62;
+      this.y = initial ? height * (0.3 + Math.random() * 0.7) : height + 10;
+      this.radius = 0.6 + Math.random() * 1.6;
+      this.speed = 0.12 + Math.random() * 0.34;
+      this.drift = (Math.random() - 0.5) * 0.24;
+      this.phase = Math.random() * Math.PI * 2;
+      this.alpha = 0.24 + Math.random() * 0.5;
+    }
+
+    update() {
+      this.y -= this.speed;
+      this.phase += 0.035;
+      this.x += this.drift + Math.sin(this.phase) * 0.18;
+      if (this.y < height * 0.12 || this.x < -20 || this.x > width + 20) this.reset();
+    }
+
+    draw() {
+      const flicker = 0.6 + Math.sin(this.phase * 1.7) * 0.4;
+      const alpha = this.alpha * flicker;
+      const glow = context.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius * 5);
+      glow.addColorStop(0, `rgba(${emberColor}, ${alpha})`);
+      glow.addColorStop(1, `rgba(${emberColor}, 0)`);
+      context.fillStyle = glow;
+      context.fillRect(this.x - this.radius * 5, this.y - this.radius * 5, this.radius * 10, this.radius * 10);
+    }
+  }
+
   const createAtmosphere = () => {
     const area = width * height;
     const maximumDrops = width < 700 ? 46 : 84;
@@ -103,6 +139,7 @@
 
     drops = Array.from({ length: dropCount }, () => new RainDrop());
     fogBanks = Array.from({ length: fogCount }, (_, index) => new FogBank(index));
+    embers = Array.from({ length: width < 700 ? 14 : 28 }, () => new Ember());
   };
 
   const drawScene = (shouldUpdate) => {
@@ -111,10 +148,12 @@
     if (shouldUpdate) {
       fogBanks.forEach((fogBank) => fogBank.update());
       drops.forEach((drop) => drop.update());
+      embers.forEach((ember) => ember.update());
     }
 
     fogBanks.forEach((fogBank) => fogBank.draw());
     drops.forEach((drop) => drop.draw());
+    embers.forEach((ember) => ember.draw());
 
     if (shouldUpdate) {
       renderedFrames += 1;
