@@ -73,24 +73,24 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
   <style>
     :root {
       color-scheme: dark;
-      --paper: #20282d;
-      --ink: #eff2f3;
-      --ink-soft: #bac4c9;
-      --forest: #2a333a;
-      --acid: #b3b7a4;
-      --acid-strong: #c8cdb8;
-      --line: rgba(239, 242, 243, 0.16);
-      --white: #eff2f3;
-      --surface: #2a333a;
-      --surface-raised: #323e45;
-      --button-ink: #222a2e;
-      --danger: #f0b0a6;
-      --danger-bg: #3f2d2e;
-      --warning: #e6ce9a;
-      --warning-bg: #39352b;
-      --success: #b9cbb1;
-      --success-bg: #2d3a34;
-      --focus: rgba(179, 183, 164, 0.3);
+      --paper: #09090b;
+      --ink: #ececee;
+      --ink-soft: #a1a1aa;
+      --forest: #17171a;
+      --acid: #f3b35a;
+      --acid-strong: #ffd08a;
+      --line: rgba(255, 255, 255, 0.1);
+      --white: #f4f4f5;
+      --surface: #17171a;
+      --surface-raised: #222226;
+      --button-ink: #17130d;
+      --danger: #f2a595;
+      --danger-bg: #2a1714;
+      --warning: #e9c27a;
+      --warning-bg: #2a2114;
+      --success: #8fd19e;
+      --success-bg: #13241a;
+      --focus: rgba(243, 179, 90, 0.3);
       --font-sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
       --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
       --radius-lg: 24px;
@@ -521,10 +521,11 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     body::before { display: none; }
     body > header { position: sticky; top: 0; z-index: 20; min-height: 88px; background: var(--paper); background: color-mix(in srgb, var(--paper) 88%, transparent); border-bottom: 1px solid var(--line); padding-inline: max(24px, calc((100% - 1180px) / 2)); backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2); }
     .admin-brand { display: flex; align-items: center; gap: 12px; }
-    .admin-brand .brand-mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--acid); color: var(--button-ink); font-weight: 700; }
+    .admin-brand .brand-mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: radial-gradient(circle at 30% 25%, var(--acid-strong), var(--acid) 60%); box-shadow: 0 0 22px rgba(243, 179, 90, 0.4); color: var(--button-ink); font-weight: 900; }
     .admin-brand strong { display: block; }
     .admin-brand strong::before { display: none; }
     .admin-brand small, .admin-kicker, .section-number { font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; color: var(--ink-soft); }
+    .admin-kicker, .section-number { color: var(--acid); }
     .admin-brand small { display: block; font-size: 9px; }
     nav a { display: flex; align-items: center; gap: 7px; }
     nav a span { font-family: var(--font-mono); font-size: 10px; color: var(--acid); }
@@ -881,7 +882,7 @@ function workFormScript() {
     const box = cropState.box;
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(cropState.image, 0, 0, canvas.width, canvas.height);
-    context.fillStyle = 'rgba(20, 25, 28, 0.58)';
+    context.fillStyle = 'rgba(9, 9, 11, 0.58)';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(
       cropState.image,
@@ -1250,10 +1251,10 @@ if (labUploadForm) {
     context.fillStyle = 'rgba(0,0,0,.55)';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(cropState.image, box.x / cropState.scale, box.y / cropState.scale, box.width / cropState.scale, box.height / cropState.scale, box.x, box.y, box.width, box.height);
-    context.strokeStyle = '#d7ff64';
+    context.strokeStyle = '#f3b35a';
     context.lineWidth = 3;
     context.strokeRect(box.x, box.y, box.width, box.height);
-    context.fillStyle = '#d7ff64';
+    context.fillStyle = '#f3b35a';
     for (const corner of Object.values(cropCorners())) context.fillRect(corner.x - 6, corner.y - 6, 12, 12);
   }
 
