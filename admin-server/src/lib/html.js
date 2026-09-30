@@ -70,7 +70,7 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}｜知了hub 管理后台</title>
-  <link rel="icon" type="image/png" sizes="32x32" href="/assets/brand/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/brand/favicon-32.png?v=20260930">
   <style>
     :root {
       color-scheme: dark;
@@ -661,8 +661,8 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
     }
     body::after { position: fixed; inset: 0; z-index: 60; background-image: url("/assets/grain.svg"); background-size: 180px 180px; mix-blend-mode: overlay; opacity: 0.05; content: ""; pointer-events: none; }
     body > header { background: rgba(9, 9, 11, 0.78); }
-    .admin-brand .brand-mark { overflow: hidden; }
-    .admin-brand .brand-mark img { width: 92%; height: auto; margin-top: 14%; }
+    .admin-brand .brand-mark { display: block; overflow: hidden; border-radius: 22.5%; background: none; }
+    .admin-brand .brand-mark img { display: block; width: 100%; height: 100%; }
     .admin-brand strong { font-family: var(--font-display); font-weight: 900; letter-spacing: -0.01em; }
     nav a[aria-current="page"] { position: relative; }
     nav a[aria-current="page"]::after { position: absolute; right: 0; bottom: -8px; left: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--acid)); box-shadow: 0 0 8px var(--amber-glow); content: ""; }
@@ -704,7 +704,7 @@ function layout({ title, content, authenticated = false, csrfToken = '' }) {
   </style>
 </head>
 <body>
-  <header><a class="admin-brand" href="/admin" aria-label="知了hub 管理后台"><span class="brand-mark" aria-hidden="true"><img src="/assets/brand/avatar-128.webp" width="128" height="128" alt="" decoding="async"></span><span><strong>知了hub</strong><small>PERSONAL ARCHIVE / 编辑室</small></span></a>${navigation}</header>
+  <header><a class="admin-brand" href="/admin" aria-label="知了hub 管理后台"><span class="brand-mark" aria-hidden="true"><img src="/assets/brand/avatar-128.webp?v=20260930" width="128" height="128" alt="" decoding="async"></span><span><strong>知了hub</strong><small>PERSONAL ARCHIVE / 编辑室</small></span></a>${navigation}</header>
   <main>${content}</main>
   ${authenticated ? '<script src="/admin/navigation.js" defer></script>' : ''}
 </body>
