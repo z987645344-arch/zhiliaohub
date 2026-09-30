@@ -4,7 +4,7 @@ const GENERATED_MARKER = '<!-- 此文件由知了hub后台自动生成，请勿�
 
 function navigation(current) {
   const link = (key, number, href, label) => `<a href="${href}"${current === key ? ' aria-current="page"' : ''}><span>${number}</span>${label}</a>`;
-  return `<header class="site-header"><div class="header-inner"><a class="brand" href="index.html" aria-label="知了hub 首页"><span class="brand-mark" aria-hidden="true"><img src="assets/brand/avatar-128.webp" width="128" height="128" alt="" decoding="async"></span><span class="brand-copy"><strong>知了hub</strong><small>PERSONAL ARCHIVE</small></span></a><button class="nav-toggle" type="button" aria-label="打开或关闭导航" aria-controls="site-nav" aria-expanded="false"><span></span><span></span></button><nav class="site-nav" id="site-nav" aria-label="主导航">${link('home', '01', 'index.html', '首页')}${link('works', '02', 'works.html', '作品展示')}${link('notes', '03', 'notes.html', '学习心得')}${link('tools', '04', 'tools.html', '智能工具')}${link('feedback', '05', 'feedback.html', '反馈中心')}</nav></div></header>`;
+  return `<header class="site-header"><div class="header-inner"><a class="brand" href="index.html" aria-label="知了hub 首页"><span class="brand-mark" aria-hidden="true"><img src="assets/brand/avatar-128.webp?v=20260930" width="128" height="128" alt="" decoding="async"></span><span class="brand-copy"><strong>知了hub</strong><small>PERSONAL ARCHIVE</small></span></a><button class="nav-toggle" type="button" aria-label="打开或关闭导航" aria-controls="site-nav" aria-expanded="false"><span></span><span></span></button><nav class="site-nav" id="site-nav" aria-label="主导航">${link('home', '01', 'index.html', '首页')}${link('works', '02', 'works.html', '作品展示')}${link('notes', '03', 'notes.html', '学习心得')}${link('tools', '04', 'tools.html', '智能工具')}${link('feedback', '05', 'feedback.html', '反馈中心')}</nav></div></header>`;
 }
 
 function footer() {
@@ -21,10 +21,10 @@ function page({ title, description, current, bodyClass = '', content }) {
     <meta name="description" content="${escapeHtml(description)}">
     <meta name="theme-color" content="#09090b">
     <title>${escapeHtml(title)}｜知了hub</title>
-    <link rel="icon" type="image/png" sizes="32x32" href="assets/brand/favicon-32.png">
-    <link rel="apple-touch-icon" href="assets/brand/apple-touch-icon.png">
-    <link rel="stylesheet" href="css/style.css?v=lamp-node-20260928">
-    <script src="js/site.js?v=lamp-node-20260928" defer></script>
+    <link rel="icon" type="image/png" sizes="32x32" href="assets/brand/favicon-32.png?v=20260930">
+    <link rel="apple-touch-icon" href="assets/brand/apple-touch-icon.png?v=20260930">
+    <link rel="stylesheet" href="css/style.css?v=lamp-node-20260930">
+    <script src="js/site.js?v=lamp-node-20260930" defer></script>
   </head>
   <body class="archive-page${bodyClass ? ` ${escapeHtml(bodyClass)}` : ''}">
     <a class="skip-link" href="#main-content">跳到主要内容</a>
