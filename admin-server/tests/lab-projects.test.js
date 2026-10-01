@@ -574,7 +574,9 @@ test('/lab静态响应使用Unity专用CSP且主站与后台CSP逐字保持原�
   assert.match(await response.text(), /本地小作坊验证/);
 
   const nginxConfig = await fs.readFile(path.resolve(__dirname, '..', '..', 'deploy', 'nginx.conf'), 'utf8');
-  const nginxLabCsp = nginxConfig.match(/add_header Content-Security-Policy "([^"]+)" always;/)?.[1];
+  const nginxLabCsp = nginxConfig.match(
+    /server_name \$\{LAB_SERVER_NAME\};[\s\S]*?add_header Content-Security-Policy "([^"]+)" always;/,
+  )?.[1];
   assert.equal(nginxLabCsp, UNITY_LAB_CSP);
 
   for (const route of ['/health', '/admin/login']) {

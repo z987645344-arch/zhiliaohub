@@ -1,7 +1,15 @@
 # 知了hub 改动记录
 > 每轮完成改动后在此追加记录（新条目追加在**最前**，本文件为新在前的倒序）。
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
-> **最后追加：2026-09-30**
+> **最后追加：2026-10-01**
+
+## v3.14.3 候选 —— 补丁（x.y.Z）：主站补齐 CSP/nosniff/X-Frame-Options/Referrer-Policy 并新增 favicon.ico 与 robots.txt
+
+- `deploy/nginx.conf`：仅在 `${SERVER_NAME}` 的静态 `location /` 增加四个 `always` 响应头：CSP、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`。未放到 server 层级，因此后台/API/上传反代与两个内部错误页不会继承第二份 CSP；lab 块与 Express Helmet 未改；HSTS 继续只由 gateway 统一下发。
+- `favicon.ico`：由既有品牌素材 `assets/brand/icon-192.png` 生成，内含 16、32、48、64、128px 五档图像；不生成需要把 192px 源放大的 256px 层，避免模糊。保留 HTML 里现有的 PNG `rel="icon"`，ICO 只作为不读取 link 的客户端兜底。
+- `robots.txt`：允许抓取主站，禁止 `/admin`、`/api`、`/uploads`，不声明不存在的 Sitemap。两项根目录静态资产均未被 `.gitignore` 命中；发布服务只清理由生成标记识别的 `works-*` / `notes-*` 页面与作品媒体，不会删除它们。
+- `admin-server/tests/lab-projects.test.js`：既有 Unity CSP 测试原先把 Nginx 文件中的第一个 CSP 当作 lab CSP；主站新增 CSP 后该假设失效。测试改为从 `${LAB_SERVER_NAME}` server 块精确取值，继续逐字锁定 lab CSP，未放宽断言。
+- **证据**：`npm run check` 通过；完整 `npm test` 为 **178/178**、失败 0。官方 `nginx:stable-alpine` 渲染模板后 `nginx -t` 通过；渲染结果中主站静态块 `add_header=4`，后台/API/上传反代块与两个错误页块各为 0，主站块 `Strict-Transport-Security=0`。本轮未部署；部署后仍需由统筹师以 `curl -I` 核对主站四个头、后台只有一个 CSP、全站没有重复 HSTS。
 
 ## v3.14.2 —— 补丁（x.y.Z）：头像图标改为「外框 + 内圆」，人物居中
 
