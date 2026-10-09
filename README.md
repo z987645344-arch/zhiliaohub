@@ -26,3 +26,10 @@
 - `docs/claude_skill.md`：协作与验证规范。
 
 本地后台运行、接口和备份说明见 [`admin-server/README.md`](admin-server/README.md)，生产更新与迁移说明见 [`admin-server/deploy/README.md`](admin-server/deploy/README.md)。真实 `.env`、SQLite、上传、备份、小作坊运行文件和服务器路径均不进入 Git。
+
+## 版权说明 / License
+
+本项目为作者个人作品，**保留所有权利**，公开仅供浏览与评估，未经许可不得复制、部署或用于对外服务。详见 [LICENSE](LICENSE)。
+
+This is a personal project. **All rights reserved.** Public for viewing and evaluation only; see [LICENSE](LICENSE).
+
