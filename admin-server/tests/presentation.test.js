@@ -10,11 +10,46 @@ const {
   layout,
   workFormScript,
 } = require('../src/lib/html');
-const { formatCommentTime } = require('../src/templates/feedback');
+const { formatCommentTime, renderFeedbackPage } = require('../src/templates/feedback');
 const { renderNoteDetail, renderNotesList } = require('../src/templates/notes');
 const { GENERATED_MARKER } = require('../src/templates/shared');
-const { renderWorkDetail, renderWorksList } = require('../src/templates/works');
+const { renderWorkCategory, renderWorkDetail, renderWorksList } = require('../src/templates/works');
+const { renderToolsPage } = require('../src/templates/tools');
 const { labManagementPage, workFormPage } = require('../src/views');
+
+test('首页与全部生成页页脚只有一条静态版权声明且标语不重复年份', () => {
+  const category = { name: '测试分组', slug: 'test', kicker: 'TEST', intro: '测试导语', empty: '暂无作品', is_visible: 1 };
+  const work = { id: 1, title: '测试作品', slug: 'test-work', category: category.name, detail_intro: '测试简介' };
+  const note = { title: '测试心得', slug: 'test-note', note_date: '2026-10-12', summary: '测试摘要' };
+  const home = fs.readFileSync(path.resolve(__dirname, '..', '..', 'index.html'), 'utf8');
+  const pages = [home, renderWorksList([category], [work]), renderWorkCategory(category, [work]),
+    renderWorkDetail(work), renderNotesList([note]), renderNoteDetail(note, '<p>测试正文</p>', 0),
+    renderToolsPage([]), renderFeedbackPage([])];
+  let expectedFooter;
+  for (const html of pages) {
+    const footers = html.match(/<footer class="site-footer">[\s\S]*?<\/footer>/g) || [];
+    assert.equal(footers.length, 1);
+    const footer = footers[0];
+    assert.match(footer, /<p>© 2026 知了 · 保留所有权利<\/p>/);
+    assert.doesNotMatch(footer, /保留所有权利。/);
+    assert.equal((footer.match(/©/g) || []).length, 1);
+    assert.equal((footer.match(/\b\d{4}\b/g) || []).length, 1);
+    assert.match(footer, /<p>持续生长的个人作品集<\/p>/);
+    assert.doesNotMatch(footer, /data-current-year/);
+    const normalized = footer.replace(/>\s+</g, '><');
+    expectedFooter ??= normalized;
+    assert.equal(normalized, expectedFooter);
+  }
+});
+
+test('robots保留普通搜索规则并逐组拒绝八个AI爬虫且不添加主机名或Sitemap', () => {
+  const robots = fs.readFileSync(path.resolve(__dirname, '..', '..', 'robots.txt'), 'utf8');
+  const groups = robots.trim().split(/\r?\n\s*\r?\n/).map((group) => group.split(/\r?\n/));
+  assert.deepEqual(groups[0], ['User-agent: *', 'Allow: /', 'Disallow: /admin', 'Disallow: /api', 'Disallow: /uploads']);
+  const agents = ['GPTBot', 'CCBot', 'Google-Extended', 'ClaudeBot', 'anthropic-ai', 'Bytespider', 'Applebot-Extended', 'meta-externalagent'];
+  assert.deepEqual(groups.slice(1), agents.map((agent) => [`User-agent: ${agent}`, 'Disallow: /']));
+  assert.doesNotMatch(robots, /Sitemap|https?:\/\/|Host\s*:/i);
+});
 
 test('展示时间固定为UTC+8，正确处理跨日、带偏移与SQLite时间', () => {
   assert.equal(formatDateTime('2026-09-11T18:20:00Z'), '2026.09.12 02:20 UTC+8');

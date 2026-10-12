@@ -2887,6 +2887,11 @@ canvas {
   font-size: 12px;
 }
 
+.footer-brand {
+  display: grid;
+  gap: 8px;
+}
+
 .footer-wordmark {
   color: var(--text);
   font-family: var(--font-mono);

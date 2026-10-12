@@ -8,7 +8,7 @@ function navigation(current) {
 }
 
 function footer() {
-  return '<footer class="site-footer"><div class="footer-inner"><p class="footer-wordmark">知了hub / ZHILIAO</p><p class="footer-clock" data-clock hidden>UTC+8</p><p>© <span data-current-year>2026</span> · 持续生长的个人作品集</p></div></footer>';
+  return '<footer class="site-footer"><div class="footer-inner"><div class="footer-brand"><p class="footer-wordmark">知了hub / ZHILIAO</p><p>© 2026 知了 · 保留所有权利</p></div><p class="footer-clock" data-clock hidden>UTC+8</p><p>持续生长的个人作品集</p></div></footer>';
 }
 
 function page({ title, description, current, bodyClass = '', content }) {

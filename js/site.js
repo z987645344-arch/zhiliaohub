@@ -37,10 +37,6 @@
     });
   }
 
-  document.querySelectorAll("[data-current-year]").forEach((element) => {
-    element.textContent = String(new Date().getFullYear());
-  });
-
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   // 顶栏：首页滚过首屏后加底色；所有页面显示一条随滚动推进的发光导线。

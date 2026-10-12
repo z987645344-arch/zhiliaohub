@@ -1,7 +1,17 @@
 # 知了hub 改动记录
 > 每轮完成改动后在此追加记录（新条目追加在**最前**，本文件为新在前的倒序）。
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
-> **最后追加：2026-10-09**
+> **最后追加：2026-10-12**
+
+## 2026-10-12 统一前台页脚著作权标注并补充 AI 爬虫规则
+
+- `admin-server/src/templates/shared.js`（+1/-1）、`index.html`（+5/-2）：生成页与手写首页使用一致的页脚结构；字标下方另起一行，原样显示 `© 2026 知了 · 保留所有权利`，年份固定、末尾无句号。原标语只保留“持续生长的个人作品集”，每页页脚仅一个 `©`、一个年份；403/404 错误页未加声明。
+- `css/style.css`（+5/-0）：新增 `.footer-brand` 两行分组，沿用现有页脚文字、颜色变量与响应式 flex 换行，不新增颜色令牌。
+- `js/site.js`（+0/-4）：两处 HTML 均移除 `data-current-year` 后，受版本控制的页面与模板已无元素使用它；删除无消费者的动态年份循环，避免跨年覆盖首次发布年份。实时时钟与其它交互不动。
+- `robots.txt`（+24/-0）：保留原 `User-agent: *` 的 `Allow: /` 和 `/admin`、`/api`、`/uploads` 三条 `Disallow`，其后为 GPTBot、CCBot、Google-Extended、ClaudeBot、anthropic-ai、Bytespider、Applebot-Extended、meta-externalagent 各追加独立的 `Disallow: /`；未添加 Sitemap 或主机名。
+- `admin-server/tests/presentation.test.js`（+37/-2）：新增两项证伪测试，覆盖首页与七种生成页页脚一致、声明逐字匹配、无带句号版本、`©` 与年份各一次、无动态年份属性；逐组锁定 robots 原规则与八个 AI 爬虫规则，拒绝额外主机名或 Sitemap。
+- **本地证据**：改动前完整 `npm test` 为 **178/178**，改动后 **180/180**、失败 0；`npm run check`、涉及文件额外 `node --check`、`git diff --check` 均通过；按 CI 干净检出范围检查 3 个已跟踪 HTML，本地引用全部通过。LICENSE、README 版权段与两个错误页内容哈希未变。
+- **边界与交接**：仅修改访客页脚、无消费者的年份脚本与 robots 规则，不动后台、认证、部署或迁移；生成页需经发布重新产出，本轮未操作本地运行数据、未验证浏览器视觉或线上效果、未运行远程 CI。指挥师文档 `docs/zhiliaohub_structure.md` 仍写“页脚当前年份填充”，需由指挥师同步，本轮未改；只提交、不推送、不打标。
 
 ## 2026-10-09 补充公开仓库版权声明与使用边界
 
