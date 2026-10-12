@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -13,6 +14,7 @@ const { atomicWriteFile } = require('../src/lib/atomic-file');
 const { BackupStatusService } = require('../src/services/backup-status-service');
 const { encryptTotpSecret, decryptTotpSecret } = require('../src/lib/totp-secret');
 const { seedLegacyCategories } = require('./helpers/work-categories');
+const { layout } = require('../src/lib/html');
 
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -39,7 +41,7 @@ async function createRuntime(overrides = {}) {
     contentDir: path.join(runtimeRoot, 'content'),
     uploadsDir: path.join(runtimeRoot, 'uploads'),
     backupDir: path.join(runtimeRoot, 'backups'),
-    siteRoot: path.join(runtimeRoot, 'site'),
+    siteRoot: overrides.siteRoot || path.join(runtimeRoot, 'site'),
     backupScheduleEnabled: overrides.backupScheduleEnabled,
     backupScheduleLocalTime: overrides.backupScheduleLocalTime,
     zhitianOpsToken: overrides.zhitianOpsToken,
@@ -258,6 +260,80 @@ test('/health无Cookie请求不创建会话也不下发Cookie', async (t) => {
   const sessionsAfter = runtime.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count;
   assert.equal(response.headers.get('set-cookie'), null);
   assert.equal(sessionsAfter, sessionsBefore);
+});
+
+test('后台所有固定assets引用匿名可读且不创建会话，头像返回image/webp', async (t) => {
+  // Read only the real repository assets; all DB/content/upload state stays isolated.
+  const runtime = await createRuntime({ siteRoot: path.resolve(__dirname, '..', '..') });
+  t.after(() => runtime.close());
+  const html = layout({ title: '静态资产测试', content: '' });
+  const references = [...new Set(html.match(/\/assets\/[a-z0-9_./-]+(?:\?[^"')\s]+)?/gi))];
+  const expectedTypes = {
+    '/assets/brand/avatar-128.webp': 'image/webp',
+    '/assets/brand/favicon-32.png': 'image/png',
+    '/assets/fonts/montserrat-latin-900-normal.woff2': 'font/woff2',
+    '/assets/fonts/jetbrains-mono-latin-400-normal.woff2': 'font/woff2',
+    '/assets/fonts/jetbrains-mono-latin-600-normal.woff2': 'font/woff2',
+    '/assets/grain.svg': 'image/svg+xml',
+  };
+  assert.deepEqual(references.map((reference) => reference.split('?')[0]).sort(), Object.keys(expectedTypes).sort());
+  const sessionsBefore = runtime.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count;
+  for (const reference of references) {
+    const relative = reference.split('?')[0];
+    const response = await fetch(`${runtime.baseUrl}${reference}`, { redirect: 'manual' });
+    assert.equal(response.status, 200, reference);
+    assert.equal(response.headers.get('content-type').split(';')[0], expectedTypes[relative], reference);
+    assert.equal(response.headers.get('set-cookie'), null, reference);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), await fs.readFile(path.join(runtime.config.siteRoot, relative.slice(1))));
+  }
+  assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, sessionsBefore);
+});
+
+test('assets拒绝原始与编码穿越、点文件和写请求，uploads仍要求登录', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const assetsRoot = path.join(runtime.config.siteRoot, 'assets');
+  const outsideRoot = path.join(runtime.config.siteRoot, 'admin-server');
+  const sentinel = 'isolated-private-file-must-not-be-served';
+  await fs.mkdir(assetsRoot, { recursive: true });
+  await fs.mkdir(outsideRoot, { recursive: true });
+  await fs.writeFile(path.join(outsideRoot, '.env'), sentinel);
+  await fs.writeFile(path.join(outsideRoot, 'private.txt'), sentinel);
+  await fs.writeFile(path.join(assetsRoot, '.env'), sentinel);
+  await fs.writeFile(path.join(assetsRoot, 'probe.txt'), 'public-probe');
+  await fs.writeFile(path.join(runtime.config.uploadsDir, 'private.txt'), sentinel);
+  const { hostname, port } = new URL(runtime.baseUrl);
+  const rawRequest = (requestPath, method = 'GET') => new Promise((resolve, reject) => {
+    // fetch/URL normalize literal ../ before sending: preserve the wire path here.
+    const request = http.request({ hostname, port, path: requestPath, method }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('error', reject);
+      response.on('end', () => resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString() }));
+    });
+    request.on('error', reject);
+    request.end();
+  });
+  assert.equal((await rawRequest('/assets/probe.txt')).status, 200);
+  const paths = [
+    '/assets/../admin-server/.env',
+    '/assets/../admin-server/private.txt',
+    '/assets/%2e%2e/admin-server/private.txt',
+    '/assets/%2e%2e%2fadmin-server%2fprivate.txt',
+    '/assets/..%5cadmin-server%5cprivate.txt',
+    '/assets/%252e%252e/admin-server/private.txt',
+    '/assets/.env',
+  ];
+  for (const requestPath of paths) {
+    const response = await rawRequest(requestPath);
+    assert.ok([400, 403, 404].includes(response.status), `${requestPath}: ${response.status}`);
+    assert.equal(response.body.includes(sentinel), false, requestPath);
+  }
+  assert.equal((await rawRequest('/assets/probe.txt', 'POST')).status, 405);
+  assert.equal(await fs.readFile(path.join(assetsRoot, 'probe.txt'), 'utf8'), 'public-probe');
+  const uploadsResponse = await fetch(`${runtime.baseUrl}/uploads/private.txt`, { redirect: 'manual' });
+  assert.equal(uploadsResponse.status, 302);
+  assert.equal(uploadsResponse.headers.get('location'), '/admin/login');
 });
 
 test('聚合备份状态只经认证通道返回，知天失败不影响知了hub与管理写入', async (t) => {

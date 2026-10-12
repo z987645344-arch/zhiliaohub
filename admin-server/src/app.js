@@ -171,6 +171,15 @@ function createApp(overrides = {}, dependencies = {}) {
       },
     },
   }));
+  // SITE_ROOT defaults to the repository root locally and to the mounted site
+  // in containers. Share only its assets subtree, never the site/code root.
+  // Register before sessions so public static requests do not touch auth state.
+  app.use('/assets', express.static(path.join(config.siteRoot, 'assets'), {
+    dotfiles: 'deny',
+    index: false,
+    redirect: false,
+    fallthrough: false,
+  }));
   app.get('/health', (_request, response) => {
     response.json({
       status: 'ok',

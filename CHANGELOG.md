@@ -3,6 +3,14 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-10-12**
 
+## 2026-10-12 修正页脚水平排版并补齐本地后台资产伺服
+
+- `css/style.css`（+17/-3）：仅以 CSS 把桌面页脚收为同一水平带：左侧字标与版权同行、中间时钟、右侧标语；在 `≤760px` 恢复堆叠。沿用原颜色变量，不新增颜色令牌；首页与共享模板的 DOM、两句文案均未改。
+- `admin-server/src/app.js`（+9/-0）：新增匿名、只读的 `/assets` 静态路由，根仅为 `config.siteRoot/assets`；默认开发配置对应仓库资产，容器配置对应挂载站点资产，不依赖写死的绝对路径。置于 Helmet 之后、会话之前，保留既有 CSP 并避免静态请求创建会话；拒绝点文件，关闭目录索引/跳转，只允许静态读取，根外穿越不能取到文件。Nginx 的静态伺服和反代正则未改，`/uploads` 的 `requireAdmin` 保留。
+- **后台固定引用实测**：`/assets/brand/avatar-128.webp`、`/assets/brand/favicon-32.png`、`/assets/fonts/montserrat-latin-900-normal.woff2`、`/assets/fonts/jetbrains-mono-latin-400-normal.woff2`、`/assets/fonts/jetbrains-mono-latin-600-normal.woff2`、`/assets/grain.svg` 六项匿名 GET 均为 200，响应内容与源文件逐字节一致；头像为 `image/webp`，favicon 为 `image/png`，三份字体为 `font/woff2`，纹理为 `image/svg+xml`。未发现其它固定 `/assets/` 引用；动态作品媒体预览仍走原有上传路径。
+- `admin-server/tests/admin-server.test.js`（+77/-1）：新增两项真实 HTTP 测试，覆盖六个引用的内容类型/内容一致/无 Cookie 与会话增长，及原始 `../`、编码点段/斜杠/反斜杠、双重编码、点文件拒绝；在 assets 根外放置隔离私有探针，断言响应不含其内容。穿越测试使用 `http.request` 保留线上原始路径，不用会事先规范化 `../` 的 fetch 伪造通过；另断言写请求 405、文件不变，匿名 `/uploads` 仍跳转登录。测试 helper 仅新增可选 siteRoot 覆盖，读取真实仓库资产时 DB/内容/上传仍在隔离临时目录。
+- **本地证据与边界**：改动前完整 `npm test` **180/180**，改动后 **182/182**、失败 0；`npm run check`、涉及文件 `node --check`、`git diff --check` 通过。LICENSE、robots.txt、后台版头、首页/共享模板与 Nginx 内容哈希未变；不动认证、CSP、CSRF、迁移或业务模板。未验证浏览器视觉、容器或线上效果，视觉由用户本地验收；未操作真实运行数据、未运行远程 CI、未推送或打标。
+
 ## 2026-10-12 统一前台页脚著作权标注并补充 AI 爬虫规则
 
 - `admin-server/src/templates/shared.js`（+1/-1）、`index.html`（+5/-2）：生成页与手写首页使用一致的页脚结构；字标下方另起一行，原样显示 `© 2026 知了 · 保留所有权利`，年份固定、末尾无句号。原标语只保留“持续生长的个人作品集”，每页页脚仅一个 `©`、一个年份；403/404 错误页未加声明。

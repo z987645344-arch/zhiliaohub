@@ -2875,7 +2875,7 @@ canvas {
   position: relative;
   z-index: 1;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px 24px;
@@ -2888,8 +2888,14 @@ canvas {
 }
 
 .footer-brand {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.footer-brand p,
+.footer-inner > p {
+  white-space: nowrap;
 }
 
 .footer-wordmark {
@@ -3306,6 +3312,14 @@ canvas {
 
   .footer-inner {
     justify-content: flex-start;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .footer-brand {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
   }
 }
 
