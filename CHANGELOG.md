@@ -3,6 +3,14 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-10-12**
 
+## 2026-10-12 候选 —— 补丁（x.y.Z）：知了hub 两个容器补齐内存上限，不改变用户操作
+
+- `docker-compose.yml`（+2/-0）：仅为 `admin-server` 增加 `mem_limit: 1g`（1 GiB），为 `nginx` 增加 `mem_limit: 256m`（256 MiB）；CPU、重启策略、挂载、网络、环境变量与镜像均未改。gateway 属另一仓库，本提交不包含它。
+- **依据与写法**：据统筹师 2026-10-12 实测转述，admin-server 当前约 35 MiB、一次 publishAll 峰值 411 MiB；nginx 当前约 8 MiB、峰值 69 MiB，此前均无上限、未被 OOM 杀过、重启 0；宿主机 7.9 GB、知天合计 3.4 GiB。采用服务级 `mem_limit` 直接配置容器限制，不重复维护 deploy 字段。[Docker 官方定义](https://docs.docker.com/reference/compose-file/services/#mem_limit)；核对 [Compose 创建实现](https://github.com/docker/compose/blob/main/pkg/compose/create.go)发现当前实现也映射 `deploy.resources.limits.memory`，因此不沿用“非 Swarm 必然不生效”的绝对说法。
+- **本机验证**：完整项目运行 `docker compose --env-file .env.example config --quiet` 通过，未输出完整含 env 配置。仅提取实际文件中的两个内存值，创建无密钥、无挂载、无网络且不启动的隔离验证容器；Compose 解析后 `docker inspect` 实读 `HostConfig.Memory` 分别为 `1073741824` / `268435456` 字节，随后清理全部验证容器，未碰现有站点容器。本机 CLI 为 Compose v5.5.1，服务级语法沿用 Compose Specification，并未把本机版本写成 v2。完整 `npm test` 改动前后均 187/187、失败 0；`git diff --check` 通过。
+- **必须交回的未测项**：上传 300 MB 小作坊包时 admin-server 的峰值未测；OOM kill 可能来不及留下应用错误、随后按既有策略重启，外部表现为偶发 502，极难排查。上线后由用户传一次大 Unity 包，统筹师检查内存峰值、`OOMKilled` 与重启数，接近上限再上调。本轮未做生产部署、真实大包峰值或 OOM 压测，仓库配置完成不代表生产已生效；推送、CI、打标未执行。
+- `CHANGELOG.md`（+8/-0）：追加本条现场记录，保留实测转述与本机证据的区别。
+
 ## 2026-10-12 候选 —— 补丁（x.y.Z）：孤儿回退包只归档待删上传，内部修正不改变用户操作
 
 - **动因与边界**：此前清理少量孤儿却调用全量 `createBackup`，连带打包 SQLite、全部 Markdown、上传池和小作坊；据统筹师现场转述，三份回退包约 277 / 200 / 220 MB，备份目录合计约 2.1 GB。本轮只缩小孤儿回退包，不改 `createBackup`、调度触发、三条备份谱系、24 h 保护窗、引用索引或 `backupExcludeZip` 语义；未操作生产文件。
