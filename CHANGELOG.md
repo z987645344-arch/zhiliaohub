@@ -3,6 +3,18 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-10-12**
 
+## 2026-10-12 候选 —— 补丁（x.y.Z）：孤儿回退包只归档待删上传，内部修正不改变用户操作
+
+- **动因与边界**：此前清理少量孤儿却调用全量 `createBackup`，连带打包 SQLite、全部 Markdown、上传池和小作坊；据统筹师现场转述，三份回退包约 277 / 200 / 220 MB，备份目录合计约 2.1 GB。本轮只缩小孤儿回退包，不改 `createBackup`、调度触发、三条备份谱系、24 h 保护窗、引用索引或 `backupExcludeZip` 语义；未操作生产文件。
+- `admin-server/src/services/orphan-upload-service.js`（+148/-8）：仅复制本轮初始待删候选（含 ZIP）并打成 `manifest.json` + `uploads/<相对路径>`；无 SQLite、Markdown、lab-storage 或无关上传。manifest 为独立 `formatVersion: "orphan-rollback-v1"`，含 `createdAt`、`encryption`、`files[{path,size,sha256}]`、空 `excluded`；校验和来自暂存副本。沿用现有 AES-256-GCM+scrypt、镜像发送及 `pruneBackups`，前缀仍为 `orphan-rollback-`，本地/镜像各留 3 份。
+- **删前校验原样保留**：打包后再次盘点，比对最初 size/mtimeMs；新出现、状态变化或重新被引用的文件不删；对未变化候选重新读取原文件计算 SHA-256，与 manifest 逐项比对，全部校验成功后才开始删除。任何缺项、大小或 SHA-256 校验失败均中止；删除前还再次 stat。没有因为 manifest 自己生成而省去复算。
+- **实际还原入口**：新增导出的 `restoreOrphanRollback(config, archivePath, options)`，显式选择单个新包，先完整校验再补回原上传路径；拒绝路径穿越、链接/重复条目、未声明文件、校验失败与覆盖已有文件，不改数据库或内容目录。新包不能通过全量恢复器的格式校验，避免部分备份被当成整站备份。未加入自动发现/解析旧回退包的路径；旧全量包保持原格式，只随同前缀的时间轮转自然退出，不做一次性清理。
+- `admin-server/tests/orphan-uploads.test.js`（+189/-1）：本批新增 5 项测试，现该文件 10 项；覆盖真实加密/未加密还原、哈希变动整轮不删、复扫后引用/状态变化保留、本地及镜像混存隔离轮转、坏 manifest/未声明/越界条目拒绝。旧包用不可解析内容哨兵验证轮转不读包；另加强原有测试，确认各类引用和新上传仍在、归档仅含待删文件、正常目录与数据库字节未变。
+- **真实还原断言原文**：`assert.equal(crypto.createHash('sha256').update(await fs.readFile(orphanPath)).digest('hex'), originalHash);` —— 在文件已被清理（stat 为 ENOENT）之后调用还原，再从原位实读，不是只检查包中存在该文件。
+- **本机证据**：基线完整 `npm test` 为 182/182；最终提交前同命令为 187/187、失败 0。该次测试实测：13 字节候选生成 351 字节 gzip 包；65536 字节随机候选生成 66100 字节加密包，体积随候选内容而非整站增长。数字仅为隔离测试样例，不冒充生产量级。`npm run check`、涉及两份 JS 的 `node --check` 与 `git diff --check` 通过。
+- **文档交接与未验证**：`docs/claude_memory.md:61/:187` 的“全量归档/下一轮候选/现为全量”已报告；指挥师明确确认提交后自行同步，本轮不修改或暂存指挥师文档。未验证真实服务器、生产旧包、生产容量/长期轮转与真实镜像目的地；推送、CI、打标和部署未执行。
+- `CHANGELOG.md`（+12/-0）：追加本条现场记录，不暗示已打标或生产已生效。
+
 ## v3.15 —— 版本升（x.Y）：前台页脚补齐著作权标注、robots.txt 拒绝 AI 训练爬虫、后台本地资产伺服补齐
 
 - **覆盖范围**：本条写入前现场执行 `git log --oneline v3.14.3..HEAD`，即 `v3.14.3..fc495856`，共 **6 个提交**（按新在上原样列出）；本存档提交自身另计，不包含在这 6 个已有提交中：

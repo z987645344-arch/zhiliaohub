@@ -2,14 +2,19 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { pipeline } = require('node:stream/promises');
 const Database = require('better-sqlite3');
-const { createBackup } = require('./backup-service');
+const tar = require('tar');
+const { archiveTimestamp, decryptArchive, encryptArchive, pruneBackups, replicateArchive } = require('./backup-service');
 
 const MINIMUM_ORPHAN_UPLOAD_AGE_MS = 24 * 60 * 60 * 1000;
 const ORPHAN_ROLLBACK_PREFIX = 'orphan-rollback';
 const ORPHAN_ROLLBACK_RETENTION = 3;
+// Deliberately not full-backup format 1/2: a partial upload archive must never be
+// accepted by the full restore path that replaces the database and directories.
+const ORPHAN_ROLLBACK_FORMAT = 'orphan-rollback-v1';
 const STORED_UPLOAD_NAME_PATTERN = /^\d{10,}-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 
 function quoteIdentifier(value) {
@@ -135,19 +140,152 @@ async function inventoryOrphanUploads(config, options = {}) {
   return { minimumAgeMs, scannedAt: new Date(nowMs).toISOString(), files, referenced, recentUnreferenced, orphans };
 }
 
+function isRollbackUploadPath(value) {
+  return typeof value === 'string' && value.startsWith('uploads/')
+    && value.split('/').every((part) => part && part !== '.' && part !== '..' && !/[\\:\0]/.test(part));
+}
+
+// Resolve only ordinary directories; in particular do not restore through a link
+// under uploads/. Existing files are never overwritten by this additive recovery.
+async function rollbackUploadTarget(uploadsDir, archivePath) {
+  if (!isRollbackUploadPath(archivePath)) throw new Error('Unsafe orphan rollback upload path.');
+  const parts = archivePath.slice('uploads/'.length).split('/');
+  let parent = path.resolve(uploadsDir);
+  for (const part of ['', ...parts.slice(0, -1)]) {
+    if (part) parent = path.join(parent, part);
+    const stat = await fs.lstat(parent).catch((error) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) {
+      throw new Error('Orphan rollback target parent is not an ordinary directory.');
+    }
+  }
+  return path.join(parent, parts.at(-1));
+}
+
+async function createOrphanRollback(config, files, options = {}) {
+  const now = options.now || new Date();
+  const password = options.encryptionPassword ?? config.backupEncryptionPassword ?? '';
+  const basename = `${ORPHAN_ROLLBACK_PREFIX}-${archiveTimestamp(now)}.tar.gz`;
+  await fs.mkdir(config.backupDir, { recursive: true });
+  const archivePath = path.join(config.backupDir, password ? `${basename}.enc` : basename);
+  if (await fs.lstat(archivePath).then(() => true, (error) => {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  })) throw new Error('Orphan rollback archive already exists.');
+  const stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-orphan-rollback-'));
+  const temporaryArchive = path.join(config.backupDir, `.orphan-rollback-${crypto.randomUUID()}.tmp`);
+  try {
+    const manifest = {
+      formatVersion: ORPHAN_ROLLBACK_FORMAT,
+      createdAt: now.toISOString(),
+      encryption: password ? 'aes-256-gcm+scrypt' : 'none',
+      files: [],
+      excluded: [],
+    };
+    // Snapshot only the initial deletion candidates (including ZIP regardless of
+    // routine backupExcludeZip). Hash the copied bytes, not the live originals.
+    for (const file of files) {
+      const source = await rollbackUploadTarget(config.uploadsDir, file.archivePath);
+      const stat = await fs.lstat(source);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Orphan rollback source is not a regular file.');
+      const target = path.join(stagingRoot, ...file.archivePath.split('/'));
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.copyFile(source, target, fsSync.constants.COPYFILE_EXCL);
+      manifest.files.push({ path: file.archivePath, size: (await fs.stat(target)).size, sha256: await sha256(target) });
+    }
+    await fs.writeFile(path.join(stagingRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+    await fs.writeFile(temporaryArchive, '', { flag: 'wx', mode: 0o600 });
+    await tar.c({ cwd: stagingRoot, file: temporaryArchive, gzip: true, portable: true },
+      ['manifest.json', ...manifest.files.map((file) => file.path)]);
+    if (password) {
+      await encryptArchive(temporaryArchive, `${temporaryArchive}.enc`, password);
+      await fs.chmod(`${temporaryArchive}.enc`, 0o600);
+    }
+    await fs.rename(password ? `${temporaryArchive}.enc` : temporaryArchive, archivePath);
+    const removed = await pruneBackups(config.backupDir, ORPHAN_ROLLBACK_RETENTION, ORPHAN_ROLLBACK_PREFIX);
+    const replication = await replicateArchive(config, archivePath, {
+      destination: options.destination,
+      namePrefix: ORPHAN_ROLLBACK_PREFIX,
+      retentionCount: ORPHAN_ROLLBACK_RETENTION,
+    });
+    return { archivePath, manifest, removed, replication };
+  } finally {
+    await fs.rm(stagingRoot, { recursive: true, force: true });
+    await fs.unlink(temporaryArchive).catch(() => {});
+    await fs.unlink(`${temporaryArchive}.enc`).catch(() => {});
+  }
+}
+
+// Explicitly restore ONE new-format rollback archive, never auto-discover or parse
+// legacy full archives. Validate the entire payload before writing missing uploads;
+// do not touch SQLite/content/lab-storage or overwrite files uploaded since cleanup.
+async function restoreOrphanRollback(config, archivePath, options = {}) {
+  const stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-orphan-recovery-'));
+  try {
+    let tarPath = archivePath;
+    if (archivePath.endsWith('.enc')) {
+      tarPath = path.join(stagingRoot, 'decrypted.tar.gz');
+      await decryptArchive(archivePath, tarPath, options.encryptionPassword ?? config.backupEncryptionPassword);
+    }
+    const entries = [];
+    await tar.t({ file: tarPath, strict: true, onReadEntry: (entry) => entries.push({ path: entry.path, type: entry.type }) });
+    const paths = new Set();
+    for (const entry of entries) {
+      if (entry.type !== 'File' || (entry.path !== 'manifest.json' && !isRollbackUploadPath(entry.path))
+          || paths.has(entry.path)) throw new Error('Orphan rollback archive contains an unsafe or duplicate entry.');
+      paths.add(entry.path);
+    }
+    const unpacked = path.join(stagingRoot, 'unpacked');
+    await fs.mkdir(unpacked);
+    await tar.x({ cwd: unpacked, file: tarPath, preservePaths: false, strict: true,
+      filter: (entryPath, entry) => entry.type === 'File' && paths.has(entryPath) });
+    const manifest = JSON.parse(await fs.readFile(path.join(unpacked, 'manifest.json'), 'utf8'));
+    if (manifest.formatVersion !== ORPHAN_ROLLBACK_FORMAT || !Array.isArray(manifest.files) || !manifest.files.length) {
+      throw new Error('Not a new-format orphan rollback archive; use the existing full restore workflow for legacy full backups.');
+    }
+    const expected = new Set(['manifest.json']);
+    const targets = [];
+    for (const file of manifest.files) {
+      if (!isRollbackUploadPath(file.path) || expected.has(file.path)
+          || !Number.isSafeInteger(file.size) || file.size < 0 || !/^[0-9a-f]{64}$/.test(file.sha256)) {
+        throw new Error('Orphan rollback manifest contains invalid file metadata.');
+      }
+      expected.add(file.path);
+      const source = path.join(unpacked, ...file.path.split('/'));
+      const stat = await fs.lstat(source);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== file.size || await sha256(source) !== file.sha256) {
+        throw new Error(`Orphan rollback checksum validation failed: ${file.path}`);
+      }
+      const target = await rollbackUploadTarget(config.uploadsDir, file.path);
+      if (await fs.lstat(target).then(() => true, (error) => {
+        if (error.code === 'ENOENT') return false;
+        throw error;
+      })) throw new Error(`Orphan rollback refuses to overwrite an existing upload: ${file.path}`);
+      targets.push({ source, target, file });
+    }
+    if (expected.size !== paths.size || [...paths].some((entryPath) => !expected.has(entryPath))) {
+      throw new Error('Orphan rollback archive contains undeclared files.');
+    }
+    for (const { source, file } of targets) {
+      const target = await rollbackUploadTarget(config.uploadsDir, file.path);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.copyFile(source, target, fsSync.constants.COPYFILE_EXCL);
+    }
+    return { manifest, restored: targets.map(({ file }) => file) };
+  } finally {
+    await fs.rm(stagingRoot, { recursive: true, force: true });
+  }
+}
+
 async function cleanupOrphanUploads(config, options = {}) {
   const initial = await inventoryOrphanUploads(config, options);
   if (options.delete !== true || initial.orphans.length === 0) {
     return { ...initial, deleteEnabled: options.delete === true, deleted: [], backup: null, changed: [] };
   }
 
-  // This manual backup is the rollback point. Force ZIP inclusion even when routine
-  // archives omit ZIP contents; otherwise deleting an orphan ZIP would not be reversible.
-  const backup = await createBackup({ ...config, backupExcludeZip: false }, {
-    ...options.backupOptions,
-    namePrefix: ORPHAN_ROLLBACK_PREFIX,
-    retentionCount: ORPHAN_ROLLBACK_RETENTION,
-  });
+  const backup = await createOrphanRollback(config, initial.orphans, options.backupOptions);
   const afterBackup = await inventoryOrphanUploads(config, options);
   const initialByPath = new Map(initial.orphans.map((file) => [file.relativePath, file]));
   const unchanged = afterBackup.orphans.filter((file) => {
@@ -249,10 +387,12 @@ module.exports = {
   MINIMUM_ORPHAN_UPLOAD_AGE_MS,
   ORPHAN_ROLLBACK_PREFIX,
   ORPHAN_ROLLBACK_RETENTION,
+  ORPHAN_ROLLBACK_FORMAT,
   STORED_UPLOAD_NAME_PATTERN,
   cleanupOrphanUploads,
   deleteReplacedUploadIfUnreferenced,
   inventoryOrphanUploads,
   persistOrphanCleanupResult,
   readOrphanCleanupState,
+  restoreOrphanRollback,
 };
