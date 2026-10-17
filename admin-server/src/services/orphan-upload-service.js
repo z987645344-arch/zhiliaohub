@@ -7,11 +7,11 @@ const path = require('node:path');
 const { pipeline } = require('node:stream/promises');
 const Database = require('better-sqlite3');
 const tar = require('tar');
-const { archiveTimestamp, decryptArchive, encryptArchive, pruneBackups, replicateArchive } = require('./backup-service');
+const { decryptArchive } = require('./backup-service');
+const { findBackupCoverage } = require('./backup-upload-coverage');
 
 const MINIMUM_ORPHAN_UPLOAD_AGE_MS = 24 * 60 * 60 * 1000;
 const ORPHAN_ROLLBACK_PREFIX = 'orphan-rollback';
-const ORPHAN_ROLLBACK_RETENTION = 3;
 // Deliberately not full-backup format 1/2: a partial upload archive must never be
 // accepted by the full restore path that replaces the database and directories.
 const ORPHAN_ROLLBACK_FORMAT = 'orphan-rollback-v1';
@@ -164,60 +164,6 @@ async function rollbackUploadTarget(uploadsDir, archivePath) {
   return path.join(parent, parts.at(-1));
 }
 
-async function createOrphanRollback(config, files, options = {}) {
-  const now = options.now || new Date();
-  const password = options.encryptionPassword ?? config.backupEncryptionPassword ?? '';
-  const basename = `${ORPHAN_ROLLBACK_PREFIX}-${archiveTimestamp(now)}.tar.gz`;
-  await fs.mkdir(config.backupDir, { recursive: true });
-  const archivePath = path.join(config.backupDir, password ? `${basename}.enc` : basename);
-  if (await fs.lstat(archivePath).then(() => true, (error) => {
-    if (error.code === 'ENOENT') return false;
-    throw error;
-  })) throw new Error('Orphan rollback archive already exists.');
-  const stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-orphan-rollback-'));
-  const temporaryArchive = path.join(config.backupDir, `.orphan-rollback-${crypto.randomUUID()}.tmp`);
-  try {
-    const manifest = {
-      formatVersion: ORPHAN_ROLLBACK_FORMAT,
-      createdAt: now.toISOString(),
-      encryption: password ? 'aes-256-gcm+scrypt' : 'none',
-      files: [],
-      excluded: [],
-    };
-    // Snapshot only the initial deletion candidates (including ZIP regardless of
-    // routine backupExcludeZip). Hash the copied bytes, not the live originals.
-    for (const file of files) {
-      const source = await rollbackUploadTarget(config.uploadsDir, file.archivePath);
-      const stat = await fs.lstat(source);
-      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Orphan rollback source is not a regular file.');
-      const target = path.join(stagingRoot, ...file.archivePath.split('/'));
-      await fs.mkdir(path.dirname(target), { recursive: true });
-      await fs.copyFile(source, target, fsSync.constants.COPYFILE_EXCL);
-      manifest.files.push({ path: file.archivePath, size: (await fs.stat(target)).size, sha256: await sha256(target) });
-    }
-    await fs.writeFile(path.join(stagingRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
-    await fs.writeFile(temporaryArchive, '', { flag: 'wx', mode: 0o600 });
-    await tar.c({ cwd: stagingRoot, file: temporaryArchive, gzip: true, portable: true },
-      ['manifest.json', ...manifest.files.map((file) => file.path)]);
-    if (password) {
-      await encryptArchive(temporaryArchive, `${temporaryArchive}.enc`, password);
-      await fs.chmod(`${temporaryArchive}.enc`, 0o600);
-    }
-    await fs.rename(password ? `${temporaryArchive}.enc` : temporaryArchive, archivePath);
-    const removed = await pruneBackups(config.backupDir, ORPHAN_ROLLBACK_RETENTION, ORPHAN_ROLLBACK_PREFIX);
-    const replication = await replicateArchive(config, archivePath, {
-      destination: options.destination,
-      namePrefix: ORPHAN_ROLLBACK_PREFIX,
-      retentionCount: ORPHAN_ROLLBACK_RETENTION,
-    });
-    return { archivePath, manifest, removed, replication };
-  } finally {
-    await fs.rm(stagingRoot, { recursive: true, force: true });
-    await fs.unlink(temporaryArchive).catch(() => {});
-    await fs.unlink(`${temporaryArchive}.enc`).catch(() => {});
-  }
-}
-
 // Explicitly restore ONE new-format rollback archive, never auto-discover or parse
 // legacy full archives. Validate the entire payload before writing missing uploads;
 // do not touch SQLite/content/lab-storage or overwrite files uploaded since cleanup.
@@ -282,38 +228,48 @@ async function restoreOrphanRollback(config, archivePath, options = {}) {
 async function cleanupOrphanUploads(config, options = {}) {
   const initial = await inventoryOrphanUploads(config, options);
   if (options.delete !== true || initial.orphans.length === 0) {
-    return { ...initial, deleteEnabled: options.delete === true, deleted: [], backup: null, changed: [] };
+    return { ...initial, deleteEnabled: options.delete === true, deleted: [], backup: null, changed: [], uncovered: [], coverageErrors: [] };
   }
 
-  const backup = await createOrphanRollback(config, initial.orphans, options.backupOptions);
+  const hashed = [];
+  for (const file of initial.orphans) {
+    const source = await rollbackUploadTarget(config.uploadsDir, file.archivePath);
+    const stat = await fs.lstat(source);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Orphan cleanup source is not a regular file.');
+    hashed.push({ ...file, sha256: await sha256(source) });
+  }
+  const { coverage, errors: coverageErrors } = await findBackupCoverage(config, hashed);
+  // Test seam exercises mutation AFTER archive verification, never bypasses it.
+  if (options.beforeFinalScan) await options.beforeFinalScan();
   const afterBackup = await inventoryOrphanUploads(config, options);
-  const initialByPath = new Map(initial.orphans.map((file) => [file.relativePath, file]));
+  const initialByPath = new Map(hashed.map((file) => [file.relativePath, file]));
   const unchanged = afterBackup.orphans.filter((file) => {
     const previous = initialByPath.get(file.relativePath);
     return previous && previous.size === file.size && previous.mtimeMs === file.mtimeMs;
   });
   const unchangedPaths = new Set(unchanged.map((file) => file.relativePath));
   const changed = initial.orphans.filter((file) => !unchangedPaths.has(file.relativePath));
-  const manifestFiles = new Map(backup.manifest.files.map((file) => [file.path, file]));
   const verified = [];
+  const uncovered = [];
   for (const file of unchanged) {
-    const manifestFile = manifestFiles.get(file.archivePath);
-    if (!manifestFile || manifestFile.size !== file.size) {
-      throw new Error(`Cleanup backup does not contain orphan upload: ${file.archivePath}`);
+    const proof = coverage.get(file.archivePath);
+    if (!proof) {
+      uncovered.push({ ...file, reason: 'no_matching_backup_payload' });
+      continue;
     }
     const absolutePath = path.join(config.uploadsDir, ...file.relativePath.split('/'));
     const currentHash = await sha256(absolutePath);
-    if (currentHash !== manifestFile.sha256) {
+    if (currentHash !== proof.sha256) {
       throw new Error(`Orphan upload changed after backup and will not be deleted: ${file.archivePath}`);
     }
-    verified.push({ ...file, sha256: currentHash });
+    verified.push({ ...file, sha256: currentHash, coveredBy: proof.archive });
   }
 
   const deleted = [];
   for (const file of verified) {
-    const absolutePath = path.join(config.uploadsDir, ...file.relativePath.split('/'));
-    const stat = await fs.stat(absolutePath);
-    if (stat.size !== file.size || stat.mtimeMs !== file.mtimeMs) {
+    const absolutePath = await rollbackUploadTarget(config.uploadsDir, file.archivePath);
+    const stat = await fs.lstat(absolutePath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== file.size || stat.mtimeMs !== file.mtimeMs) {
       changed.push(file);
       continue;
     }
@@ -326,7 +282,9 @@ async function cleanupOrphanUploads(config, options = {}) {
     deleteEnabled: true,
     deleted,
     changed,
-    backup: { archivePath: backup.archivePath, manifest: backup.manifest },
+    backup: null,
+    uncovered,
+    coverageErrors,
   };
 }
 
@@ -352,6 +310,11 @@ function persistOrphanCleanupResult(config, result, error = null, now = new Date
   try {
     const deleted = result?.deleted || [];
     const reclaimedBytes = deleted.reduce((total, file) => total + Number(file.size || 0), 0);
+    // The existing optional message column also carries a non-error retention
+    // notice when status=ok. No schema migration or lost restart history.
+    const message = error ? String(error.message || error)
+      : result?.uncovered?.length ? `保留 ${result.uncovered.length} 个孤儿：未获成功备份的归档实体及 SHA-256 覆盖。`
+        + (result.coverageErrors?.length ? `另有 ${result.coverageErrors.length} 份归档无法验证，请检查备份。` : '') : null;
     database.prepare(`
       INSERT INTO orphan_cleanup_state (
         id, last_run_at, status, deleted_count, reclaimed_bytes, error_message
@@ -367,7 +330,7 @@ function persistOrphanCleanupResult(config, result, error = null, now = new Date
       error ? 'error' : 'ok',
       deleted.length,
       reclaimedBytes,
-      error ? String(error.message || error) : null,
+      message,
     );
     return { lastRunAt: now.toISOString(), status: error ? 'error' : 'ok', deletedCount: deleted.length, reclaimedBytes };
   } finally {
@@ -386,7 +349,6 @@ function readOrphanCleanupState(database) {
 module.exports = {
   MINIMUM_ORPHAN_UPLOAD_AGE_MS,
   ORPHAN_ROLLBACK_PREFIX,
-  ORPHAN_ROLLBACK_RETENTION,
   ORPHAN_ROLLBACK_FORMAT,
   STORED_UPLOAD_NAME_PATTERN,
   cleanupOrphanUploads,

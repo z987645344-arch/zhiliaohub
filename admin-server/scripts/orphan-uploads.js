@@ -25,9 +25,10 @@ async function main(argv = process.argv.slice(2)) {
     console.log('只读模式：未删除任何文件。需要清理时必须显式追加 --delete。');
     return result;
   }
-  if (result.backup) console.log(`删除前回退备份：${result.backup.archivePath}`);
   printFiles('已删除', result.deleted);
   printFiles('因状态变化而保留', result.changed);
+  printFiles('未获备份实体及SHA-256覆盖，已保留', result.uncovered);
+  for (const failure of result.coverageErrors) console.log(`归档验证失败：${failure.archive || '备份目录'} · ${failure.error}`);
   return result;
 }
 

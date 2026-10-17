@@ -44,9 +44,7 @@ function createConfig(runtimeRoot, overrides = {}) {
     uploadsDir: path.join(runtimeRoot, 'uploads'),
     labStorageDir: path.join(runtimeRoot, 'lab-storage'),
     backupDir: path.join(runtimeRoot, 'backups'),
-    backupRetentionCount: 3,
     backupExcludeZip: false,
-    preRestoreRetentionCount: 3,
     backupEncryptionPassword: '',
     backupMirrorDir: '',
     backupScheduleLocalTime: '00:00',
@@ -220,14 +218,14 @@ test('手工、调度与恢复前三个归档前缀严格互斥', async () => {
     await Promise.all(Object.values(names).map((name) => fs.writeFile(path.join(runtimeRoot, name), name)));
 
     assert.deepEqual(
-      await pruneBackups(runtimeRoot, 0, BACKUP_PREFIX),
+      await pruneBackups(runtimeRoot, { retentionDays: 3, minCount: 0 }, BACKUP_PREFIX, new Date('2026-08-15T00:00:00Z')),
       [names.manual],
       'backup池只能匹配手工归档。',
     );
     assert.deepEqual((await fs.readdir(runtimeRoot)).sort(), [names.preRestore, names.scheduled].sort());
 
     assert.deepEqual(
-      await pruneBackups(runtimeRoot, 0, SCHEDULED_BACKUP_PREFIX),
+      await pruneBackups(runtimeRoot, { retentionDays: 3, minCount: 0 }, SCHEDULED_BACKUP_PREFIX, new Date('2026-08-15T00:00:00Z')),
       [names.scheduled],
       'scheduled池只能匹配调度归档。',
     );
@@ -267,7 +265,6 @@ test('恢复前快照不影响当天的调度判定', async () => {
     await createBackup(config, {
       namePrefix: PRE_RESTORE_PREFIX,
       now: new Date('2026-08-11T00:00:00.000Z'),
-      retentionCount: config.preRestoreRetentionCount,
     });
     const created = await new BackupScheduler(config, {
       now: () => new Date('2026-08-11T00:05:00.000Z'),
@@ -731,7 +728,7 @@ test('本地与模拟异地目录的手工、调度、恢复前三个池各自�
   try {
     await seedStorage(config);
 
-    // Seed the scheduled pool, then run N+1 manual backups. Manual pruning must not
+    // Seed the scheduled pool, then run four fresh manual backups. Manual pruning must not
     // reduce the scheduled pool in either the primary or mirror destination.
     await createBackup(config, {
       namePrefix: SCHEDULED_BACKUP_PREFIX,
@@ -745,13 +742,14 @@ test('本地与模拟异地目录的手工、调度、恢复前三个池各自�
     for (const directory of [config.backupDir, mirrorDir]) {
       assert.equal((await namesFor(directory, SCHEDULED_BACKUP_PREFIX)).length, 1);
       assert.deepEqual(await namesFor(directory, BACKUP_PREFIX), [
+        'backup-20260811T040000001Z.tar.gz',
         'backup-20260811T040000002Z.tar.gz',
         'backup-20260811T040000003Z.tar.gz',
         'backup-20260811T040000004Z.tar.gz',
       ]);
     }
 
-    // Now run N+1 scheduled backups. The three retained manual archives must survive.
+    // Fresh archives are not capped at the floor. Other lineages must all survive.
     for (const millisecond of [1, 2, 3, 4]) {
       await createBackup(config, {
         namePrefix: SCHEDULED_BACKUP_PREFIX,
@@ -759,27 +757,29 @@ test('本地与模拟异地目录的手工、调度、恢复前三个池各自�
       });
     }
     for (const directory of [config.backupDir, mirrorDir]) {
-      assert.equal((await namesFor(directory, BACKUP_PREFIX)).length, 3);
+      assert.equal((await namesFor(directory, BACKUP_PREFIX)).length, 4);
       assert.deepEqual(await namesFor(directory, SCHEDULED_BACKUP_PREFIX), [
+        'scheduled-backup-20260811T040000000Z.tar.gz',
+        'scheduled-backup-20260811T050000001Z.tar.gz',
         'scheduled-backup-20260811T050000002Z.tar.gz',
         'scheduled-backup-20260811T050000003Z.tar.gz',
         'scheduled-backup-20260811T050000004Z.tar.gz',
       ]);
     }
 
-    // The pre-restore lineage keeps its own configured count and cannot evict either
+    // The pre-restore lineage keeps its own age/floor policy and cannot evict either
     // regular lineage, locally or in the mirrored destination.
     for (const millisecond of [1, 2, 3, 4]) {
       await createBackup(config, {
         namePrefix: PRE_RESTORE_PREFIX,
         now: new Date(`2026-08-11T06:00:00.00${millisecond}Z`),
-        retentionCount: config.preRestoreRetentionCount,
       });
     }
     for (const directory of [config.backupDir, mirrorDir]) {
-      assert.equal((await namesFor(directory, BACKUP_PREFIX)).length, 3);
-      assert.equal((await namesFor(directory, SCHEDULED_BACKUP_PREFIX)).length, 3);
+      assert.equal((await namesFor(directory, BACKUP_PREFIX)).length, 4);
+      assert.equal((await namesFor(directory, SCHEDULED_BACKUP_PREFIX)).length, 5);
       assert.deepEqual(await namesFor(directory, PRE_RESTORE_PREFIX), [
+        'pre-restore-20260811T060000001Z.tar.gz',
         'pre-restore-20260811T060000002Z.tar.gz',
         'pre-restore-20260811T060000003Z.tar.gz',
         'pre-restore-20260811T060000004Z.tar.gz',

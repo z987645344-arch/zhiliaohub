@@ -12,6 +12,7 @@ const Database = require('better-sqlite3');
 const tar = require('tar');
 const { atomicWriteFile } = require('../lib/atomic-file');
 const { createBackupDestination } = require('./backup-destination');
+const { pruneBackups, retentionForPool, validatePolicy } = require('./backup-retention');
 
 const FORMAT_VERSION = 2;
 const SUPPORTED_FORMAT_VERSIONS = new Set([1, FORMAT_VERSION]);
@@ -21,7 +22,7 @@ const SUPPORTED_FORMAT_VERSIONS = new Set([1, FORMAT_VERSION]);
 const BACKUP_PREFIX = 'backup';
 const SCHEDULED_BACKUP_PREFIX = 'scheduled-backup';
 const PRE_RESTORE_PREFIX = 'pre-restore';
-const DEFAULT_PRE_RESTORE_RETENTION = 3;
+const DEFAULT_PRE_RESTORE_RETENTION = 0; // Minimum count, not an upper bound.
 const DEFAULT_RESTORE_PROBE_TIMEOUT_MS = 60000;
 const RESTORE_PROBE_ATTEMPT_TIMEOUT_MS = 1000;
 const RESTORE_PROBE_RETRY_DELAY_MS = 250;
@@ -136,18 +137,6 @@ async function decryptArchive(source, destination, password) {
   );
 }
 
-async function pruneBackups(backupDir, retentionCount, namePrefix = BACKUP_PREFIX) {
-  const pattern = new RegExp(`^${namePrefix}-\\d{8}T\\d{9}Z\\.tar\\.gz(?:\\.enc)?$`);
-  const candidates = (await fs.readdir(backupDir, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && pattern.test(entry.name))
-    .map((entry) => entry.name)
-    .sort()
-    .reverse();
-  const removed = candidates.slice(retentionCount);
-  await Promise.all(removed.map((name) => fs.unlink(path.join(backupDir, name))));
-  return removed;
-}
-
 // Copies a finished archive to the configured secondary destination. The local archive is
 // already complete and is the primary copy, so a replication failure is reported and logged
 // but never rethrown: it must not turn a successful backup into a failed one, and it must
@@ -159,7 +148,7 @@ async function replicateArchive(config, archivePath, options = {}) {
     const { location } = await destination.send(archivePath);
     let removed = [];
     if (typeof destination.prune === 'function') {
-      removed = await destination.prune(options.namePrefix, options.retentionCount);
+      removed = await destination.prune(options.namePrefix, options.retentionPolicy, options.now);
     }
     return { ok: true, destination: destination.name, location, removed };
   } catch (error) {
@@ -175,11 +164,8 @@ async function replicateArchive(config, archivePath, options = {}) {
 async function createBackup(config, options = {}) {
   const now = options.now || new Date();
   const namePrefix = options.namePrefix || BACKUP_PREFIX;
-  const retentionCount = options.retentionCount ?? config.backupRetentionCount ?? 3;
+  const retentionPolicy = validatePolicy(options.retentionPolicy ?? retentionForPool(config, namePrefix));
   const password = options.encryptionPassword ?? config.backupEncryptionPassword ?? '';
-  if (!Number.isSafeInteger(retentionCount) || retentionCount <= 0) {
-    throw new Error('Backup retention count must be a positive integer.');
-  }
   await fs.mkdir(config.backupDir, { recursive: true });
   const baseName = `${namePrefix}-${archiveTimestamp(now)}.tar.gz`;
   const finalPath = path.join(config.backupDir, password ? `${baseName}.enc` : baseName);
@@ -276,11 +262,12 @@ async function createBackup(config, options = {}) {
     } else {
       await fs.rename(temporaryArchive, finalPath);
     }
-    const removed = await pruneBackups(config.backupDir, retentionCount, namePrefix);
+    const removed = await pruneBackups(config.backupDir, retentionPolicy, namePrefix, now);
     const replication = await replicateArchive(config, finalPath, {
       destination: options.destination,
       namePrefix,
-      retentionCount,
+      retentionPolicy,
+      now,
     });
     return { archivePath: finalPath, manifest, removed, replication };
   } catch (error) {
@@ -710,7 +697,7 @@ async function createPreRestoreSnapshot(config, options = {}) {
     return await createBackup(config, {
       namePrefix: PRE_RESTORE_PREFIX,
       now: options.now,
-      retentionCount: config.preRestoreRetentionCount ?? DEFAULT_PRE_RESTORE_RETENTION,
+      retentionPolicy: retentionForPool(config, PRE_RESTORE_PREFIX),
     });
   } catch (error) {
     throw new Error(

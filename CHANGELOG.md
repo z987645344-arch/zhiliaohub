@@ -1,7 +1,23 @@
 # 知了hub 改动记录
 > 每轮完成改动后在此追加记录（新条目追加在**最前**，本文件为新在前的倒序）。
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
-> **最后追加：2026-10-13**
+> **最后追加：2026-10-17**
+
+## 2026-10-17 归档按天过期并保底，每日独立清扫；孤儿删除改验已有备份实体
+
+- **最终决定与修正依据**：四池默认均严格超过3天才过期，仅 `scheduled-backup` 保底3份，`pre-restore`、手工 `backup` 与存量 `orphan-rollback` 均不保底；保底是下限，不是窗口内份数上限。用户明确取消新孤儿回退包。此前“每日备份必定覆盖待删文件”不成立：`BACKUP_EXCLUDE_ZIP=true` 只有 excluded 哈希而无ZIP实体，手工 `--delete` 也不以调度成功为前提。最终只删除被某次成功完整备份的归档实体及SHA-256实际覆盖的孤儿，未覆盖者报告并保留，两个入口完全共用保护。
+- `admin-server/src/services/backup-retention.js`（新增）：统一四池文件名前缀/时间判定、天数与保底配置、严格到期边界、本地与镜像同规则；拒绝未知前缀、非法日期/配置，不读包内容、不动临时文件/目录/链接。新增独立每日清扫及原子持久化 `BACKUP_DIR/.archive-retention-state.json`（默认0600），记录活动边界、时间、各目的地/池策略、已删文件名与错误；某池失败继续其它池，部分删除失败也记录实际已删项，同一边界成功后重启不重复。
+- `admin-server/src/backup-config.js`、`admin-server/.env.example`：四池各有 `*_RETENTION_DAYS` / `*_MIN_COUNT`，默认天数3、保底依次3/0/0/0；天数正整数，保底非负整数。旧 `BACKUP_RETENTION_COUNT` / `PRE_RESTORE_RETENTION_COUNT` 不再读取，部署时须移除旧设置、按新变量按需配置；没有新增必填项。
+- `admin-server/src/services/backup-service.js`、`admin-server/src/services/backup-destination.js`：创建后留存调用复用同一策略，本地和 `BACKUP_MIRROR_DIR` 一致；不改全量归档内容格式、加密、ZIP排除语义及恢复校验/探测。恢复前快照只换独立留存参数，不再固定保留3份。
+- `admin-server/src/services/backup-scheduler.js`：每日周期结束后独立清扫全部四池及镜像；包括当天已备份跳过、重试耗尽失败、关闭备份创建的情形，未再写入的池也会过期。上传孤儿清理仍挂在备份成功后，失败当天不删上传，24小时保护窗及原有触发/重试判据不改；日志补未覆盖而保留数量。
+- `admin-server/src/services/backup-upload-coverage.js`（新增）：只检查完成命名的手工/调度/恢复前完整备份，最新不匹配时可继续查较早包及镜像；不打开旧孤儿回退包。先拒链接/重复/越界tar条目，隔离解包后复用 `verifyExtractedBackup` 重算全部 included 实体SHA-256、拒缺实体/坏哈希/未声明文件，并要求数据库实体；仅 included 实体与当前文件大小/哈希一致才提供覆盖证据，excluded 永不算。错误密码、坏包或不可读只记核验错误、不能提供删除凭证；不新增永久副本。代价是核验时的临时解包空间与I/O，用完清理，本轮未测生产大包耗时/峰值。
+- `admin-server/src/services/orphan-upload-service.js`：删去新回退包生成路径，先验已有完整备份实体，后复扫引用/size/mtimeMs并复算当前SHA-256，全部通过才开始删；状态变化、新出现或重新被引用者不删，删前哈希突变中止整轮。未覆盖清单含保留原因；原SQLite `orphan_cleanup_state` 的可选消息列在 `status=ok` 时兼载“保留N个未覆盖孤儿”的提示，实际错误仍为error，不需迁移。`restoreOrphanRollback` 及原有 manifest/校验链保留，显式恢复存量 `orphan-rollback-v1`，不自动解析/转换旧全量包；清扫仅按文件名/时间让存量自然过期。
+- `admin-server/scripts/orphan-uploads.js`、`admin-server/src/views.js`：手工 `--delete` 无绕过通道，打印未覆盖保留清单与归档核验错误；仪表盘“上次自动清理”在时间、删除数、回收量旁显眼展示持久化保留提示，重启不丢，文案转义不变。未改认证与备份状态API。
+- `admin-server/tests/backup-retention.test.js`（新增）：四池独立配置与镜像、手工4天不写入清零、严格边界、保底非上限、连续10天无新调度包仍3份且 `lastBackupAt` 不漂移、备份失败仍每日清扫、关闭创建仍维护、跨重启持久化去重及部分失败准确记录。
+- `admin-server/tests/orphan-uploads.test.js`：新增ZIP排除开/关的实体反例（保留/删除）、持久化后仪表盘提示、手工无备份不删、缺实体/坏哈希/同名不同哈希不删、部分包伪装和链接归档拒绝、较早加密镜像可用；存量最小包由隔离测试fixture构造，真实还原/错误密码/拒覆盖/坏manifest等测试继续执行，不依赖已取消的生产生成能力。
+- `admin-server/tests/backup.test.js`、`admin-server/tests/backup-automation.test.js`：旧份数上限断言改为天数与保底，保留谱系隔离、加密、恢复、复制失败和调度回归覆盖；不放宽原恢复安全断言。
+- `README.md`、`admin-server/README.md`、`admin-server/deploy/README.md`：同步默认策略、新变量、独立每日清扫及私有状态位置、孤儿删前实体覆盖与可见保留、存量还原；删除固定3/6/9份容量硬上限口径。两份指挥师文档已报告过期处，按指挥师明确回复不修改、不等待，由其在提交后校准。
+- **本机验证与边界**：开工未改代码基线完整 `npm test` **187/187**；最终口径完整测试 **203/203、失败0**（新增16项：留存10、覆盖保护6），旧口径197/197不作为本轮结论。`npm run check`、新增/未纳入该脚本文件的8项 `node --check`、`git diff --check` 通过；沙箱会拦既有覆盖rename测试，使用普通本机权限跑隔离临时目录，不接触真实数据库/上传/备份。未连生产、不清理生产存量、不部署；真实包的耗时/临时空间、线上定时执行和仪表盘视觉待部署后验证。用户既有 `assets/作品展示/` 未暂存、未删。仅授权提交，推送/CI/打标交指挥师。
 
 ## v3.15.1 —— 补丁（x.y.Z）：孤儿回退包仅归档待删文件，两个容器补内存上限
 

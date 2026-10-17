@@ -17,24 +17,13 @@
 //   send(archivePath)         copy/upload the finished archive; resolve with { location },
 //                             reject on failure. MUST NOT modify, move or delete the local
 //                             archive it is given — the local copy is already the primary.
-//   prune(prefix, keep)       OPTIONAL. Drop old archives of that filename prefix at the
-//                             destination, keeping the newest `keep`. Omit it if the remote
+//   prune(prefix, policy, now) OPTIONAL. Apply age expiry with a minimum count, using the
+//                             same filename-only policy as the primary. Omit it if the remote
 //                             service manages its own lifecycle rules.
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-
-async function pruneDirectory(directory, namePrefix, keep) {
-  const pattern = new RegExp(`^${namePrefix}-\\d{8}T\\d{9}Z\\.tar\\.gz(?:\\.enc)?$`);
-  const candidates = (await fs.readdir(directory, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && pattern.test(entry.name))
-    .map((entry) => entry.name)
-    .sort()
-    .reverse();
-  const removed = candidates.slice(keep);
-  await Promise.all(removed.map((name) => fs.unlink(path.join(directory, name))));
-  return removed;
-}
+const { pruneBackups } = require('./backup-retention');
 
 class LocalMirrorDestination {
   constructor(directory) {
@@ -62,8 +51,8 @@ class LocalMirrorDestination {
     return { location: target };
   }
 
-  async prune(namePrefix, keep) {
-    return pruneDirectory(this.directory, namePrefix, keep);
+  async prune(namePrefix, policy, now) {
+    return pruneBackups(this.directory, policy, namePrefix, now);
   }
 }
 

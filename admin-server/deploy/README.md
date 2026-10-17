@@ -408,7 +408,7 @@ admin-server**。新机也不得在从未启动整栈的状态直接恢复，不
 
 **备份默认包含ZIP；如需排除，设置 `BACKUP_EXCLUDE_ZIP=true`，此时恢复后需由用户从本地补齐，清单见 `manifest.excluded`。一份“静默地少了东西”的备份比没有备份更危险。**启用排除后的灾难重建验收不能只看恢复命令退出码，还要把清单列出的ZIP补齐并校验后，再检查作品下载链接。
 
-`lab-storage/` 保存的是小作坊唯一可恢复的解压产物，现与SQLite、Markdown和上传池一并入包；`.pending-*`、`.deleted-*` 中间态会被排除。默认每个项目最多500个文件、解压后100MiB，常规归档保留3份，因此单个达到上限且难以压缩的项目最多可让备份总占用增长约300MiB。部署后必须把 `BACKUP_DIR`、镜像目的地的容量监控纳入运维。
+`lab-storage/` 保存的是小作坊唯一可恢复的解压产物，现与SQLite、Markdown和上传池一并入包；`.pending-*`、`.deleted-*` 中间态会被排除。默认每个项目最多500个文件、解压后100MiB；归档改为按天数过期加保底份数，保底不是包数上限，不能再按固定3份估算容量硬上限。四池新环境变量、默认值、独立每日清扫与私有状态记录见 `admin-server/README.md` 的“归档留存”节；部署时移除旧 `BACKUP_RETENTION_COUNT` / `PRE_RESTORE_RETENTION_COUNT`。部署后必须把 `BACKUP_DIR`、镜像目的地的容量监控纳入运维。
 
 托管 Unity WebGL 时建议设置 `LAB_MAX_UNCOMPRESSED_BYTES=314572800`（300 MB），并同步提高 gateway 与站内 Nginx 的 `client_max_body_size`；只改解压上限不能让更大的 ZIP 穿过前置请求体限制。仓库默认值仍保持 100MiB，不因 Unity 支持而自动放宽所有部署。
 

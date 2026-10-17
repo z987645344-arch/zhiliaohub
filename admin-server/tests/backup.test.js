@@ -45,7 +45,6 @@ function createConfig(runtimeRoot) {
     labStorageDir: path.join(runtimeRoot, 'lab-storage'),
     labBaseUrl: 'http://localhost/lab',
     backupDir: path.join(runtimeRoot, 'backups'),
-    backupRetentionCount: 3,
     backupExcludeZip: false,
     backupEncryptionPassword: '',
     contentMaxBytes: 64 * 1024,
@@ -200,18 +199,20 @@ async function seedStorage(config) {
   return { work, note };
 }
 
-test('备份配置默认包含ZIP并保留3份，环境开关可启用ZIP排除', () => {
-  const previousRetention = process.env.BACKUP_RETENTION_COUNT;
+test('备份配置默认包含ZIP、按3天过期且手工无保底，环境开关可启用ZIP排除', () => {
+  const previousRetention = process.env.BACKUP_RETENTION_DAYS;
   const previousExcludeZip = process.env.BACKUP_EXCLUDE_ZIP;
   const previousScheduleLocalTime = process.env.BACKUP_SCHEDULE_LOCAL_TIME;
   const previousRestoreProbeUrl = process.env.RESTORE_PROBE_URL;
   try {
-    delete process.env.BACKUP_RETENTION_COUNT;
+    delete process.env.BACKUP_RETENTION_DAYS;
     delete process.env.BACKUP_EXCLUDE_ZIP;
     delete process.env.BACKUP_SCHEDULE_LOCAL_TIME;
     process.env.RESTORE_PROBE_URL = 'https://127.0.0.1/health';
     const defaults = loadBackupConfig();
-    assert.equal(defaults.backupRetentionCount, 3);
+    assert.equal(defaults.backupRetentionDays, 3);
+    assert.equal(defaults.backupMinCount, 0);
+    assert.equal(defaults.scheduledBackupMinCount, 3);
     assert.equal(defaults.backupExcludeZip, false);
     assert.equal(defaults.backupScheduleLocalTime, '00:00');
     assert.equal(defaults.restoreProbeUrl, 'https://127.0.0.1/health');
@@ -221,8 +222,8 @@ test('备份配置默认包含ZIP并保留3份，环境开关可启用ZIP排除'
     process.env.BACKUP_SCHEDULE_LOCAL_TIME = '24:00';
     assert.throws(() => loadBackupConfig(), /BACKUP_SCHEDULE_LOCAL_TIME must use 24-hour HH:MM format/);
   } finally {
-    if (previousRetention === undefined) delete process.env.BACKUP_RETENTION_COUNT;
-    else process.env.BACKUP_RETENTION_COUNT = previousRetention;
+    if (previousRetention === undefined) delete process.env.BACKUP_RETENTION_DAYS;
+    else process.env.BACKUP_RETENTION_DAYS = previousRetention;
     if (previousExcludeZip === undefined) delete process.env.BACKUP_EXCLUDE_ZIP;
     else process.env.BACKUP_EXCLUDE_ZIP = previousExcludeZip;
     if (previousScheduleLocalTime === undefined) delete process.env.BACKUP_SCHEDULE_LOCAL_TIME;
@@ -1027,7 +1028,7 @@ test('加密备份可在原始数据被破坏后完整恢复 SQLite、Markdown �
 
 test('恢复前自动创建快照，误选旧归档后仍能退回恢复前的状态', async () => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-pre-restore-'));
-  const config = { ...createConfig(runtimeRoot), preRestoreRetentionCount: 3 };
+  const config = createConfig(runtimeRoot);
   try {
     const seeded = await seedStorage(config);
     const oldArchive = await createBackup(config, { now: new Date('2026-08-01T01:00:00.000Z') });
@@ -1130,7 +1131,7 @@ test('恢复前快照创建失败时中止恢复，且不修改任何现有数�
   }
 });
 
-test('恢复前快照使用独立保留策略，不被常规备份的最近 N 份挤掉', async () => {
+test('恢复前快照使用独立保留策略，新鲜归档不因超过保底份数被删除', async () => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-pre-restore-retention-'));
   const config = createConfig(runtimeRoot);
   try {
@@ -1138,32 +1139,30 @@ test('恢复前快照使用独立保留策略，不被常规备份的最近 N �
     const snapshot = await createBackup(config, {
       namePrefix: PRE_RESTORE_PREFIX,
       now: new Date('2026-08-04T02:00:00.000Z'),
-      retentionCount: 3,
     });
 
-    // A regular schedule keeping only the latest 2 must not evict the snapshot.
+    // Fresh manual archives must not evict the snapshot or cap themselves at a count.
     for (const millisecond of [1, 2, 3, 4, 5]) {
       await createBackup(config, {
         now: new Date(`2026-08-04T03:00:00.00${millisecond}Z`),
-        retentionCount: 2,
       });
     }
     const listing = await fs.readdir(config.backupDir);
     assert.ok(listing.includes(path.basename(snapshot.archivePath)), '恢复前快照不得被常规保留策略清理。');
-    assert.equal(listing.filter((name) => name.startsWith('backup-')).length, 2);
+    assert.equal(listing.filter((name) => name.startsWith('backup-')).length, 5);
 
-    // The snapshot pool prunes against its own count.
+    // The snapshot pool applies its own policy without deleting fresh archives.
     for (const millisecond of [1, 2, 3] ) {
       await createBackup(config, {
         namePrefix: PRE_RESTORE_PREFIX,
         now: new Date(`2026-08-04T04:00:00.00${millisecond}Z`),
-        retentionCount: 3,
       });
     }
     const snapshots = (await fs.readdir(config.backupDir))
       .filter((name) => name.startsWith(`${PRE_RESTORE_PREFIX}-`))
       .sort();
     assert.deepEqual(snapshots, [
+      'pre-restore-20260804T020000000Z.tar.gz',
       'pre-restore-20260804T040000001Z.tar.gz',
       'pre-restore-20260804T040000002Z.tar.gz',
       'pre-restore-20260804T040000003Z.tar.gz',
@@ -1205,20 +1204,20 @@ test('目标环境还没有数据库时跳过恢复前快照并继续恢复', as
   }
 });
 
-test('默认备份保留策略连续产出4份后只保留最近3份归档', async () => {
+test('默认手工备份只删除严格超过3天的旧包，不删除恰满3天的包', async () => {
   const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-retention-'));
   const config = createConfig(runtimeRoot);
   try {
     await seedStorage(config);
-    const dates = [1, 2, 3, 4].map(
-      (millisecond) => new Date(`2026-08-04T01:00:00.00${millisecond}Z`),
+    const dates = [1, 2, 3, 5].map(
+      (day) => new Date(`2026-08-0${day}T01:00:00.000Z`),
     );
     for (const now of dates) await createBackup(config, { now });
     const archives = (await fs.readdir(config.backupDir)).filter((name) => name.startsWith('backup-')).sort();
     assert.deepEqual(archives, [
-      'backup-20260804T010000002Z.tar.gz',
-      'backup-20260804T010000003Z.tar.gz',
-      'backup-20260804T010000004Z.tar.gz',
+      'backup-20260802T010000000Z.tar.gz',
+      'backup-20260803T010000000Z.tar.gz',
+      'backup-20260805T010000000Z.tar.gz',
     ]);
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });

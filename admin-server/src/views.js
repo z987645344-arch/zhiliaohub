@@ -66,7 +66,7 @@ function dashboardPage({
   const backup = `<div class="backup-status-grid">${backupCard('zhiliaohub', '知了hub', backupStatus?.zhiliaohub)}${backupCard('zhitian', '知天', backupStatus?.zhitian)}</div>`;
   const cleanup = orphanCleanupStatus
     ? orphanCleanupStatus.status === 'ok'
-      ? `<p class="notice"><strong>上次自动清理</strong>：${escapeHtml(formatDateTime(orphanCleanupStatus.lastRunAt))} · 删除 ${Number(orphanCleanupStatus.deletedCount)} 个 · 回收 ${(Number(orphanCleanupStatus.reclaimedBytes) / 1024 / 1024).toFixed(2)} MB</p>`
+      ? `<p class="notice${orphanCleanupStatus.errorMessage ? ' error' : ''}"><strong>上次自动清理</strong>：${escapeHtml(formatDateTime(orphanCleanupStatus.lastRunAt))} · 删除 ${Number(orphanCleanupStatus.deletedCount)} 个 · 回收 ${(Number(orphanCleanupStatus.reclaimedBytes) / 1024 / 1024).toFixed(2)} MB${orphanCleanupStatus.errorMessage ? ` · ${escapeHtml(orphanCleanupStatus.errorMessage)}` : ''}</p>`
       : `<p class="notice error"><strong>上次自动清理失败</strong>：${escapeHtml(formatDateTime(orphanCleanupStatus.lastRunAt))} · ${escapeHtml(orphanCleanupStatus.errorMessage || '原因未知')}</p>`
     : '<p class="notice"><strong>上次自动清理</strong>：尚未运行。</p>';
   return layout({

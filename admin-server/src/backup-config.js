@@ -1,6 +1,7 @@
 // Loads storage-only configuration for backup and restore commands without requiring login secrets.
 const path = require('node:path');
 const dotenv = require('dotenv');
+const { loadRetentionConfig } = require('./services/backup-retention');
 
 const serverRoot = path.resolve(__dirname, '..');
 dotenv.config({ path: path.join(serverRoot, '.env'), quiet: true });
@@ -47,22 +48,11 @@ function loadBackupConfig(overrides = {}) {
     uploadsDir: overrides.uploadsDir || resolveLocalPath(process.env.UPLOAD_DIR, 'uploads'),
     labStorageDir: overrides.labStorageDir || resolveLocalPath(process.env.LAB_STORAGE_DIR, 'lab-storage'),
     backupDir: overrides.backupDir || resolveLocalPath(process.env.BACKUP_DIR, 'backups'),
-    backupRetentionCount: positiveInteger(
-      overrides.backupRetentionCount ?? process.env.BACKUP_RETENTION_COUNT,
-      'BACKUP_RETENTION_COUNT',
-      3,
-    ),
+    ...loadRetentionConfig(overrides, process.env),
     // ZIP files are included by default. Operators who keep ZIP originals elsewhere may
     // opt into metadata-only exclusion without changing backup code again.
     backupExcludeZip: overrides.backupExcludeZip
       ?? booleanFlag(process.env.BACKUP_EXCLUDE_ZIP, false),
-    // Automatic pre-restore snapshots prune against their own count, so a regular backup
-    // schedule can never evict the snapshot a restore just created.
-    preRestoreRetentionCount: positiveInteger(
-      overrides.preRestoreRetentionCount ?? process.env.PRE_RESTORE_RETENTION_COUNT,
-      'PRE_RESTORE_RETENTION_COUNT',
-      3,
-    ),
     // In-process daily backup trigger; see services/backup-scheduler.js.
     backupScheduleEnabled: overrides.backupScheduleEnabled
       ?? booleanFlag(process.env.BACKUP_SCHEDULE_ENABLED, true),

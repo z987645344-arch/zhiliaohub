@@ -13,6 +13,7 @@
 // after a backup will not trigger a duplicate, and a restart after a long outage notices the
 // scheduled boundary has passed and takes one immediately.
 const fs = require('node:fs/promises');
+const { sweepArchiveRetention } = require('./backup-retention');
 const { SCHEDULED_BACKUP_PREFIX, createBackup } = require('./backup-service');
 const {
   cleanupOrphanUploads,
@@ -85,6 +86,7 @@ class BackupScheduler {
     this.localTime = config.backupScheduleLocalTime ?? DEFAULT_LOCAL_TIME;
     parseLocalTime(this.localTime);
     this.createBackup = options.createBackup || createBackup;
+    this.sweepArchiveRetention = options.sweepArchiveRetention || sweepArchiveRetention;
     this.cleanupOrphanUploads = options.cleanupOrphanUploads || cleanupOrphanUploads;
     this.persistOrphanCleanupResult = options.persistOrphanCleanupResult || persistOrphanCleanupResult;
     this.now = options.now || (() => new Date());
@@ -136,13 +138,13 @@ class BackupScheduler {
         orphanCleanup = await this.cleanupOrphanUploads(this.config, {
           delete: true,
           now,
-          backupOptions: { now },
         });
         const persisted = this.persistOrphanCleanupResult(this.config, orphanCleanup, null, now);
         const reclaimedBytes = orphanCleanup.deleted.reduce((total, file) => total + Number(file.size || 0), 0);
         this.logger.log(
           `[backup] 上传孤儿自动清理完成：删除 ${orphanCleanup.deleted.length} 个，`
-          + `回收 ${reclaimedBytes} 字节；结果已持久化于 ${persisted.lastRunAt}。`,
+          + `回收 ${reclaimedBytes} 字节，未获备份实体覆盖而保留 ${orphanCleanup.uncovered?.length || 0} 个；`
+          + `结果已持久化于 ${persisted.lastRunAt}。`,
         );
       } catch (cleanupError) {
         try {
@@ -184,6 +186,7 @@ class BackupScheduler {
   // A scheduled cycle gets two bounded same-day retries. A retry that would cross the
   // next configured UTC+8 boundary is not started; the next daily cycle owns that work.
   async runDueCycle() {
+    if (this.config.backupScheduleEnabled === false) return { skipped: true, reason: 'scheduled backup disabled' };
     let result = await this.tick();
     let attempts = 1;
     for (const delay of RETRY_DELAYS_MS) {
@@ -218,23 +221,45 @@ class BackupScheduler {
 
   async runAndSchedule() {
     const result = await this.runDueCycle();
+    // Maintenance belongs to the daily cycle, not to backup creation or its retries.
+    // An unwritten pool must still expire, even if today's backup failed or is disabled.
+    let retentionCleanup;
+    try {
+      const now = this.now();
+      retentionCleanup = await this.sweepArchiveRetention(this.config, {
+        now, boundary: scheduledBoundaryAtOrBefore(now, this.localTime),
+      });
+      if (!retentionCleanup.skipped) {
+        const removed = retentionCleanup.results.reduce((total, pool) => total + (pool.removed?.length || 0), 0);
+        this.logger[retentionCleanup.status === 'ok' ? 'log' : 'error'](
+          `[backup] 归档每日清扫：${retentionCleanup.status}，删除 ${removed} 份；结果已持久化。`,
+        );
+        for (const pool of retentionCleanup.results.filter((entry) => entry.status === 'error')) {
+          this.logger.error(`[backup] 归档清扫失败：${pool.destination}/${pool.prefix}：${pool.error}`);
+        }
+      }
+    } catch (error) {
+      retentionCleanup = { failed: true, error: String(error.message) };
+      this.logger.error(`[backup] 归档每日清扫或状态持久化失败：${error.message}`);
+    }
     if (!this.stopped) this.scheduleNext();
-    return result;
+    return { ...result, retentionCleanup };
   }
 
   start() {
     if (this.config.backupScheduleEnabled === false) {
-      this.logger.log('[backup] 定时备份已通过 BACKUP_SCHEDULE_ENABLED=false 关闭；只能手动运行 npm run backup。');
-      return this;
+      this.logger.log('[backup] 定时备份已关闭；归档每日清扫仍运行，保底份数照常保护旧归档。');
     }
     this.stopped = false;
     // Check once at boot: an empty directory gets protection immediately, and a process
     // returning after a missed boundary catches up without waiting for tomorrow.
     this.runPromise = this.runAndSchedule();
-    this.logger.log(
-      `[backup] 定时备份已启用：每日 UTC+8 ${this.localTime}；`
-      + '启动时会读取现有归档并补做缺失的当日备份。',
-    );
+    if (this.config.backupScheduleEnabled !== false) {
+      this.logger.log(
+        `[backup] 定时备份已启用：每日 UTC+8 ${this.localTime}；`
+        + '启动时会读取现有归档并补做缺失的当日备份。',
+      );
+    }
     return this;
   }
 
