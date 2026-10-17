@@ -7,6 +7,11 @@ services:
       dockerfile: Dockerfile
     image: zhiliaohub-admin:${ZHILIAOHUB_IMAGE_TAG:-local}
     mem_limit: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     env_file:
       # format: raw disables Compose's variable interpolation for this file. Without it a
       # bcrypt ADMIN_PASSWORD_HASH such as $2b$12$<salt+hash> is read as three unset
@@ -51,6 +56,11 @@ services:
   nginx:
     image: nginx:stable-alpine
     mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     depends_on:
       admin-server:
         condition: service_healthy

@@ -3,6 +3,12 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-10-17**
 
+## 2026-10-17 两个站内容器补齐json-file日志轮转
+
+- `docker-compose.yml`（本批+10/-0）：仅为 `admin-server` 与 `nginx` 各增加 `logging: driver: json-file`，`options.max-size: 10m`、`options.max-file: "3"`；不改已有 `mem_limit`、镜像、重启策略、CPU、挂载、网络、env、healthcheck 或 deploy 文件，不涉及gateway仓库。依据是统筹师2026-10-17巡检转述的两容器日志约28MB、此前未设轮转，非本轮线上实测。
+- **本机证据**：完整项目 `docker compose --env-file .env.example config --quiet` 通过，未展开完整含env配置。只提取两个服务的logging原文构造无env、无挂载、无密钥的隔离投影，经Compose渲染后两者均为 `driver: json-file / max-file: "3" / max-size: 10m`；隔离投影不启动或创建容器。独立提交前再次运行完整 `npm test`，**203/203、失败0**，与上一个留存提交一致；`git diff --check` 通过。
+- **生效边界**：本轮只改仓库配置、未重建本机/生产站点容器，未验证实际日志写满后的轮转。部署时需重建容器让新的日志配置生效；不把现有日志视为已被清理。`CHANGELOG.md`追加本条普通记录，不写版本号；显式只暂存本文件与Compose，提交后停止，推送/CI/打标交指挥师。
+
 ## 2026-10-17 归档按天过期并保底，每日独立清扫；孤儿删除改验已有备份实体
 
 - **最终决定与修正依据**：四池默认均严格超过3天才过期，仅 `scheduled-backup` 保底3份，`pre-restore`、手工 `backup` 与存量 `orphan-rollback` 均不保底；保底是下限，不是窗口内份数上限。用户明确取消新孤儿回退包。此前“每日备份必定覆盖待删文件”不成立：`BACKUP_EXCLUDE_ZIP=true` 只有 excluded 哈希而无ZIP实体，手工 `--delete` 也不以调度成功为前提。最终只删除被某次成功完整备份的归档实体及SHA-256实际覆盖的孤儿，未覆盖者报告并保留，两个入口完全共用保护。
