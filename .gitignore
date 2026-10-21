@@ -62,3 +62,7 @@ Desktop.ini
 /admin-server/backups/*
 !/admin-server/backups/.gitkeep
 /admin-server/content/**/*.tmp-*
+
+# Role memory stays outside business Git; this old directory keeps navigation only.
+/docs/commander-memory/*
+!/docs/commander-memory/README.md
