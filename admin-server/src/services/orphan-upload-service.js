@@ -9,6 +9,7 @@ const Database = require('better-sqlite3');
 const tar = require('tar');
 const { decryptArchive } = require('./backup-service');
 const { findBackupCoverage } = require('./backup-upload-coverage');
+const { withArchiveSession, withArchiveUse } = require('./archive-lease');
 
 const MINIMUM_ORPHAN_UPLOAD_AGE_MS = 24 * 60 * 60 * 1000;
 const ORPHAN_ROLLBACK_PREFIX = 'orphan-rollback';
@@ -168,6 +169,11 @@ async function rollbackUploadTarget(uploadsDir, archivePath) {
 // legacy full archives. Validate the entire payload before writing missing uploads;
 // do not touch SQLite/content/lab-storage or overwrite files uploaded since cleanup.
 async function restoreOrphanRollback(config, archivePath, options = {}) {
+  return withArchiveUse(archivePath, 'orphan-rollback-read',
+    () => restoreOrphanRollbackUnlocked(config, archivePath, options));
+}
+
+async function restoreOrphanRollbackUnlocked(config, archivePath, options = {}) {
   const stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-orphan-recovery-'));
   try {
     let tarPath = archivePath;
@@ -226,6 +232,12 @@ async function restoreOrphanRollback(config, archivePath, options = {}) {
 }
 
 async function cleanupOrphanUploads(config, options = {}) {
+  // Keep proof archives leased until the final upload unlink has finished, not
+  // just until tar reading ends; the verified recovery point must still exist.
+  return withArchiveSession(() => cleanupOrphanUploadsInSession(config, options));
+}
+
+async function cleanupOrphanUploadsInSession(config, options = {}) {
   const initial = await inventoryOrphanUploads(config, options);
   if (options.delete !== true || initial.orphans.length === 0) {
     return { ...initial, deleteEnabled: options.delete === true, deleted: [], backup: null, changed: [], uncovered: [], coverageErrors: [] };

@@ -13,6 +13,7 @@ const tar = require('tar');
 const { atomicWriteFile } = require('../lib/atomic-file');
 const { createBackupDestination } = require('./backup-destination');
 const { pruneBackups, retentionForPool, validatePolicy } = require('./backup-retention');
+const { withArchiveUse } = require('./archive-lease');
 
 const FORMAT_VERSION = 2;
 const SUPPORTED_FORMAT_VERSIONS = new Set([1, FORMAT_VERSION]);
@@ -145,12 +146,14 @@ async function replicateArchive(config, archivePath, options = {}) {
   const destination = options.destination ?? createBackupDestination(config);
   if (!destination) return { skipped: true, reason: 'no secondary backup destination configured' };
   try {
-    const { location } = await destination.send(archivePath);
-    let removed = [];
-    if (typeof destination.prune === 'function') {
-      removed = await destination.prune(options.namePrefix, options.retentionPolicy, options.now);
-    }
-    return { ok: true, destination: destination.name, location, removed };
+    return await withArchiveUse(archivePath, 'replication-source', async () => {
+      const { location } = await destination.send(archivePath);
+      let removed = [];
+      if (typeof destination.prune === 'function') {
+        removed = await destination.prune(options.namePrefix, options.retentionPolicy, options.now);
+      }
+      return { ok: true, destination: destination.name, location, removed, deferred: removed.deferred || [] };
+    });
   } catch (error) {
     console.error(
       `[backup] 本地归档已生成成功：${archivePath}\n`
@@ -162,6 +165,16 @@ async function replicateArchive(config, archivePath, options = {}) {
 }
 
 async function createBackup(config, options = {}) {
+  const now = options.now || new Date();
+  const namePrefix = options.namePrefix || BACKUP_PREFIX;
+  const password = options.encryptionPassword ?? config.backupEncryptionPassword ?? '';
+  await fs.mkdir(config.backupDir, { recursive: true });
+  const name = `${namePrefix}-${archiveTimestamp(now)}.tar.gz${password ? '.enc' : ''}`;
+  return withArchiveUse(path.join(config.backupDir, name), 'backup-create',
+    () => createBackupUnlocked(config, { ...options, now, namePrefix, encryptionPassword: password }));
+}
+
+async function createBackupUnlocked(config, options = {}) {
   const now = options.now || new Date();
   const namePrefix = options.namePrefix || BACKUP_PREFIX;
   const retentionPolicy = validatePolicy(options.retentionPolicy ?? retentionForPool(config, namePrefix));
@@ -269,7 +282,7 @@ async function createBackup(config, options = {}) {
       retentionPolicy,
       now,
     });
-    return { archivePath: finalPath, manifest, removed, replication };
+    return { archivePath: finalPath, manifest, removed, deferred: removed.deferred, replication };
   } catch (error) {
     await fs.unlink(temporaryArchive).catch(() => {});
     await fs.unlink(`${temporaryArchive}.enc`).catch(() => {});
@@ -723,66 +736,68 @@ async function restoreBackup(config, archivePath, options = {}) {
     );
   }
   assertPreRestoreSnapshotConfirmation(options);
-  const extractionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-'));
-  const decryptedArchive = path.join(extractionRoot, 'archive.tar.gz');
-  const encrypted = archivePath.endsWith('.enc');
-  try {
-    const tarPath = encrypted ? decryptedArchive : archivePath;
-    if (encrypted) {
-      await decryptArchive(
-        archivePath,
-        decryptedArchive,
-        options.encryptionPassword ?? config.backupEncryptionPassword,
-      );
+  return withArchiveUse(archivePath, 'full-restore-read', async () => {
+    const extractionRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-restore-'));
+    const decryptedArchive = path.join(extractionRoot, 'archive.tar.gz');
+    const encrypted = archivePath.endsWith('.enc');
+    try {
+      const tarPath = encrypted ? decryptedArchive : archivePath;
+      if (encrypted) {
+        await decryptArchive(
+          archivePath,
+          decryptedArchive,
+          options.encryptionPassword ?? config.backupEncryptionPassword,
+        );
+      }
+      const unpackedRoot = path.join(extractionRoot, 'unpacked');
+      await fs.mkdir(unpackedRoot);
+      await tar.x({
+        cwd: unpackedRoot,
+        file: tarPath,
+        preservePaths: false,
+        strict: true,
+        filter: (entryPath) => safeArchivePath(entryPath),
+      });
+      const manifest = await verifyExtractedBackup(unpackedRoot);
+
+      // The operator declaration is not treated as proof. All three probes must pass after the
+      // archive is known to be valid, before the snapshot and every destructive write below.
+      await assertServiceStopped(config, options);
+      await assertRestoreTargetParentsWritable(config);
+
+      // Only snapshot once the incoming archive is known to be valid and the service-stop
+      // probes have passed. A failure here throws and leaves the live data intact.
+      const preRestoreSnapshot = await createPreRestoreSnapshot(config, options);
+
+      const databaseBytes = await fs.readFile(path.join(unpackedRoot, 'data', 'admin.sqlite3'));
+      await atomicWriteFile(config.databasePath, databaseBytes);
+      await fs.unlink(`${config.databasePath}-wal`).catch(() => {});
+      await fs.unlink(`${config.databasePath}-shm`).catch(() => {});
+      await replaceDirectory(path.join(unpackedRoot, 'content', 'works'), path.join(config.contentDir, 'works'));
+      await replaceDirectory(path.join(unpackedRoot, 'content', 'notes'), path.join(config.contentDir, 'notes'));
+      await replaceDirectory(path.join(unpackedRoot, 'uploads'), config.uploadsDir);
+      const archivedLabStorage = path.join(unpackedRoot, 'lab-storage');
+      const hasArchivedLabStorage = await fs.stat(archivedLabStorage)
+        .then((stat) => stat.isDirectory())
+        .catch(() => false);
+      // Archives created before lab-storage joined the backup set remain readable. They
+      // cannot reconstruct lab projects, so preserve the pre-existing directory instead
+      // of silently replacing it with an empty one.
+      if (hasArchivedLabStorage) await replaceDirectory(archivedLabStorage, config.labStorageDir);
+      const warnings = [
+        ...excludedRestoreWarnings(manifest.excluded),
+        ...missingLabStorageRestoreWarnings(config.databasePath, hasArchivedLabStorage),
+      ];
+      return {
+        manifest,
+        preRestoreSnapshot,
+        excludedFiles: manifest.excluded,
+        warnings,
+      };
+    } finally {
+      await fs.rm(extractionRoot, { recursive: true, force: true });
     }
-    const unpackedRoot = path.join(extractionRoot, 'unpacked');
-    await fs.mkdir(unpackedRoot);
-    await tar.x({
-      cwd: unpackedRoot,
-      file: tarPath,
-      preservePaths: false,
-      strict: true,
-      filter: (entryPath) => safeArchivePath(entryPath),
-    });
-    const manifest = await verifyExtractedBackup(unpackedRoot);
-
-    // The operator declaration is not treated as proof. All three probes must pass after the
-    // archive is known to be valid, before the snapshot and every destructive write below.
-    await assertServiceStopped(config, options);
-    await assertRestoreTargetParentsWritable(config);
-
-    // Only snapshot once the incoming archive is known to be valid and the service-stop
-    // probes have passed. A failure here throws and leaves the live data intact.
-    const preRestoreSnapshot = await createPreRestoreSnapshot(config, options);
-
-    const databaseBytes = await fs.readFile(path.join(unpackedRoot, 'data', 'admin.sqlite3'));
-    await atomicWriteFile(config.databasePath, databaseBytes);
-    await fs.unlink(`${config.databasePath}-wal`).catch(() => {});
-    await fs.unlink(`${config.databasePath}-shm`).catch(() => {});
-    await replaceDirectory(path.join(unpackedRoot, 'content', 'works'), path.join(config.contentDir, 'works'));
-    await replaceDirectory(path.join(unpackedRoot, 'content', 'notes'), path.join(config.contentDir, 'notes'));
-    await replaceDirectory(path.join(unpackedRoot, 'uploads'), config.uploadsDir);
-    const archivedLabStorage = path.join(unpackedRoot, 'lab-storage');
-    const hasArchivedLabStorage = await fs.stat(archivedLabStorage)
-      .then((stat) => stat.isDirectory())
-      .catch(() => false);
-    // Archives created before lab-storage joined the backup set remain readable. They
-    // cannot reconstruct lab projects, so preserve the pre-existing directory instead
-    // of silently replacing it with an empty one.
-    if (hasArchivedLabStorage) await replaceDirectory(archivedLabStorage, config.labStorageDir);
-    const warnings = [
-      ...excludedRestoreWarnings(manifest.excluded),
-      ...missingLabStorageRestoreWarnings(config.databasePath, hasArchivedLabStorage),
-    ];
-    return {
-      manifest,
-      preRestoreSnapshot,
-      excludedFiles: manifest.excluded,
-      warnings,
-    };
-  } finally {
-    await fs.rm(extractionRoot, { recursive: true, force: true });
-  }
+  });
 }
 
 module.exports = {

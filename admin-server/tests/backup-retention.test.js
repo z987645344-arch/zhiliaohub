@@ -116,8 +116,9 @@ test('当日备份持续失败且耗尽重试时四池照常清扫，但不触�
   assert.equal(result.attempts, 3);
   assert.equal(attempts, 3);
   assert.equal(orphanCalls, 0);
-  assert.equal(result.retentionCleanup.status, 'ok');
-  assert.equal(nextTimer, 1);
+  assert.equal(result.retentionCleanup, undefined, '普通备份回调不得再附带每日清扫。');
+  assert.equal((await scheduler.retentionScheduler.runAndSchedule()).status, 'ok');
+  assert.equal(nextTimer, 2);
   for (const pool of RETENTION_POOLS) assert.equal((await forPool(directory, pool.prefix)).length, pool.minCount);
 });
 
@@ -131,9 +132,11 @@ test('每日清扫状态重启不丢，同边界不重复，已有当日备份�
   const first = new BackupScheduler(config, options);
   const second = new BackupScheduler(config, options);
   t.after(() => { first.stop(); second.stop(); });
-  assert.equal((await first.runAndSchedule()).retentionCleanup.status, 'ok');
+  await first.runAndSchedule();
+  assert.equal((await first.retentionScheduler.runAndSchedule()).status, 'ok');
   assert.deepEqual(await forPool(directory, 'backup'), []);
-  assert.equal((await second.runAndSchedule()).retentionCleanup.skipped, true);
+  await second.runAndSchedule();
+  assert.equal((await second.retentionScheduler.runAndSchedule()).skipped, true);
 });
 
 test('关闭备份创建仍启动每日归档维护，清扫失败不阻断下一日调度', async (t) => {
@@ -148,10 +151,11 @@ test('关闭备份创建仍启动每日归档维护，清扫失败不阻断下�
   }).start();
   t.after(() => scheduler.stop());
   const result = await scheduler.runPromise;
+  const cleanup = await scheduler.retentionScheduler.runPromise;
   assert.equal(result.skipped, true);
-  assert.equal(result.retentionCleanup.status, 'error');
-  assert.equal(result.retentionCleanup.results.filter((pool) => pool.status === 'error').length, 4);
-  assert.equal(timers, 1);
+  assert.equal(cleanup.status, 'error');
+  assert.equal(cleanup.results.filter((pool) => pool.status === 'error').length, 4);
+  assert.equal(timers, 3, '独立清扫启动预置定时器、失败重试及备份主定时器。');
   assert.deepEqual(await forPool(directory, 'backup'), []);
 });
 

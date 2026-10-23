@@ -3,7 +3,7 @@ const { loadBackupConfig } = require('../src/backup-config');
 const { createBackup } = require('../src/services/backup-service');
 
 createBackup(loadBackupConfig())
-  .then(({ archivePath, manifest, removed, replication }) => {
+  .then(({ archivePath, manifest, removed, deferred, replication }) => {
     console.log(`备份已创建：${archivePath}`);
     console.log(`清单文件数：${manifest.files.length}`);
     console.log(`未入包 ZIP 数：${manifest.excluded.length}`);
@@ -14,8 +14,10 @@ createBackup(loadBackupConfig())
       console.warn('备份不含 .zip；恢复后需由用户从本地补齐，清单见 manifest.excluded。');
     }
     console.log(`保留策略清理：${removed.length} 份`);
+    if (deferred?.length) console.warn(`归档占用暂缓：${deferred.length} 份，后续独立每日清扫会再检查。`);
     if (replication?.ok) {
       console.log(`已同步副本：${replication.location}`);
+      if (replication.deferred?.length) console.warn(`副本轮转占用暂缓：${replication.deferred.length} 份。`);
       console.log('提醒：该副本目前仍在本机，只是模拟异地，不能防服务器整体损毁。');
     } else if (replication && !replication.skipped) {
       console.warn(`副本同步失败：${replication.error}；本地备份本身有效。`);

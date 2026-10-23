@@ -13,42 +13,19 @@
 // after a backup will not trigger a duplicate, and a restart after a long outage notices the
 // scheduled boundary has passed and takes one immediately.
 const fs = require('node:fs/promises');
-const { sweepArchiveRetention } = require('./backup-retention');
+const { ArchiveRetentionScheduler } = require('./archive-retention-scheduler');
+const { MINUTE_MS, UTC_PLUS_8_OFFSET_MS, DEFAULT_LOCAL_TIME, parseLocalTime,
+  scheduledBoundaryAtOrBefore, nextScheduledAt } = require('./backup-schedule-clock');
 const { SCHEDULED_BACKUP_PREFIX, createBackup } = require('./backup-service');
 const {
   cleanupOrphanUploads,
   persistOrphanCleanupResult,
 } = require('./orphan-upload-service');
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const MINUTE_MS = 60 * 1000;
-const UTC_PLUS_8_OFFSET_MS = 8 * 60 * 60 * 1000;
-const DEFAULT_LOCAL_TIME = '00:00';
 const RETRY_DELAYS_MS = Object.freeze([5 * MINUTE_MS, 30 * MINUTE_MS]);
 
 // Matches the archiveTimestamp() format: YYYYMMDD 'T' HHMMSSmmm 'Z'.
 const ARCHIVE_PATTERN = new RegExp(`^${SCHEDULED_BACKUP_PREFIX}-(\\d{8})T(\\d{9})Z\\.tar\\.gz(?:\\.enc)?$`);
-
-function parseLocalTime(value = DEFAULT_LOCAL_TIME) {
-  const match = /^(?:([01]\d|2[0-3])):([0-5]\d)$/.exec(String(value));
-  if (!match) throw new Error('Backup schedule local time must use 24-hour HH:MM format.');
-  return (Number(match[1]) * 60) + Number(match[2]);
-}
-
-// Returns the most recent configured wall-clock boundary in an explicit UTC+8 timeline.
-// It never calls getHours()/getDate(), so the host or container timezone cannot move the
-// trigger to 08:00 China time by mistake.
-function scheduledBoundaryAtOrBefore(now, localTime = DEFAULT_LOCAL_TIME) {
-  const shiftedNow = now.getTime() + UTC_PLUS_8_OFFSET_MS;
-  const shiftedDayStart = Math.floor(shiftedNow / DAY_MS) * DAY_MS;
-  let shiftedBoundary = shiftedDayStart + (parseLocalTime(localTime) * MINUTE_MS);
-  if (shiftedBoundary > shiftedNow) shiftedBoundary -= DAY_MS;
-  return new Date(shiftedBoundary - UTC_PLUS_8_OFFSET_MS);
-}
-
-function nextScheduledAt(now, localTime = DEFAULT_LOCAL_TIME) {
-  return new Date(scheduledBoundaryAtOrBefore(now, localTime).getTime() + DAY_MS);
-}
 
 function parseArchiveTimestamp(name) {
   const match = ARCHIVE_PATTERN.exec(name);
@@ -86,7 +63,7 @@ class BackupScheduler {
     this.localTime = config.backupScheduleLocalTime ?? DEFAULT_LOCAL_TIME;
     parseLocalTime(this.localTime);
     this.createBackup = options.createBackup || createBackup;
-    this.sweepArchiveRetention = options.sweepArchiveRetention || sweepArchiveRetention;
+    this.retentionScheduler = new ArchiveRetentionScheduler(config, options);
     this.cleanupOrphanUploads = options.cleanupOrphanUploads || cleanupOrphanUploads;
     this.persistOrphanCleanupResult = options.persistOrphanCleanupResult || persistOrphanCleanupResult;
     this.now = options.now || (() => new Date());
@@ -102,6 +79,8 @@ class BackupScheduler {
     this.createdCount = 0;
     this.failureCount = 0;
     this.runPromise = null;
+    this.started = false;
+    this.generation = 0;
   }
 
   // Runs one due-check. Never rejects: a scheduled job that throws into an interval handler
@@ -221,32 +200,14 @@ class BackupScheduler {
 
   async runAndSchedule() {
     const result = await this.runDueCycle();
-    // Maintenance belongs to the daily cycle, not to backup creation or its retries.
-    // An unwritten pool must still expire, even if today's backup failed or is disabled.
-    let retentionCleanup;
-    try {
-      const now = this.now();
-      retentionCleanup = await this.sweepArchiveRetention(this.config, {
-        now, boundary: scheduledBoundaryAtOrBefore(now, this.localTime),
-      });
-      if (!retentionCleanup.skipped) {
-        const removed = retentionCleanup.results.reduce((total, pool) => total + (pool.removed?.length || 0), 0);
-        this.logger[retentionCleanup.status === 'ok' ? 'log' : 'error'](
-          `[backup] 归档每日清扫：${retentionCleanup.status}，删除 ${removed} 份；结果已持久化。`,
-        );
-        for (const pool of retentionCleanup.results.filter((entry) => entry.status === 'error')) {
-          this.logger.error(`[backup] 归档清扫失败：${pool.destination}/${pool.prefix}：${pool.error}`);
-        }
-      }
-    } catch (error) {
-      retentionCleanup = { failed: true, error: String(error.message) };
-      this.logger.error(`[backup] 归档每日清扫或状态持久化失败：${error.message}`);
-    }
     if (!this.stopped) this.scheduleNext();
-    return { ...result, retentionCleanup };
+    return result;
   }
 
   start() {
+    if (this.started) return this;
+    this.started = true;
+    this.retentionScheduler.start();
     if (this.config.backupScheduleEnabled === false) {
       this.logger.log('[backup] 定时备份已关闭；归档每日清扫仍运行，保底份数照常保护旧归档。');
     }
@@ -254,6 +215,7 @@ class BackupScheduler {
     // Check once at boot: an empty directory gets protection immediately, and a process
     // returning after a missed boundary catches up without waiting for tomorrow.
     this.runPromise = this.runAndSchedule();
+    this.runPromise.catch((error) => this.logger.error(`[backup] 备份调度异常：${error.message}`));
     if (this.config.backupScheduleEnabled !== false) {
       this.logger.log(
         `[backup] 定时备份已启用：每日 UTC+8 ${this.localTime}；`
@@ -264,19 +226,27 @@ class BackupScheduler {
   }
 
   scheduleNext() {
+    if (this.stopped) return null;
+    if (this.timer !== null) this.clearTimeout(this.timer);
     const now = this.now();
     const scheduledAt = nextScheduledAt(now, this.localTime);
     const delay = Math.max(0, scheduledAt.getTime() - now.getTime());
-    this.timer = this.setTimeout(async () => {
+    const generation = ++this.generation;
+    this.timer = this.setTimeout(() => {
+      if (this.stopped || generation !== this.generation) return;
       this.timer = null;
       this.runPromise = this.runAndSchedule();
-      await this.runPromise;
+      this.runPromise.catch((error) => this.logger.error(`[backup] 备份调度异常：${error.message}`));
+      return this.runPromise;
     }, delay);
     if (typeof this.timer?.unref === 'function') this.timer.unref();
     return scheduledAt;
   }
 
   stop() {
+    this.started = false;
+    this.generation++;
+    this.retentionScheduler.stop();
     this.stopped = true;
     if (this.timer) this.clearTimeout(this.timer);
     if (this.retryTimer) this.clearTimeout(this.retryTimer);
@@ -285,6 +255,10 @@ class BackupScheduler {
     this.retryTimer = null;
     this.retryResolve = null;
     return this;
+  }
+
+  async waitForIdle() {
+    await Promise.allSettled([this.runPromise, this.retentionScheduler.waitForIdle()]);
   }
 }
 

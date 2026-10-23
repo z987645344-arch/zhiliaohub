@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const tar = require('tar');
 const { decryptArchive, verifyExtractedBackup } = require('./backup-service');
+const { withArchiveUse } = require('./archive-lease');
 
 async function verifiedManifest(config, archivePath, root) {
   let tarPath = archivePath;
@@ -60,7 +61,8 @@ async function findBackupCoverage(config, candidates) {
     if (coverage.size === candidates.length) break;
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zhiliaohub-backup-coverage-'));
     try {
-      const manifest = await verifiedManifest(config, archivePath, root);
+      const manifest = await withArchiveUse(archivePath, 'orphan-coverage-read',
+        () => verifiedManifest(config, archivePath, root));
       const files = new Map(manifest.files.map((file) => [file.path, file]));
       for (const candidate of candidates) {
         const file = files.get(candidate.archivePath);

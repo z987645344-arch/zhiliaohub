@@ -222,14 +222,16 @@ test('手工、调度与恢复前三个归档前缀严格互斥', async () => {
       [names.manual],
       'backup池只能匹配手工归档。',
     );
-    assert.deepEqual((await fs.readdir(runtimeRoot)).sort(), [names.preRestore, names.scheduled].sort());
+    assert.deepEqual((await fs.readdir(runtimeRoot)).filter((name) => name !== '.archive-leases').sort(),
+      [names.preRestore, names.scheduled].sort());
 
     assert.deepEqual(
       await pruneBackups(runtimeRoot, { retentionDays: 3, minCount: 0 }, SCHEDULED_BACKUP_PREFIX, new Date('2026-08-15T00:00:00Z')),
       [names.scheduled],
       'scheduled池只能匹配调度归档。',
     );
-    assert.deepEqual(await fs.readdir(runtimeRoot), [names.preRestore], '恢复前快照不应被两个常规池匹配。');
+    assert.deepEqual((await fs.readdir(runtimeRoot)).filter((name) => name !== '.archive-leases'),
+      [names.preRestore], '恢复前快照不应被两个常规池匹配。');
   } finally {
     await fs.rm(runtimeRoot, { recursive: true, force: true });
   }
@@ -494,6 +496,7 @@ test('进程错过调度边界后启动仍会立即补做当日备份', async ()
       },
     }).start();
     const result = await scheduler.runPromise;
+    await scheduler.retentionScheduler.runPromise;
     assert.equal(result.created, true);
     assert.equal(created, 1, 'start()必须立即执行缺失调度备份，不能只排到明天。');
     scheduler.stop();

@@ -11,10 +11,16 @@ const server = app.listen(config.port, config.host, () => {
   for (const message of startupNetworkMessages(config)) console.log(message);
 });
 
+let shuttingDown = false;
 function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`收到 ${signal}，正在关闭管理后台。`);
   backupScheduler.stop();
-  server.close(() => {
+  server.close(async () => {
+    // Timers are stopped, but creation/copy/verification must release their
+    // archive leases before normal process exit. SIGKILL cannot run this guard.
+    await backupScheduler.waitForIdle();
     sessionStore.close();
     database.close();
     process.exit(0);

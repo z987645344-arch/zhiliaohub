@@ -2,9 +2,11 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { atomicWriteFile } = require('../lib/atomic-file');
+const { deleteUnusedArchive, withArchiveUse } = require('./archive-lease');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_STATE_FILE = '.archive-retention-state.json';
+const RETENTION_SCHEDULE_VERSION = 'utc8-0030-v1';
 const RETENTION_POOLS = Object.freeze([
   { prefix: 'scheduled-backup', key: 'scheduledBackup', env: 'SCHEDULED_BACKUP', minCount: 3 },
   { prefix: 'orphan-rollback', key: 'orphanRollback', env: 'ORPHAN_ROLLBACK', minCount: 0 },
@@ -74,13 +76,21 @@ async function pruneBackups(directory, policy, prefix = 'backup', now = new Date
   const expired = candidates.slice(minCount).filter((entry) => entry.createdAt < cutoff)
     .map((entry) => entry.name);
   const removed = [];
+  const deferred = [];
+  // Preserve the public array contract for callers and older restore tooling.
+  Object.defineProperty(removed, 'deferred', { value: deferred });
   for (const name of expired) {
     try {
-      await fs.unlink(path.join(directory, name));
-      removed.push(name);
+      if (await deleteUnusedArchive(path.join(directory, name))) removed.push(name);
+      else {
+        deferred.push(name);
+        console.warn(`[backup] 归档轮转因占用暂缓，独立清扫将重试：${name}`);
+      }
     } catch (error) {
       // Preserve successful deletions in the durable result even if a later unlink fails.
+      if (error.archiveDeleted) removed.push(name);
       error.removed = [...removed];
+      error.deferred = [...deferred];
       throw error;
     }
   }
@@ -88,6 +98,17 @@ async function pruneBackups(directory, policy, prefix = 'backup', now = new Date
 }
 
 async function sweepArchiveRetention(config, { now, boundary }) {
+  await fs.mkdir(config.backupDir, { recursive: true });
+  try {
+    return await withArchiveUse(path.join(config.backupDir, RETENTION_STATE_FILE), 'retention-sweep',
+      () => sweepUnlocked(config, { now, boundary }));
+  } catch (error) {
+    if (error.code !== 'ARCHIVE_BUSY') throw error;
+    return { status: 'deferred', reason: 'another sweep is running', results: [] };
+  }
+}
+
+async function sweepUnlocked(config, { now, boundary }) {
   const statePath = path.join(config.backupDir, RETENTION_STATE_FILE);
   const boundaryIso = boundary.toISOString();
   let previous;
@@ -96,7 +117,8 @@ async function sweepArchiveRetention(config, { now, boundary }) {
   } catch (error) {
     if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
   }
-  if (previous?.status === 'ok' && previous.boundary === boundaryIso) {
+  if (previous?.scheduleVersion === RETENTION_SCHEDULE_VERSION
+      && previous.status === 'ok' && previous.boundary === boundaryIso) {
     return { skipped: true, reason: 'already swept this daily boundary' };
   }
   // Resolve all policies before deleting anything; a malformed policy must fail closed.
@@ -108,18 +130,20 @@ async function sweepArchiveRetention(config, { now, boundary }) {
     for (const { prefix, policy } of policies) {
       try {
         const removed = await pruneBackups(directory, policy, prefix, now);
-        results.push({ destination: name, prefix, ...policy, status: 'ok', removed });
+        results.push({ destination: name, prefix, ...policy,
+          status: removed.deferred.length ? 'deferred' : 'ok', removed, deferred: removed.deferred });
       } catch (error) {
         results.push({ destination: name, prefix, ...policy, status: 'error',
-          removed: error.removed || [], error: String(error.message) });
+          removed: error.removed || [], deferred: error.deferred || [], error: String(error.message) });
       }
     }
   }
-  const state = { lastRunAt: now.toISOString(), boundary: boundaryIso,
-    status: results.some((result) => result.status === 'error') ? 'error' : 'ok', results };
+  const state = { scheduleVersion: RETENTION_SCHEDULE_VERSION, lastRunAt: now.toISOString(), boundary: boundaryIso,
+    status: results.some((result) => result.status === 'error') ? 'error'
+      : results.some((result) => result.status === 'deferred') ? 'deferred' : 'ok', results };
   await atomicWriteFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
   return state;
 }
 
-module.exports = { RETENTION_POOLS, RETENTION_STATE_FILE, loadRetentionConfig, pruneBackups,
+module.exports = { RETENTION_POOLS, RETENTION_STATE_FILE, RETENTION_SCHEDULE_VERSION, loadRetentionConfig, pruneBackups,
   retentionForPool, sweepArchiveRetention, validatePolicy };

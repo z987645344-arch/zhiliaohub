@@ -24,6 +24,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pruneBackups } = require('./backup-retention');
+const { withArchiveUse } = require('./archive-lease');
 
 class LocalMirrorDestination {
   constructor(directory) {
@@ -38,17 +39,19 @@ class LocalMirrorDestination {
   async send(archivePath) {
     await fs.mkdir(this.directory, { recursive: true });
     const target = path.join(this.directory, path.basename(archivePath));
-    // Copy to a temporary name and rename into place, so an interrupted copy can never
-    // leave a truncated file that looks like a usable archive.
-    const staging = path.join(this.directory, `.partial-${crypto.randomUUID()}`);
-    try {
-      await fs.copyFile(archivePath, staging);
-      await fs.rename(staging, target);
-    } catch (error) {
-      await fs.unlink(staging).catch(() => {});
-      throw error;
-    }
-    return { location: target };
+    return withArchiveUse(archivePath, 'mirror-source', () => withArchiveUse(target, 'mirror-target', async () => {
+      // Copy to a temporary name and rename into place, so an interrupted copy can never
+      // leave a truncated file that looks like a usable archive.
+      const staging = path.join(this.directory, `.partial-${crypto.randomUUID()}`);
+      try {
+        await fs.copyFile(archivePath, staging);
+        await fs.rename(staging, target);
+      } catch (error) {
+        await fs.unlink(staging).catch(() => {});
+        throw error;
+      }
+      return { location: target };
+    }));
   }
 
   async prune(namePrefix, policy, now) {
