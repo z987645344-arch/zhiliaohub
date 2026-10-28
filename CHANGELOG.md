@@ -3,6 +3,13 @@
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
 > **最后追加：2026-10-29**
 
+## v3.16 —— 版本升：新增小作坊 HTML、Demo 与压缩 Unity WebGL 项目类型
+
+- **覆盖范围与定档**：覆盖 `v3.15.3..HEAD` 的 **1 个已有实施提交** `6f985ba`；本存档提交自身另计，不写入上述既有范围。覆盖下方“2026-10-29 小作坊支持 HTML、Demo 与 Unity WebGL 项目类型”工作条目。按8.1三问，新项目新增可选类型并引入加性SQLite列迁移，属于用户可见的新功能，定为版本升 `x.Y`。
+- **数据与环境**：`lab-project-type-v1` 只为 `lab_projects` 添加 `project_type TEXT NOT NULL DEFAULT 'html' CHECK (project_type IN ('html', 'demo', 'unity-webgl'))`；既有项目按HTML读取，原链接、显隐、时间戳及解压文件不变。无新增必填环境变量；保留旧 `LAB_MAX_UNCOMPRESSED_BYTES` 对HTML/Demo解压上限的收紧语义。部署需要重建 `admin-server` 与站内 `nginx`；gateway 仓库及生产 `.env` 未改。
+- **本机验证**：`npm test` **231/231**、`npm run check`、附加语法检查、`git diff --check` 通过；`docker compose --env-file .env.example config --quiet` 通过。官方 `nginx:stable-alpine` 渲染配置 `nginx -t` 通过；临时容器内压缩JS/wasm/data与普通HTML请求均HTTP 200，压缩编码、底层MIME及安全头正确，普通HTML无 `Content-Encoding`，未增加COOP/COEP。只读示例 `dist` ZIP 在隔离Express路径下5个静态目标均HTTP 200。未读取或修改生产 `.env`，未引入新依赖。
+- **部署交接与未验证项**：生产首次数据库迁移、280MiB Unity上传和300MiB解压边界、真实Unity浏览器体验待统筹师部署验收；本轮未连接服务器、未部署。未运行或声称任何远程CI结果；需要部署时只重建 `admin-server` 与 `nginx`，不改gateway。
+
 ## 2026-10-29 小作坊支持 HTML、Demo 与 Unity WebGL 项目类型
 
 - `admin-server/src/db.js`、`admin-server/data/schema.sql`：新增 `lab_projects.project_type`，迁移名 `lab-project-type-v1`；幂等迁移执行 `ALTER TABLE lab_projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'html' CHECK (project_type IN ('html', 'demo', 'unity-webgl'))`。既有项目得到 `html`，不改原 slug、链接、显隐、时间戳或解压目录；旧记录仍可访问、显隐切换及删除。
