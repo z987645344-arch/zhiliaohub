@@ -26,7 +26,7 @@ const {
 const { ContentService, ContentValidationError } = require('./services/content-service');
 const { DeviceAuthError, DeviceAuthService } = require('./services/device-auth-service');
 const { FeedbackService, FeedbackValidationError } = require('./services/feedback-service');
-const { LabService, LabValidationError } = require('./services/lab-service');
+const { LabService, LabValidationError, labProjectType, labLimits } = require('./services/lab-service');
 const { BackupStatusService } = require('./services/backup-status-service');
 const { BackupStatusAggregator } = require('./services/backup-status-aggregator');
 const { ZhitianBackupStatusClient } = require('./services/zhitian-backup-status-client');
@@ -120,6 +120,29 @@ function cleanupInterruptedLabUploads(uploadsDir) {
   return removed;
 }
 
+function createLabUploadReceiver({ config, storage, fileFilter, multerFactory = multer }) {
+  return function receiveLabUpload(request, response, next) {
+    try {
+      // The header (scripted upload) or query (native form fallback) is
+      // available before Multer consumes the multipart body. Never use the
+      // multipart projectType field to choose the upload ceiling.
+      const headerType = request.get('X-Lab-Project-Type');
+      const queryType = request.query?.projectType;
+      if (headerType && queryType && headerType !== queryType) {
+        throw new LabValidationError('项目类型与上传请求头不一致，请重新选择类型并上传。', 400);
+      }
+      request.labProjectType = labProjectType(headerType || queryType || 'html');
+      return multerFactory({
+        storage,
+        limits: { fileSize: labLimits(config, request.labProjectType).uploadBytes, files: 1 },
+        fileFilter,
+      }).single('file')(request, response, next);
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
 function createApp(overrides = {}, dependencies = {}) {
   const config = loadConfig(overrides);
   const database = initializeDatabase(config);
@@ -157,6 +180,17 @@ function createApp(overrides = {}, dependencies = {}) {
     dotfiles: 'deny',
     index: 'index.html',
     redirect: true,
+    setHeaders(response, filePath) {
+      const suffix = path.extname(filePath).toLowerCase();
+      if (suffix !== '.br' && suffix !== '.gz') return;
+      const sourceExtension = path.extname(filePath.slice(0, -suffix.length)).slice(1);
+      response.setHeader('Content-Encoding', suffix === '.br' ? 'br' : 'gzip');
+      if (sourceExtension === 'js' || sourceExtension === 'mjs') {
+        response.setHeader('Content-Type', 'application/javascript');
+      } else {
+        response.type(sourceExtension || 'application/octet-stream');
+      }
+    },
   }));
   app.use('/lab', (_request, response) => {
     response.status(404).type('text/plain').send('小作坊项目或文件不存在。');
@@ -333,12 +367,13 @@ function createApp(overrides = {}, dependencies = {}) {
     limits: { fileSize: config.uploadMaxBytes, files: 1 },
     fileFilter: multerFileFilter,
   });
-  const labUpload = multer({
-    storage: multer.diskStorage({
-      destination: (_request, _file, callback) => callback(null, config.uploadsDir),
-      filename: (_request, _file, callback) => callback(null, `pending-lab-${crypto.randomUUID()}.zip`),
-    }),
-    limits: { fileSize: config.uploadMaxBytes, files: 1 },
+  const labUploadStorage = multer.diskStorage({
+    destination: (_request, _file, callback) => callback(null, config.uploadsDir),
+    filename: (_request, _file, callback) => callback(null, `pending-lab-${crypto.randomUUID()}.zip`),
+  });
+  const receiveLabUpload = createLabUploadReceiver({
+    config,
+    storage: labUploadStorage,
     fileFilter: zipFileFilter,
   });
 
@@ -567,6 +602,13 @@ function createApp(overrides = {}, dependencies = {}) {
   async function createLabProject(request, response, next, asJson) {
     try {
       if (!request.file) throw new LabValidationError('请选择一个ZIP文件。');
+      const projectType = request.labProjectType || 'html';
+      if (request.body.projectType && request.body.projectType !== projectType) {
+        await fs.promises.unlink(request.file.path).catch((error) => {
+          if (error.code !== 'ENOENT') throw error;
+        });
+        throw new LabValidationError('项目类型与上传请求头不一致，请重新选择类型并上传。', 400);
+      }
       const project = await labService.createProject({
         ...request.file,
         originalname: decodeUploadOriginalName(request.file.originalname),
@@ -575,6 +617,7 @@ function createApp(overrides = {}, dependencies = {}) {
         description: request.body.description,
         coverImage: request.body.coverImage,
         isVisible: request.body.isVisible === '1' || request.body.isVisible === true,
+        projectType,
       });
       const publication = await publishService.publishAll();
       if (asJson) return response.status(201).json({ project, publication });
@@ -585,11 +628,11 @@ function createApp(overrides = {}, dependencies = {}) {
     }
   }
 
-  app.post('/admin/lab/upload', requireAdmin, labUpload.single('file'), requireCsrf, (request, response, next) => {
+  app.post('/admin/lab/upload', requireAdmin, receiveLabUpload, requireCsrf, (request, response, next) => {
     createLabProject(request, response, next, false);
   });
 
-  app.post('/api/admin/lab/upload', requireAdmin, labUpload.single('file'), requireCsrf, (request, response, next) => {
+  app.post('/api/admin/lab/upload', requireAdmin, receiveLabUpload, requireCsrf, (request, response, next) => {
     createLabProject(request, response, next, true);
   });
 
@@ -1048,4 +1091,4 @@ function createApp(overrides = {}, dependencies = {}) {
   };
 }
 
-module.exports = { createApp };
+module.exports = { createApp, createLabUploadReceiver };

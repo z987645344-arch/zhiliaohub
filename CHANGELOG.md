@@ -1,7 +1,16 @@
 # 知了hub 改动记录
 > 每轮完成改动后在此追加记录（新条目追加在**最前**，本文件为新在前的倒序）。
 > 纯文档/流程整理的三段式补丁存档同样需要记录，不得省略。
-> **最后追加：2026-10-23**
+> **最后追加：2026-10-29**
+
+## 2026-10-29 小作坊支持 HTML、Demo 与 Unity WebGL 项目类型
+
+- `admin-server/src/db.js`、`admin-server/data/schema.sql`：新增 `lab_projects.project_type`，迁移名 `lab-project-type-v1`；幂等迁移执行 `ALTER TABLE lab_projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'html' CHECK (project_type IN ('html', 'demo', 'unity-webgl'))`。既有项目得到 `html`，不改原 slug、链接、显隐、时间戳或解压目录；旧记录仍可访问、显隐切换及删除。
+- `admin-server/src/app.js`、`admin-server/src/services/lab-service.js`、`admin-server/src/views.js`、`admin-server/src/lib/html.js`：管理页新增 HTML/Demo/Unity 类型与限额提示。XHR 用 `X-Lab-Project-Type`、表单用 action 查询参数在 Multer 读 multipart 文件前选取上限；服务端再核对表单类型，冲突时清理暂存 ZIP 并返回400。HTML/Demo ZIP最多100MiB、解压最高100MiB；Unity ZIP最多280MiB、解压最多300MiB。旧 `LAB_MAX_UNCOMPRESSED_BYTES` 只可收紧HTML/Demo解压上限，Unity固定值不受它影响；没有新增必填环境变量。服务层还会按项目类型复核ZIP实际字节数；Unity包必须含 loader、WASM 与 data 资源。
+- `admin-server/src/services/lab-service.js`、`admin-server/src/app.js`、`deploy/nginx.conf`：`.br`/`.gz` 只对Unity开放，仍拒绝 `.unityweb` 与可执行文件；Express 与Nginx静态响应保留压缩字节并返回 `Content-Encoding`，恢复 `.js`、`.wasm`、`.data` 等底层 MIME。Nginx只给 `^/(?:api/admin/lab/upload|admin/lab/upload)$` 两个小作坊上传入口设置 `client_max_body_size 300m`，并保留 `client_body_timeout 300s`、`proxy_request_buffering off`；普通 `/api/admin/uploads` 沿用全局请求体上限及原有慢请求/流式设置，gateway 未改。现有 CSP 与其它安全响应头保持原值；未加 COOP/COEP。
+- `admin-server/.env.example`、`admin-server/README.md`、`admin-server/deploy/README.md`：说明分类型限额、旧解压配置的兼容边界、Unity 的 Gzip/Brotli 导出与部署注意事项；生产 `.env` 未读取或修改，未新增依赖。
+- `admin-server/tests/lab-projects.test.js`、`admin-server/tests/presentation.test.js`：覆盖旧库幂等迁移与旧链接生命周期、ZIP精确边界/超1字节、上传前限额选择、类型冲突清理、Unity `.br`/`.gz` 响应头及 `.exe`/`.unityweb` 拒绝。最终 `npm test` **231/231**，`npm run check`、附加语法检查、`git diff --check` 通过；`docker compose --env-file .env.example config --quiet` 与官方 `nginx:stable-alpine` 渲染后 `nginx -t` 通过。临时Nginx容器实测压缩JS/wasm/data均为200且MIME/编码头正确，普通HTML没有 `Content-Encoding`；一个只读示例 `dist` ZIP 在隔离Express小作坊下5个静态目标均为200。
+- **未验证**：生产入口的280MiB Unity上传、真实部署环境的300MiB解压边界，以及真实Unity构建在浏览器中的运行；本轮未连接服务器、未部署。
 
 ## v3.15.3 —— 补丁（x.y.Z）：归档清扫独立到00:30并保护占用归档
 

@@ -414,7 +414,7 @@ admin-server**。新机也不得在从未启动整栈的状态直接恢复，不
 
 `lab-storage/` 保存的是小作坊唯一可恢复的解压产物，现与SQLite、Markdown和上传池一并入包；`.pending-*`、`.deleted-*` 中间态会被排除。默认每个项目最多500个文件、解压后100MiB；归档改为按天数过期加保底份数，保底不是包数上限，不能再按固定3份估算容量硬上限。四池新环境变量、默认值、独立每日清扫与私有状态记录见 `admin-server/README.md` 的“归档留存”节；部署时移除旧 `BACKUP_RETENTION_COUNT` / `PRE_RESTORE_RETENTION_COUNT`。部署后必须把 `BACKUP_DIR`、镜像目的地的容量监控纳入运维。
 
-托管 Unity WebGL 时建议设置 `LAB_MAX_UNCOMPRESSED_BYTES=314572800`（300 MB），并同步提高 gateway 与站内 Nginx 的 `client_max_body_size`；只改解压上限不能让更大的 ZIP 穿过前置请求体限制。仓库默认值仍保持 100MiB，不因 Unity 支持而自动放宽所有部署。
+小作坊类型限额固定为：HTML/Demo 上传ZIP最多100MiB、解压最多100MiB（旧变量可进一步收紧）；Unity WebGL 上传ZIP最多280MiB、解压最多300MiB。站内Nginx只在现有小作坊上传路径设300m，普通媒体上传保留原上限/超时，gateway已有300m不改。旧 `LAB_MAX_UNCOMPRESSED_BYTES` 保留作兼容项，仅可收紧HTML/Demo的解压上限；Unity固定300MiB并忽略该旧项。默认仍100MiB，不新增必填变量。首次线上上传280MiB Unity包和300MiB解压上限仍需现场验证。
 
 `site/` 是发布派生物，**不进入备份、恢复器也不会还原它**。灾难重建时要先从仓库部署首页、工具页和共享资源，再在后台执行一次全量发布以重建作品、日记、反馈和媒体页面。只看到恢复命令成功，不能证明前台已经恢复。
 

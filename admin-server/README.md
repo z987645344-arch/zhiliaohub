@@ -90,7 +90,7 @@ npm run orphan-uploads -- --delete
 
 ## 小作坊ZIP静态项目
 
-已登录管理员可访问 `/admin/lab`，上传包含根目录 `index.html` 及配套网页资源的ZIP。服务会先扫描完整压缩包，拒绝绝对路径、盘符、`..` 路径穿越、符号链接、加密条目、非网页资源扩展名和缺少入口页的项目；默认最多500个ZIP条目、总解压后大小100MiB，并在实际解压时再次统计输出字节。通过校验后，项目进入 `lab-storage/<slug>/`，本地通过 `/lab/<slug>/` 只读访问。
+已登录管理员可访问 `/admin/lab`，上传包含根目录 `index.html` 及配套网页资源的ZIP，并选择HTML网页、Demo演示或Unity WebGL。上传入口在解析文件前按请求头（脚本上传）或表单地址查询参数设置文件上限：HTML/Demo ZIP 100MiB，Unity ZIP 280MiB；解压后HTML/Demo最高100MiB（旧配置可收紧），Unity为300MiB，Unity还必须带有loader、WASM和data构建资源。服务会扫描完整压缩包，拒绝绝对路径、盘符、`..` 路径穿越、符号链接、加密条目、非网页资源扩展名和缺少入口页的项目，并在实际解压时再次统计输出字节。只有Unity项目允许 `.br` 与 `.gz` 文件；静态响应保留压缩字节并设置对应 `Content-Encoding` 和底层资源MIME。通过校验后，项目进入 `lab-storage/<slug>/`，本地通过 `/lab/<slug>/` 只读访问。
 
 后台可上传可选的16:9封面、复制访问链接、下载由现有 `lab-storage/<slug>/` 实时流式生成的ZIP、切换是否显示在 `works.html` 底部，以及删除项目。下载不落临时包、不把整包读入内存，文件名使用数据库中的原始上传名；解压产物已经进入备份并可直接恢复，因此无需额外保留源ZIP。可见项目按作品 `portfolio-card` 样式展示，无封面时使用几何占位图，多于一项时使用可拖动横向轨道。显示状态变化与删除会触发全量发布；没有可见项目时不生成空的小作坊区块。真实项目目录由 `.gitignore` 排除，只保留 `lab-storage/.gitkeep`。
 
@@ -100,6 +100,8 @@ LAB_MAX_UNCOMPRESSED_BYTES=104857600
 LAB_BASE_URL=http://localhost:3001/lab
 # LAB_STORAGE_DIR=D:\absolute\persistent\lab-storage
 ```
+
+`LAB_MAX_UNCOMPRESSED_BYTES` 是兼容保留项，只能进一步收紧HTML/Demo的100MiB上限，不会放大其固定上限；Unity固定300MiB并忽略该旧项。上传ZIP上限不由环境变量配置。
 
 ⚠️ `LAB_BASE_URL` 在生产环境必须改为实际公开地址。若 `NODE_ENV=production` 时仍含 `localhost`，服务会打印醒目警告但不会拒绝启动。
 

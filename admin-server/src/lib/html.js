@@ -1258,6 +1258,20 @@ if (labUploadForm) {
   const uploadStatus = labUploadForm.querySelector('[data-lab-upload-status]');
   const uploadButton = labUploadForm.querySelector('[data-lab-upload-button]');
   const csrfToken = labUploadForm.dataset.csrfToken;
+  const projectTypeSelect = labUploadForm.querySelector('[data-lab-project-type]');
+  const projectTypeLimits = labUploadForm.querySelector('[data-lab-type-limits]');
+  const updateProjectTypeHelp = () => {
+    const fallbackAction = new URL(labUploadForm.action, window.location.href);
+    fallbackAction.searchParams.set('projectType', projectTypeSelect.value);
+    labUploadForm.action = fallbackAction.toString();
+    projectTypeLimits.textContent = projectTypeSelect.value === 'unity-webgl'
+      ? 'Unity WebGL：ZIP 上限 280 MiB，解压后上限 300 MiB；仅单线程，不开放跨源隔离。'
+      : projectTypeSelect.value === 'demo'
+        ? 'Demo 演示：ZIP 上限 100 MiB；解压最高 100 MiB，旧配置可进一步收紧。'
+        : 'HTML 网页：ZIP 上限 100 MiB；解压最高 100 MiB，旧配置可进一步收紧。';
+  };
+  projectTypeSelect?.addEventListener('change', updateProjectTypeHelp);
+  updateProjectTypeHelp();
   const coverFile = labUploadForm.querySelector('#labCoverFile');
   const coverStatus = labUploadForm.querySelector('[data-lab-cover-status]');
   const coverValue = labUploadForm.querySelector('[data-lab-cover-value]');
@@ -1429,6 +1443,7 @@ if (labUploadForm) {
     request.open('POST', labUploadForm.dataset.uploadApi);
     request.setRequestHeader('X-CSRF-Token', csrfToken);
     request.setRequestHeader('Accept', 'application/json');
+    request.setRequestHeader('X-Lab-Project-Type', projectTypeSelect.value);
     request.upload.onprogress = (progressEvent) => {
       if (!progressEvent.lengthComputable || progressEvent.total <= 0) return;
       const uploaded = (progressEvent.loaded / 1024 / 1024).toFixed(1);

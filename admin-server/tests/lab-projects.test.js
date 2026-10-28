@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -9,15 +10,25 @@ const bcrypt = require('bcrypt');
 const Database = require('better-sqlite3');
 const speakeasy = require('speakeasy');
 
-const { createApp } = require('../src/app');
+const { createApp, createLabUploadReceiver } = require('../src/app');
 const { loadConfig } = require('../src/config');
 const {
   LAB_COVER_MIGRATION_NAME,
   LAB_FILENAME_LATIN1_FIX_MIGRATION_NAME,
+  LAB_PROJECT_TYPE_MIGRATION_NAME,
   initializeDatabase,
 } = require('../src/db');
 const { MAX_SLUG_BYTES } = require('../src/lib/slug');
-const { LabService, LabValidationError } = require('../src/services/lab-service');
+const {
+  LAB_MAX_HTML_DEMO_UNCOMPRESSED_BYTES,
+  LAB_MAX_UNITY_UNCOMPRESSED_BYTES,
+  LAB_MAX_HTML_DEMO_UPLOAD_BYTES,
+  LAB_MAX_UNITY_UPLOAD_BYTES,
+  LabService,
+  LabValidationError,
+  inspectZip,
+  labLimits,
+} = require('../src/services/lab-service');
 
 const UNCHANGED_MAIN_ADMIN_CSP = "default-src 'self';base-uri 'self';font-src 'self' https: data:;form-action 'self';frame-ancestors 'self';img-src 'self' data: blob:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' 'unsafe-inline';upgrade-insecure-requests";
 const UNITY_LAB_CSP = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'";
@@ -88,6 +99,40 @@ function validLabZip() {
     { name: 'app.js', body: 'document.documentElement.dataset.labReady="true";' },
     { name: 'pixel.png', body: Buffer.from('89504e470d0a1a0a', 'hex') },
   ]);
+}
+
+function setZipEntryUncompressedSize(zipBuffer, entryName, size) {
+  const signature = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+  const wantedName = Buffer.from(entryName, 'utf8');
+  let cursor = 0;
+  while ((cursor = zipBuffer.indexOf(signature, cursor)) !== -1) {
+    const nameLength = zipBuffer.readUInt16LE(cursor + 28);
+    const extraLength = zipBuffer.readUInt16LE(cursor + 30);
+    const commentLength = zipBuffer.readUInt16LE(cursor + 32);
+    const nameStart = cursor + 46;
+    const name = zipBuffer.subarray(nameStart, nameStart + nameLength);
+    if (name.equals(wantedName)) {
+      zipBuffer.writeUInt32LE(size, cursor + 24);
+      return zipBuffer;
+    }
+    cursor = nameStart + nameLength + extraLength + commentLength;
+  }
+  throw new Error(`ZIP entry not found in central directory: ${entryName}`);
+}
+
+function requestRawHttp(url) {
+  return new Promise((resolve, reject) => {
+    const request = http.get(url, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve({
+        statusCode: response.statusCode,
+        headers: response.headers,
+        body: Buffer.concat(chunks),
+      }));
+    });
+    request.on('error', reject);
+  });
 }
 
 async function createRuntime(overrides = {}) {
@@ -205,6 +250,96 @@ test('生产环境LAB_BASE_URL指向localhost时发出醒目警告但不阻止�
   assert.match(warnings[0], /生产环境.*LAB_BASE_URL.*localhost/);
 });
 
+test('小作坊按项目类型固定上传与解压上限，旧配置只收紧HTML和Demo', () => {
+  const mib = 1024 * 1024;
+  assert.equal(LAB_MAX_HTML_DEMO_UPLOAD_BYTES, 100 * mib);
+  assert.equal(LAB_MAX_UNITY_UPLOAD_BYTES, 280 * mib);
+  assert.equal(LAB_MAX_HTML_DEMO_UNCOMPRESSED_BYTES, 100 * mib);
+  assert.equal(LAB_MAX_UNITY_UNCOMPRESSED_BYTES, 300 * mib);
+  const lowerLegacyConfig = { labMaxFiles: 500, labMaxUncompressedBytes: 64 * mib };
+  const higherLegacyConfig = { labMaxFiles: 500, labMaxUncompressedBytes: 500 * mib };
+  assert.deepEqual(labLimits(lowerLegacyConfig, 'html'), {
+    uploadBytes: 100 * mib, maxFiles: 500, maxUncompressedBytes: 64 * mib,
+  });
+  assert.equal(labLimits(lowerLegacyConfig, 'demo').maxUncompressedBytes, 64 * mib);
+  assert.deepEqual(labLimits(higherLegacyConfig, 'html'), {
+    uploadBytes: 100 * mib, maxFiles: 500, maxUncompressedBytes: 100 * mib,
+  });
+  assert.deepEqual(labLimits(lowerLegacyConfig, 'unity-webgl'), {
+    uploadBytes: 280 * mib, maxFiles: 500, maxUncompressedBytes: 300 * mib,
+  });
+});
+
+test('上传入口在Multer解析multipart前按请求头或原生表单查询参数选择ZIP上限', () => {
+  const observed = [];
+  const receive = createLabUploadReceiver({
+    config: { labMaxFiles: 20, labMaxUncompressedBytes: 1024 },
+    storage: {},
+    fileFilter: () => {},
+    multerFactory(options) {
+      observed.push(options);
+      return {
+        single(fieldName) {
+          assert.equal(fieldName, 'file');
+          return (request, _response, next) => {
+            request.multipartParsed = true;
+            next();
+          };
+        },
+      };
+    },
+  });
+  const invoke = (headerType, queryType, multipartType) => {
+    const request = {
+      query: queryType ? { projectType: queryType } : {},
+      body: { projectType: multipartType },
+      get: (name) => (name === 'X-Lab-Project-Type' ? headerType : undefined),
+    };
+    let receivedError;
+    receive(request, {}, (error) => { receivedError = error; });
+    return { request, error: receivedError };
+  };
+
+  const unity = invoke('unity-webgl', '', 'html');
+  assert.equal(unity.error, undefined);
+  assert.equal(unity.request.labProjectType, 'unity-webgl');
+  assert.equal(observed[0].limits.fileSize, 280 * 1024 * 1024);
+  const demoFallback = invoke('', 'demo', 'unity-webgl');
+  assert.equal(demoFallback.error, undefined);
+  assert.equal(demoFallback.request.labProjectType, 'demo');
+  assert.equal(observed[1].limits.fileSize, 100 * 1024 * 1024);
+  const mismatchedPrebodyHints = invoke('html', 'unity-webgl', 'html');
+  assert.equal(mismatchedPrebodyHints.error.statusCode, 400);
+  assert.equal(observed.length, 2);
+  const invalidType = invoke('other', '', 'unity-webgl');
+  assert.equal(invalidType.error.statusCode, 400);
+  assert.equal(observed.length, 2);
+});
+
+test('小作坊服务端再次拒绝超过对应项目类型ZIP上限的文件', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  for (const item of [
+    { type: 'html', limit: LAB_MAX_HTML_DEMO_UPLOAD_BYTES },
+    { type: 'unity-webgl', limit: LAB_MAX_UNITY_UPLOAD_BYTES },
+  ]) {
+    const uploadPath = path.join(runtime.config.uploadsDir, `too-large-${item.type}.zip`);
+    const handle = await fs.open(uploadPath, 'w');
+    await handle.truncate(item.limit + 1);
+    await handle.close();
+    await assert.rejects(
+      runtime.labService.createProject({ path: uploadPath, originalname: `${item.type}.zip` }, {
+        title: `超限 ${item.type}`,
+        description: '服务层二次检查上传文件字节数。',
+        projectType: item.type,
+      }),
+      (error) => error instanceof LabValidationError && error.statusCode === 413,
+    );
+    await assert.rejects(fs.access(uploadPath), /ENOENT/);
+  }
+  assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM lab_projects').get().count, 0);
+});
+
 test('有效网页ZIP可解压、发布显隐、生成链接并在删除时清理记录和目录', async (t) => {
   const runtime = await createRuntime();
   t.after(() => runtime.close());
@@ -214,6 +349,7 @@ test('有效网页ZIP可解压、发布显隐、生成链接并在删除时清�
     description: '包含HTML、CSS、JS和图片。',
     isVisible: true,
   });
+  assert.equal(project.projectType, 'html');
   assert.match(project.slug, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
   assert.equal(project.accessUrl, `http://localhost:3001/lab/${project.slug}/`);
   assert.match(await fs.readFile(path.join(runtime.config.labStorageDir, project.slug, 'index.html'), 'utf8'), /本地小作坊验证/);
@@ -268,6 +404,8 @@ test('旧小作坊库会幂等修正latin1错解文件名并补封面列', async
     contentDir: path.join(runtimeRoot, 'content'), uploadsDir: path.join(runtimeRoot, 'uploads'),
     labStorageDir: path.join(runtimeRoot, 'lab-storage'),
   };
+  await fs.mkdir(path.join(config.labStorageDir, 'broken-name'), { recursive: true });
+  await fs.writeFile(path.join(config.labStorageDir, 'broken-name', 'index.html'), '<h1>existing project</h1>');
   let database = initializeDatabase(config);
   assert.equal(database.prepare('SELECT original_filename FROM lab_projects WHERE slug = ?').get('broken-name').original_filename, '11组.zip');
   assert.equal(database.prepare('SELECT original_filename FROM lab_projects WHERE slug = ?').get('fixed-name').original_filename, '11组.zip');
@@ -275,12 +413,69 @@ test('旧小作坊库会幂等修正latin1错解文件名并补封面列', async
   assert.ok(database.prepare('PRAGMA table_info(lab_projects)').all().some((column) => column.name === 'cover_image'));
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?').get(LAB_FILENAME_LATIN1_FIX_MIGRATION_NAME).count, 1);
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?').get(LAB_COVER_MIGRATION_NAME).count, 1);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?').get(LAB_PROJECT_TYPE_MIGRATION_NAME).count, 1);
+  assert.deepEqual(database.prepare('SELECT project_type FROM lab_projects ORDER BY id').all().map((row) => row.project_type), ['html', 'html', 'html']);
+  const createdBefore = database.prepare('SELECT created_at, updated_at, is_visible FROM lab_projects WHERE slug = ?').get('broken-name');
+  assert.equal(createdBefore.is_visible, 0);
   database.close();
 
   database = initializeDatabase(config);
   assert.equal(database.prepare('SELECT original_filename FROM lab_projects WHERE slug = ?').get('broken-name').original_filename, '11组.zip');
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name IN (?, ?)').get(LAB_FILENAME_LATIN1_FIX_MIGRATION_NAME, LAB_COVER_MIGRATION_NAME).count, 2);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM content_migrations WHERE name = ?').get(LAB_PROJECT_TYPE_MIGRATION_NAME).count, 1);
+  const oldProject = new LabService(database, {
+    labStorageDir: config.labStorageDir,
+    labBaseUrl: 'http://localhost:3001/lab',
+  }).getProject(database.prepare('SELECT id FROM lab_projects WHERE slug = ?').get('broken-name').id);
+  assert.equal(oldProject.projectType, 'html');
+  assert.equal(oldProject.accessUrl, 'http://localhost:3001/lab/broken-name/');
+  assert.equal(oldProject.isVisible, false);
+  assert.deepEqual(
+    database.prepare('SELECT created_at, updated_at, is_visible FROM lab_projects WHERE slug = ?').get('broken-name'),
+    createdBefore,
+  );
+  assert.equal(await fs.readFile(path.join(config.labStorageDir, 'broken-name', 'index.html'), 'utf8'), '<h1>existing project</h1>');
+  const oldService = new LabService(database, { labStorageDir: config.labStorageDir, labBaseUrl: 'http://localhost:3001/lab' });
+  assert.equal(oldService.toggleVisibility(oldProject.id).isVisible, true);
+  assert.equal(oldService.toggleVisibility(oldProject.id).slug, 'broken-name');
+  await oldService.deleteProject(oldProject.id);
+  await assert.rejects(fs.access(path.join(config.labStorageDir, 'broken-name')), /ENOENT/);
   database.close();
+});
+
+test('旧链接项目可继续HTTP访问、切换显隐与删除且不改slug和目录', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const slug = 'legacy-project-link';
+  const projectDirectory = path.join(runtime.config.labStorageDir, slug);
+  await fs.mkdir(projectDirectory, { recursive: true });
+  await fs.writeFile(path.join(projectDirectory, 'index.html'), '<h1>旧项目继续可用</h1>');
+  const result = runtime.database.prepare(`
+    INSERT INTO lab_projects (
+      slug, title, description, original_filename, is_visible, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 1, ?, ?)
+  `).run(slug, '旧项目', '保留原有链接。', 'legacy.zip', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z');
+  const original = runtime.labService.getProject(result.lastInsertRowid);
+  assert.equal(original.projectType, 'html');
+  assert.equal(original.accessUrl, `http://localhost:3001/lab/${slug}/`);
+  assert.equal(original.isVisible, true);
+
+  let response = await fetch(`${runtime.baseUrl}/lab/${slug}/`);
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /旧项目继续可用/);
+  const hidden = runtime.labService.toggleVisibility(original.id);
+  assert.equal(hidden.isVisible, false);
+  assert.equal(hidden.slug, slug);
+  assert.equal(hidden.accessUrl, original.accessUrl);
+  assert.equal(await fs.readFile(path.join(projectDirectory, 'index.html'), 'utf8'), '<h1>旧项目继续可用</h1>');
+  response = await fetch(`${runtime.baseUrl}/lab/${slug}/`);
+  assert.equal(response.status, 200);
+
+  await runtime.labService.deleteProject(original.id);
+  assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM lab_projects WHERE id = ?').get(original.id).count, 0);
+  await assert.rejects(fs.access(projectDirectory), /ENOENT/);
+  response = await fetch(`${runtime.baseUrl}/lab/${slug}/`);
+  assert.equal(response.status, 404);
 });
 
 test('Windows压缩文件夹的单一顶层目录会自动展开为项目根目录', async (t) => {
@@ -315,8 +510,9 @@ test('Unity WebGL的wasm与data文件可通过校验并按正确MIME静态提供
   ]);
   const project = await runtime.labService.createProject(
     await runtime.writeUpload('unity-webgl.zip', unityZip),
-    { title: 'Unity WebGL', description: '验证构建产物白名单。' },
+    { title: 'Unity WebGL', description: '验证构建产物白名单。', projectType: 'unity-webgl' },
   );
+  assert.equal(project.projectType, 'unity-webgl');
   const projectDirectory = path.join(runtime.config.labStorageDir, project.slug);
   assert.deepEqual(await fs.readFile(path.join(projectDirectory, 'Build', 'game.wasm')), Buffer.from('0061736d01000000', 'hex'));
   assert.equal(await fs.readFile(path.join(projectDirectory, 'Build', 'game.data'), 'utf8'), 'unity-data');
@@ -324,6 +520,131 @@ test('Unity WebGL的wasm与data文件可通过校验并按正确MIME静态提供
   const response = await fetch(`${runtime.baseUrl}/lab/${project.slug}/Build/game.wasm`);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('content-type'), 'application/wasm');
+});
+
+test('Unity仅允许br与gzip文件，静态响应保留原压缩字节并返回底层MIME与安全头', async (t) => {
+  const runtime = await createRuntime({ labMaxUncompressedBytes: 1024 });
+  t.after(() => runtime.close());
+  const wasmBytes = Buffer.from('0061736d01000000', 'hex');
+  const compressed = [
+    { name: 'Build/game.loader.js.gz', body: zlib.gzipSync(Buffer.from('window.loader=true;')) },
+    { name: 'Build/game.framework.js.br', body: zlib.brotliCompressSync(Buffer.from('window.framework=true;')) },
+    { name: 'Build/game.wasm.br', body: zlib.brotliCompressSync(wasmBytes) },
+    { name: 'Build/game.data.gz', body: zlib.gzipSync(Buffer.from('unity-data')) },
+  ];
+  const unityZip = zip([
+    { name: 'index.html', body: '<!doctype html><script src="Build/game.loader.js.gz"></script>' },
+    ...compressed,
+  ]);
+  const project = await runtime.labService.createProject(
+    await runtime.writeUpload('unity-compressed.zip', unityZip),
+    { title: '压缩 Unity', description: '验证gzip与Brotli静态响应。', projectType: 'unity-webgl' },
+  );
+
+  const expectedTypes = new Map([
+    ['Build/game.loader.js.gz', 'application/javascript'],
+    ['Build/game.framework.js.br', 'application/javascript'],
+    ['Build/game.wasm.br', 'application/wasm'],
+    ['Build/game.data.gz', 'application/octet-stream'],
+  ]);
+  for (const asset of compressed) {
+    const response = await requestRawHttp(`${runtime.baseUrl}/lab/${project.slug}/${asset.name}`);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers['content-encoding'], asset.name.endsWith('.br') ? 'br' : 'gzip');
+    assert.ok(
+      response.headers['content-type'].startsWith(expectedTypes.get(asset.name)),
+      `${asset.name} returned Content-Type ${response.headers['content-type']}`,
+    );
+    assert.deepEqual(response.body, asset.body);
+    assert.equal(response.headers['content-security-policy'], UNITY_LAB_CSP);
+    assert.equal(response.headers['cross-origin-resource-policy'], 'same-origin');
+    assert.equal(response.headers['referrer-policy'], 'no-referrer');
+    assert.equal(response.headers['x-content-type-options'], 'nosniff');
+    assert.equal(response.headers['cross-origin-opener-policy'], undefined);
+    assert.equal(response.headers['cross-origin-embedder-policy'], undefined);
+  }
+
+  const nginxConfig = await fs.readFile(path.resolve(__dirname, '..', '..', 'deploy', 'nginx.conf'), 'utf8');
+  const labBlock = nginxConfig.split('server_name ${LAB_SERVER_NAME};')[1];
+  assert.ok(labBlock);
+  assert.match(nginxConfig, /map \$uri \$lab_asset_content_encoding/);
+  assert.ok(labBlock.includes('location ~* \\.wasm\\.(?:br|gz)$ { types { } default_type application/wasm; }'));
+  assert.doesNotMatch(labBlock, /rewrite .*\$1 last/);
+  const mainBlock = nginxConfig.split('server_name ${SERVER_NAME};')[1].split('server_name ${LAB_SERVER_NAME};')[0];
+  const labUploadIndex = mainBlock.indexOf('location ~ ^/(?:api/admin/lab/upload|admin/lab/upload)$');
+  const ordinaryUploadIndex = mainBlock.indexOf('location ~ ^/api/admin/uploads$');
+  assert.ok(labUploadIndex >= 0 && ordinaryUploadIndex > labUploadIndex);
+  const labUploadLocation = mainBlock.slice(labUploadIndex, ordinaryUploadIndex);
+  assert.match(labUploadLocation, /client_max_body_size 300m;[\s\S]*client_body_timeout 300s;[\s\S]*proxy_request_buffering off;/);
+  const ordinaryUploadLocation = mainBlock.slice(ordinaryUploadIndex, mainBlock.indexOf('location ~ ^/(?:admin|api|uploads)', ordinaryUploadIndex));
+  assert.doesNotMatch(ordinaryUploadLocation, /client_max_body_size/);
+  assert.match(ordinaryUploadLocation, /client_body_timeout 300s;[\s\S]*proxy_request_buffering off;/);
+  assert.equal((nginxConfig.match(/client_max_body_size 300m;/g) || []).length, 1);
+});
+
+test('小作坊ZIP解压边界按类型在limit内接受、超1字节拒绝', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  const cases = [
+    { type: 'html', limit: LAB_MAX_HTML_DEMO_UNCOMPRESSED_BYTES, extension: 'html' },
+    { type: 'demo', limit: LAB_MAX_HTML_DEMO_UNCOMPRESSED_BYTES, extension: 'html' },
+    { type: 'unity-webgl', limit: LAB_MAX_UNITY_UNCOMPRESSED_BYTES, extension: 'data' },
+  ];
+  for (const { type, limit, extension } of cases) {
+    const entryName = `payload.${extension}`;
+    const entries = [{ name: 'index.html', body: '' }, { name: entryName, body: 'x' }];
+    if (type === 'unity-webgl') entries.push(
+      { name: 'Build/game.loader.js', body: '' },
+      { name: 'Build/game.wasm', body: '' },
+    );
+    const zipAtLimit = setZipEntryUncompressedSize(zip(entries), entryName, limit);
+    const exactPath = path.join(runtime.config.uploadsDir, `at-limit-${type}.zip`);
+    await fs.writeFile(exactPath, zipAtLimit);
+    const exact = await inspectZip(exactPath, runtime.config.labStorageDir, {
+      maxFiles: 20,
+      maxUncompressedBytes: limit,
+    }, type);
+    assert.equal(exact.totalBytes, limit, `${type} exact ceiling should be accepted`);
+
+    const overPath = path.join(runtime.config.uploadsDir, `over-limit-${type}.zip`);
+    await fs.writeFile(overPath, setZipEntryUncompressedSize(zip(entries), entryName, limit + 1));
+    await assert.rejects(
+      inspectZip(overPath, runtime.config.labStorageDir, {
+        maxFiles: 20,
+        maxUncompressedBytes: limit,
+      }, type),
+      (error) => error instanceof LabValidationError && error.statusCode === 413,
+    );
+  }
+});
+
+test('Unity压缩后缀只允许用于Unity项目，项目类型不匹配时不落库', async (t) => {
+  const runtime = await createRuntime();
+  t.after(() => runtime.close());
+  for (const projectType of ['html', 'demo']) {
+    const file = await runtime.writeUpload(`not-unity-${projectType}.zip`, zip([
+      { name: 'index.html', body: 'safe' },
+      { name: 'app.js.gz', body: zlib.gzipSync(Buffer.from('compressed')) },
+    ]));
+    await assert.rejects(
+      runtime.labService.createProject(file, {
+        title: `拒绝压缩 ${projectType}`,
+        description: '只有Unity允许压缩后缀。',
+        projectType,
+      }),
+      (error) => error instanceof LabValidationError && error.statusCode === 415,
+    );
+  }
+  const ordinaryHtml = await runtime.writeUpload('ordinary-html.zip', validLabZip());
+  await assert.rejects(
+    runtime.labService.createProject(ordinaryHtml, {
+      title: '类型不匹配',
+      description: '普通网页不能声明为Unity。',
+      projectType: 'unity-webgl',
+    }),
+    /必须包含 loader\.js、\.wasm 和 \.data/,
+  );
+  assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM lab_projects').get().count, 0);
 });
 
 test('Unity压缩格式与可执行文件仍被白名单以415拒绝', async (t) => {
@@ -507,23 +828,62 @@ test('小作坊上传接口要求管理员和CSRF，成功后后台可列出项�
   const upload = new FormData();
   upload.set('title', '接口上传项目');
   upload.set('description', '由受保护接口创建。');
+  upload.set('projectType', 'html');
   upload.set('isVisible', '1');
   upload.set('file', new Blob([validLabZip()], { type: 'application/zip' }), '接口设计.zip');
   response = await client.request('/api/admin/lab/upload', {
     method: 'POST',
-    headers: { 'x-csrf-token': csrf },
+    headers: { 'x-csrf-token': csrf, 'x-lab-project-type': 'html' },
     body: upload,
   });
   assert.equal(response.status, 201);
   const payload = await response.json();
   assert.equal(payload.project.title, '接口上传项目');
   assert.equal(payload.project.isVisible, true);
+  assert.equal(payload.project.projectType, 'html');
   assert.equal(payload.project.original_filename, '接口设计.zip');
+
+  const uploadsBeforeMismatch = await fs.readdir(runtime.config.uploadsDir);
+  const mismatchedTypeUpload = new FormData();
+  mismatchedTypeUpload.set('title', '请求类型冲突');
+  mismatchedTypeUpload.set('description', 'multipart字段不能覆盖预先选定的类型。');
+  mismatchedTypeUpload.set('projectType', 'unity-webgl');
+  mismatchedTypeUpload.set('file', new Blob([validLabZip()], { type: 'application/zip' }), 'mismatch.zip');
+  response = await client.request('/api/admin/lab/upload', {
+    method: 'POST',
+    headers: { 'x-csrf-token': csrf, 'x-lab-project-type': 'html' },
+    body: mismatchedTypeUpload,
+  });
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /项目类型与上传请求头不一致/);
+  assert.deepEqual(await fs.readdir(runtime.config.uploadsDir), uploadsBeforeMismatch);
+
   response = await client.request('/admin/lab');
   const html = await response.text();
   assert.match(html, /接口上传项目/);
+  assert.match(html, /HTML 网页 · 接口设计\.zip/);
   assert.match(html, /data-copy-lab-link/);
   assert.equal(runtime.database.prepare('SELECT COUNT(*) AS count FROM lab_projects').get().count, 1);
+
+  const unityFormFallback = new FormData();
+  unityFormFallback.set('_csrf', csrf);
+  unityFormFallback.set('title', '原生表单Unity项目');
+  unityFormFallback.set('description', '查询参数在multipart正文之前选择限额。');
+  unityFormFallback.set('projectType', 'unity-webgl');
+  unityFormFallback.set('file', new Blob([zip([
+    { name: 'index.html', body: '<script src="Build/game.loader.js"></script>' },
+    { name: 'Build/game.loader.js', body: 'window.loader=true;' },
+    { name: 'Build/game.wasm', body: Buffer.from('0061736d01000000', 'hex') },
+    { name: 'Build/game.data', body: 'data' },
+  ])], { type: 'application/zip' }), 'unity-form.zip');
+  response = await client.request('/admin/lab/upload?projectType=unity-webgl', {
+    method: 'POST',
+    body: unityFormFallback,
+  });
+  assert.equal(response.status, 302);
+  assert.equal(runtime.database.prepare('SELECT project_type FROM lab_projects WHERE title = ?').get('原生表单Unity项目').project_type, 'unity-webgl');
+  response = await client.request('/admin/lab');
+  assert.match(await response.text(), /Unity WebGL · unity-form\.zip/);
 
   response = await client.request(`/admin/lab/${payload.project.id}/download`);
   assert.equal(response.status, 200);

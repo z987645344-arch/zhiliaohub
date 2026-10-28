@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS lab_projects (
   description TEXT NOT NULL,
   original_filename TEXT NOT NULL,
   cover_image TEXT,
+  project_type TEXT NOT NULL DEFAULT 'html' CHECK (project_type IN ('html', 'demo', 'unity-webgl')),
   is_visible INTEGER NOT NULL DEFAULT 0 CHECK (is_visible IN (0, 1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

@@ -86,8 +86,16 @@ test('作品与小作坊上传脚本显示真实进度并区分JSON与非JSON错
   }
   const labHtml = labManagementPage({ csrfToken: 'csrf-test-token' });
   assert.match(labHtml, /进入网页文件夹，选中全部内容压缩；不要压缩文件夹本身。/);
-  assert.match(labHtml, /Unity WebGL 导出要求：[\s\S]*?Compression Format[\s\S]*?Disabled[\s\S]*?Decompression Fallback[\s\S]*?Default 或 Minimal[\s\S]*?首次点击画面后才有声音/);
+  assert.match(labHtml, /Unity WebGL 导出要求：[\s\S]*?Compression Format 可选 Disabled、Gzip 或 Brotli[\s\S]*?关闭 Decompression Fallback[\s\S]*?\.unityweb 文件[\s\S]*?Default 或 Minimal[\s\S]*?首次点击画面后才有声音/);
   assert.match(labHtml, /data-lab-upload-form[^>]*data-upload-api="\/api\/admin\/lab\/upload"/);
+  assert.match(labHtml, /action="\/admin\/lab\/upload\?projectType=html"/);
+  assert.match(labHtml, /value="html"[^>]*>HTML 网页（ZIP ≤100 MiB，解压最高 100 MiB）/);
+  assert.match(labHtml, /value="demo"[^>]*>Demo 演示（ZIP ≤100 MiB，解压最高 100 MiB）/);
+  assert.match(labHtml, /value="unity-webgl"[^>]*>Unity WebGL（ZIP ≤280 MiB，解压 ≤300 MiB）/);
+  const labScript = labManagementScript();
+  assert.match(labScript, /setRequestHeader\('X-Lab-Project-Type', projectTypeSelect\.value\)/);
+  assert.match(labScript, /searchParams\.set\('projectType', projectTypeSelect\.value\)/);
+  assert.equal((labScript.match(/X-Lab-Project-Type/g) || []).length, 1);
   assert.match(labHtml, /data-lab-upload-button>[\s\S]*data-lab-upload-status role="status"/);
 });
 
@@ -100,12 +108,20 @@ test('小作坊上传把400/408/413/415的具体失败原因显示在按钮旁',
     };
     const button = { disabled: false };
     const fileInput = { files: [{ name: 'large-lab.zip' }] };
+    const projectTypeSelect = {
+      value: 'html',
+      addEventListener() {},
+    };
+    const projectTypeLimits = { textContent: '' };
     let submitHandler;
     const form = {
+      action: 'http://localhost/admin/lab/upload?projectType=html',
       dataset: { csrfToken: 'csrf-test-token', uploadApi: '/api/admin/lab/upload' },
       querySelector(selector) {
         if (selector === '[data-lab-upload-status]') return status;
         if (selector === '[data-lab-upload-button]') return button;
+        if (selector === '[data-lab-project-type]') return projectTypeSelect;
+        if (selector === '[data-lab-type-limits]') return projectTypeLimits;
         if (selector === '#labFile') return fileInput;
         return null;
       },
@@ -147,8 +163,9 @@ test('小作坊上传把400/408/413/415的具体失败原因显示在按钮旁',
       },
       encodeURIComponent,
       FormData: class FakeFormData {},
+      URL,
       XMLHttpRequest: FakeRequest,
-      window: { location: { assign() {} }, setTimeout() {} },
+      window: { location: { href: 'http://localhost/admin/lab', assign() {} }, setTimeout() {} },
     });
     submitHandler({ preventDefault() {} });
     return { button, messages, status };

@@ -7,6 +7,11 @@ const unzipper = require('unzipper');
 const { createUniqueSlug } = require('../lib/slug');
 const { IMAGE_EXTENSIONS, MEDIA_DIRECTORIES, validateMediaPath } = require('./content-service');
 
+const LAB_PROJECT_TYPES = Object.freeze(['html', 'demo', 'unity-webgl']);
+const LAB_MAX_HTML_DEMO_UPLOAD_BYTES = 100 * 1024 * 1024;
+const LAB_MAX_UNITY_UPLOAD_BYTES = 280 * 1024 * 1024;
+const LAB_MAX_HTML_DEMO_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
+const LAB_MAX_UNITY_UNCOMPRESSED_BYTES = 300 * 1024 * 1024;
 const ALLOWED_WEB_EXTENSIONS = new Set([
   '.html', '.htm', '.css', '.js', '.mjs', '.wasm', '.data', '.json', '.map', '.txt', '.xml', '.svg',
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif', '.ico',
@@ -29,6 +34,41 @@ function validatedId(value) {
   const id = Number(value);
   if (!Number.isSafeInteger(id) || id <= 0) throw new LabValidationError('小作坊项目编号无效。');
   return id;
+}
+
+function labProjectType(value = 'html') {
+  const type = String(value);
+  if (!LAB_PROJECT_TYPES.includes(type)) throw new LabValidationError('小作坊项目类型无效。');
+  return type;
+}
+
+function labUploadLimitBytes(type) {
+  return labProjectType(type) === 'unity-webgl'
+    ? LAB_MAX_UNITY_UPLOAD_BYTES
+    : LAB_MAX_HTML_DEMO_UPLOAD_BYTES;
+}
+
+function labUncompressedLimitBytes(config, type) {
+  return labProjectType(type) === 'unity-webgl'
+    ? LAB_MAX_UNITY_UNCOMPRESSED_BYTES
+    : Math.min(Number(config.labMaxUncompressedBytes), LAB_MAX_HTML_DEMO_UNCOMPRESSED_BYTES);
+}
+
+function labLimits(config, type) {
+  const projectType = labProjectType(type);
+  return {
+    uploadBytes: labUploadLimitBytes(projectType),
+    maxFiles: config.labMaxFiles,
+    maxUncompressedBytes: labUncompressedLimitBytes(config, projectType),
+  };
+}
+
+function isUnityWebGLBuild(fileNames) {
+  const names = fileNames.map((name) => name.toLowerCase().split('/').at(-1));
+  return names.some((name) => /(?:^|\.)loader\.js(?:\.(?:br|gz))?$/.test(name)
+      || /^unityloader\.js(?:\.(?:br|gz))?$/.test(name))
+    && names.some((name) => /\.wasm(?:\.(?:br|gz))?$/.test(name))
+    && names.some((name) => /\.data(?:\.(?:br|gz))?$/.test(name));
 }
 
 function validateText(value, label, { min = 1, max }) {
@@ -77,7 +117,7 @@ function detectTopLevelFolder(entries) {
   return allInsideFolder && hasNestedFile ? folder : '';
 }
 
-function safeEntry(entry, destinationRoot, topLevelFolder = '') {
+function safeEntry(entry, destinationRoot, topLevelFolder = '', projectType = 'html') {
   const metadata = inspectEntryMetadata(entry);
   if (metadata.ignored) return { ...metadata, skip: true };
   const relativeParts = topLevelFolder && metadata.parts[0] === topLevelFolder
@@ -92,7 +132,12 @@ function safeEntry(entry, destinationRoot, topLevelFolder = '') {
   const normalizedName = relativeParts.join('/') + (metadata.isDirectory ? '/' : '');
   if (!metadata.isDirectory) {
     const extension = path.posix.extname(normalizedName).toLowerCase();
-    if (!ALLOWED_WEB_EXTENSIONS.has(extension)) {
+    const compressedExtension = extension === '.br' || extension === '.gz';
+    const underlyingExtension = compressedExtension
+      ? path.posix.extname(normalizedName.slice(0, -extension.length)).toLowerCase()
+      : extension;
+    if (!(compressedExtension && projectType === 'unity-webgl' && ALLOWED_WEB_EXTENSIONS.has(underlyingExtension))
+        && !ALLOWED_WEB_EXTENSIONS.has(extension)) {
       throw new LabValidationError(
         `ZIP包含不允许的文件类型：${metadata.rawName}。允许的扩展名：${ALLOWED_WEB_EXTENSIONS_LABEL}。`,
         415,
@@ -102,11 +147,12 @@ function safeEntry(entry, destinationRoot, topLevelFolder = '') {
   return { ...metadata, normalizedName, skip: false, target };
 }
 
-async function inspectZip(zipPath, destinationRoot, limits) {
+async function inspectZip(zipPath, destinationRoot, limits, projectType = 'html') {
   let fileCount = 0;
   let entryCount = 0;
   let totalBytes = 0;
   let hasRootIndex = false;
+  const fileNames = [];
   let entries;
   try {
     const directory = await unzipper.Open.file(zipPath);
@@ -114,7 +160,7 @@ async function inspectZip(zipPath, destinationRoot, limits) {
     const metadata = entries.map(inspectEntryMetadata);
     const topLevelFolder = detectTopLevelFolder(metadata);
     for (const entry of entries) {
-      const safe = safeEntry(entry, destinationRoot, topLevelFolder);
+      const safe = safeEntry(entry, destinationRoot, topLevelFolder, projectType);
       entryCount += 1;
       if (entryCount > limits.maxFiles) {
         throw new LabValidationError(`ZIP条目数量超过 ${limits.maxFiles} 个上限。`, 413);
@@ -125,6 +171,7 @@ async function inspectZip(zipPath, destinationRoot, limits) {
       }
       if (safe.skip || safe.isDirectory) continue;
       fileCount += 1;
+      fileNames.push(safe.normalizedName);
       if (safe.normalizedName === 'index.html') hasRootIndex = true;
     }
     if (fileCount === 0) throw new LabValidationError('ZIP中没有可发布的网页文件。');
@@ -136,17 +183,18 @@ async function inspectZip(zipPath, destinationRoot, limits) {
       }
       throw new LabValidationError('ZIP根目录必须包含 index.html；请进入网页文件夹，选中全部内容后重新压缩。');
     }
-    return { entries, entryCount, fileCount, topLevelFolder, totalBytes };
+    return { entries, entryCount, fileCount, topLevelFolder, totalBytes,
+      isUnityWebGL: isUnityWebGLBuild(fileNames) };
   } catch (error) {
     if (error instanceof LabValidationError) throw error;
     throw new LabValidationError(`ZIP结构无效或已损坏：${error.message}`);
   }
 }
 
-async function extractZip(entries, destinationRoot, limits, topLevelFolder = '') {
+async function extractZip(entries, destinationRoot, limits, topLevelFolder = '', projectType = 'html') {
   let extractedBytes = 0;
   for (const entry of entries) {
-    const safe = safeEntry(entry, destinationRoot, topLevelFolder);
+    const safe = safeEntry(entry, destinationRoot, topLevelFolder, projectType);
     if (safe.skip) continue;
     if (safe.isDirectory) {
       await fs.mkdir(safe.target, { recursive: true });
@@ -193,6 +241,7 @@ class LabService {
   projectView(record) {
     return {
       ...record,
+      projectType: labProjectType(record.project_type || 'html'),
       isVisible: Boolean(record.is_visible),
       accessUrl: buildProjectUrl(this.config.labBaseUrl, record.slug),
     };
@@ -221,6 +270,7 @@ class LabService {
     let temporaryDirectory = '';
     let movedToFinal = false;
     try {
+      const projectType = labProjectType(values.projectType || 'html');
       const title = validateText(values.title, '标题', { min: 1, max: 120 });
       const description = validateText(values.description, '简介', { min: 1, max: 1000 });
       const originalFilename = validateText(file.originalname, '原始文件名', { min: 1, max: 255 });
@@ -233,6 +283,11 @@ class LabService {
       if (path.extname(originalFilename).toLowerCase() !== '.zip') {
         throw new LabValidationError('小作坊只接受ZIP压缩包。', 415);
       }
+      const uploadSize = (await fs.stat(file.path)).size;
+      const uploadLimit = labUploadLimitBytes(projectType);
+      if (uploadSize > uploadLimit) {
+        throw new LabValidationError(`ZIP文件超过该项目类型的 ${Math.floor(uploadLimit / (1024 * 1024))} MiB上传上限。`, 413);
+      }
       const usedSlugs = new Set(this.database.prepare('SELECT slug FROM lab_projects').all().map((row) => row.slug));
       const slug = createUniqueSlug(title, usedSlugs);
       finalDirectory = this.projectDirectory(slug);
@@ -240,11 +295,17 @@ class LabService {
       await fs.mkdir(this.config.labStorageDir, { recursive: true });
       const limits = {
         maxFiles: this.config.labMaxFiles,
-        maxUncompressedBytes: this.config.labMaxUncompressedBytes,
+        maxUncompressedBytes: labUncompressedLimitBytes(this.config, projectType),
       };
-      const inspection = await inspectZip(file.path, temporaryDirectory, limits);
+      const inspection = await inspectZip(file.path, temporaryDirectory, limits, projectType);
+      if (projectType === 'unity-webgl' && !inspection.isUnityWebGL) {
+        throw new LabValidationError('Unity WebGL ZIP必须包含 loader.js、.wasm 和 .data 构建资源。');
+      }
+      if (projectType !== 'unity-webgl' && inspection.isUnityWebGL) {
+        throw new LabValidationError('检测到 Unity WebGL 构建资源，请选择 Unity WebGL 类型。');
+      }
       await fs.mkdir(temporaryDirectory, { recursive: false });
-      await this.extractZip(inspection.entries, temporaryDirectory, limits, inspection.topLevelFolder);
+      await this.extractZip(inspection.entries, temporaryDirectory, limits, inspection.topLevelFolder, projectType);
       const rootIndex = await fs.stat(path.join(temporaryDirectory, 'index.html'));
       if (!rootIndex.isFile()) throw new LabValidationError('ZIP根目录的 index.html 不是普通文件。');
       await fs.rename(temporaryDirectory, finalDirectory);
@@ -252,9 +313,9 @@ class LabService {
       const now = new Date().toISOString();
       const result = this.database.prepare(`
         INSERT INTO lab_projects (
-          slug, title, description, original_filename, cover_image, is_visible, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(slug, title, description, originalFilename, coverImage, values.isVisible ? 1 : 0, now, now);
+            slug, title, description, original_filename, cover_image, project_type, is_visible, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(slug, title, description, originalFilename, coverImage, projectType, values.isVisible ? 1 : 0, now, now);
       return this.getProject(result.lastInsertRowid);
     } catch (error) {
       const cleanupDirectory = movedToFinal ? finalDirectory : temporaryDirectory;
@@ -300,6 +361,16 @@ class LabService {
 
 module.exports = {
   ALLOWED_WEB_EXTENSIONS,
+  LAB_PROJECT_TYPES,
+  LAB_MAX_HTML_DEMO_UPLOAD_BYTES,
+  LAB_MAX_UNITY_UPLOAD_BYTES,
+  LAB_MAX_HTML_DEMO_UNCOMPRESSED_BYTES,
+  LAB_MAX_UNITY_UNCOMPRESSED_BYTES,
+  labProjectType,
+  labUploadLimitBytes,
+  labUncompressedLimitBytes,
+  labLimits,
+  isUnityWebGLBuild,
   LabService,
   LabValidationError,
   buildProjectUrl,
